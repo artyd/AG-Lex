@@ -62,6 +62,8 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deskOpen, setDeskOpen] = useState(false);
+  const [deskPlat, setDeskPlat] = useState('win');
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
   const [user, setUser] = useState(() => lxLoadSession());
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
@@ -228,7 +230,7 @@ export default function App() {
             <button className={t.density === 'compact' ? 'on' : ''} onClick={() => setTweak('density', 'compact')}>{L.compact}</button>
           </div>
         </div>
-        <div className="set-row" style={{ border: 'none' }}>
+        <div className="set-row">
           <div><div className="set-label">{L.accent}</div></div>
           <div style={{ display: 'flex', gap: 8 }}>
             {ACCENT_OPTIONS.map(c => (
@@ -236,6 +238,47 @@ export default function App() {
             ))}
           </div>
         </div>
+        <hr className="divider" />
+        <button className="set-desk" onClick={() => { setSettingsOpen(false); setDeskOpen(true); }}>
+          <span className="set-desk-ic"><Icon name="monitor" size={20} /></span>
+          <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+            <span className="set-desk-t">{L.deskTitle}</span>
+            <span className="set-desk-s">{L.deskSub}</span>
+          </span>
+          <Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} />
+        </button>
+      </Modal>
+
+      {/* Desktop app modal */}
+      <Modal open={deskOpen} onClose={() => setDeskOpen(false)} title={L.deskTitle} sub={L.deskSub} icon="monitor"
+        footer={<>
+          <button className="btn btn-subtle" onClick={() => setDeskOpen(false)}>{L.cancel}</button>
+          <button className="btn btn-primary" onClick={() => { setDeskOpen(false); toast(L.deskPreparing, 'download'); }}>
+            <Icon name="download" size={15} /> {L.deskDownload}
+          </button>
+        </>}>
+        <div className="desk-plats">
+          <button className={'desk-plat' + (deskPlat === 'win' ? ' on' : '')} onClick={() => setDeskPlat('win')}>
+            <span className="desk-plat-ic"><Icon name="monitor" size={22} /></span>
+            <span className="desk-plat-name">{L.deskWin}</span>
+            <span className="desk-plat-file">{L.deskWinFile}</span>
+          </button>
+          <button className={'desk-plat' + (deskPlat === 'mac' ? ' on' : '')} onClick={() => setDeskPlat('mac')}>
+            <span className="desk-plat-ic"><Icon name="apple" size={22} /></span>
+            <span className="desk-plat-name">{L.deskMac}</span>
+            <span className="desk-plat-file">{L.deskMacFile}</span>
+          </button>
+          <button className={'desk-plat' + (deskPlat === 'linux' ? ' on' : '')} onClick={() => setDeskPlat('linux')}>
+            <span className="desk-plat-ic"><Icon name="monitor" size={22} /></span>
+            <span className="desk-plat-name">{L.deskLinux}</span>
+            <span className="desk-plat-file">{L.deskLinuxFile}</span>
+          </button>
+        </div>
+        <div className="desk-note">
+          <Icon name="alert" size={14} />
+          <span>{L.deskNote}</span>
+        </div>
+        <div className="desk-ver">{L.deskVersion}</div>
       </Modal>
 
       <TweaksPanel>

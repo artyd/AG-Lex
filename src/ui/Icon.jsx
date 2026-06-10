@@ -43,6 +43,8 @@ const ICON_PATHS = {
   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
   pen: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
+  monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
+  apple: 'M12 7c1-2 3-2.5 4-2-0.5 2-2 3-4 3M12 7c-1-2-3.2-2.3-4.6-1.4C5.5 7 5 10 6.3 13.5 7 15.3 8 17 9.4 17c1 0 1.4-.6 2.6-.6s1.6.6 2.6.6c1.4 0 2.4-1.7 3.1-3.5',
 };
 
 export function Icon({ name, size = 20, stroke = 2, fill = false, style, className }) {
