@@ -299,7 +299,8 @@ function SummaryModal({ open, onClose, t }) {
       body: { contract: serializedDemoContract(), mode: apiMode },
     }).then(res => {
       if (cancelled) return;
-      setSummaries(s => ({ ...s, [mode]: res.summary || '' }));
+      // Audit fix #7: defensive ?. in case the server returns an unexpected shape.
+      setSummaries(s => ({ ...s, [mode]: res?.summary ?? '' }));
     }).catch(_e => {
       if (cancelled) return;
       // Surface the offline marker so the modal shows static prototype data
@@ -457,12 +458,13 @@ function TranslateModal({ open, onClose, t }) {
       body: { text: serializedDemoContract(), direction: apiDirection },
     }).then(res => {
       if (cancelled) return;
+      // Audit fix #7: defensive ?. in case the server returns an unexpected shape.
       setByDir(s => ({
         ...s,
         [dir]: {
-          pairs: res.pairs || [],
-          glossary: res.glossary || [],
-          translation: res.translation || '',
+          pairs: res?.pairs ?? [],
+          glossary: res?.glossary ?? [],
+          translation: res?.translation ?? '',
         },
       }));
     }).catch(_e => {

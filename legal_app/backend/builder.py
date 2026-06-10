@@ -24,7 +24,7 @@ from typing import Any, Literal, Optional
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .assist import _wrap_anthropic_errors, _usage_dict
 from .claude_client import ClaudeError, _client
@@ -270,6 +270,9 @@ def generate_document(
 router = APIRouter(prefix="/api", tags=["builder"])
 
 
+_MAX_DICT_JSON_BYTES = 50_000  # ~12k tokens — generous for form payload, blocks abuse.
+
+
 class GenerateDocumentRequest(BaseModel):
     type: DocumentType
     params: dict = Field(default_factory=dict, description="Type-specific form fields.")
@@ -277,6 +280,17 @@ class GenerateDocumentRequest(BaseModel):
         default=None,
         description="Boolean toggles: penalty, liability, nda, warranty, indexation.",
     )
+
+    @field_validator("params", "options", mode="before")
+    @classmethod
+    def _cap_dict_size(cls, v):
+        if v is None:
+            return v
+        if len(json.dumps(v, ensure_ascii=False)) > _MAX_DICT_JSON_BYTES:
+            raise ValueError(
+                f"payload too large (max {_MAX_DICT_JSON_BYTES} chars when JSON-encoded)"
+            )
+        return v
 
 
 @router.post("/generate-document", dependencies=[Depends(require("ai"))])

@@ -693,27 +693,35 @@ function ContractAnalysis({ t }) {
   // Fix 2: load pending document from DocBuilder handoff. One-shot: the
   // localStorage key is cleared *immediately* (inside popPendingAnalysis) so a
   // subsequent visit to this screen doesn't accidentally re-trigger analysis.
+  // Audit fix #6: ref-based cancellation flag prevents state writes after
+  // unmount (route change during in-flight /api/analyze/contract).
+  const pendingAlive = useRef(true);
   useEffect(() => {
+    pendingAlive.current = true;
     const pending = popPendingAnalysis();
-    if (!pending) return;
+    if (!pending) return () => { pendingAlive.current = false; };
     const niceName = `Чернетка${pending.typeId ? ` (${pending.typeId})` : ''}`;
     setPendingDoc({ markdown: pending.markdown, name: niceName, typeId: pending.typeId });
     runPendingAnalysis(pending.markdown);
+    return () => { pendingAlive.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runPendingAnalysis(markdown) {
+    if (!pendingAlive.current) return;
     setPendingStatus('loading');
     try {
       const res = await api.request('/api/analyze/contract', {
         method: 'POST',
         body: { markdown },
       });
+      if (!pendingAlive.current) return;
       setPendingAnalysis(res);
       setPendingStatus('ready');
     } catch (_e) {
       // Don't kill the UX on API failure — fall back to the manual retry
       // banner. The screen still shows the prototype document underneath.
+      if (!pendingAlive.current) return;
       setPendingStatus('error');
     }
   }

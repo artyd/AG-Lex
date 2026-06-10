@@ -254,13 +254,21 @@ router = APIRouter(prefix="/api", tags=["assist"])
 
 
 class SummaryRequest(BaseModel):
+    # 200k chars ≈ ~50k tokens — generous for a typical contract; caps
+    # adversarial multi-MB payloads (audit fix #2-5).
     contract: Optional[str] = Field(
         default=None,
+        max_length=200_000,
         description="Full contract markdown (alias for `markdown`).",
     )
-    markdown: Optional[str] = Field(default=None, description="Alias for `contract`.")
+    markdown: Optional[str] = Field(
+        default=None,
+        max_length=200_000,
+        description="Alias for `contract`.",
+    )
     sections: Optional[list[dict]] = Field(
         default=None,
+        max_length=500,
         description="Sections from /api/upload — joined into markdown server-side.",
     )
     mode: SummaryMode = "legal"
@@ -287,9 +295,10 @@ def summary(req: SummaryRequest):
 
 
 class TranslateRequest(BaseModel):
-    text: Optional[str] = Field(default=None, description="Source text or markdown.")
-    markdown: Optional[str] = Field(default=None, description="Alias for `text`.")
-    sections: Optional[list[dict]] = Field(default=None, description="Source as Phase 1.3 sections.")
+    # See SummaryRequest — same ceiling.
+    text: Optional[str] = Field(default=None, max_length=200_000, description="Source text or markdown.")
+    markdown: Optional[str] = Field(default=None, max_length=200_000, description="Alias for `text`.")
+    sections: Optional[list[dict]] = Field(default=None, max_length=500, description="Source as Phase 1.3 sections.")
     direction: TranslateDirection = "ua_en"
 
 

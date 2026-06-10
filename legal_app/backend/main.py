@@ -20,6 +20,7 @@ from . import builder as builder_module
 from . import drafts as drafts_module
 from . import team as team_module
 from .audit import init_audit_schema
+from .auth import current_user
 from .claude_client import ClaudeError
 from .codex import get_codex_stats
 from .config import get_settings
@@ -99,9 +100,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/api/upload")
+@app.post("/api/upload", dependencies=[Depends(current_user)])
 async def upload_document(file: UploadFile = File(...)):
-    """Ingest a contract: PDF or DOCX → Markdown + sections + token stats."""
+    """Ingest a contract: PDF or DOCX → Markdown + sections + token stats.
+
+    Pre-deploy audit: gated by `current_user` so anonymous callers can't burn
+    server CPU on PDF/DOCX conversion. No specific capability required —
+    uploading itself is read-flavored and grants no AI/billing access.
+    """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED_EXTS:
         raise HTTPException(
@@ -151,7 +157,8 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 class AnalyzeRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="Lawyer's question (UA preferred).")
+    # max_length caps protect against DoS via huge prompts (token bill + memory).
+    question: str = Field(..., min_length=1, max_length=8000, description="Lawyer's question (UA preferred).")
     contract_section: Optional[dict] = Field(
         default=None,
         description="Optional contract section from /api/upload: {number, title, text}.",
@@ -191,12 +198,16 @@ def analyze_endpoint(req: AnalyzeRequest):
 
 
 class ContractAnalysisRequest(BaseModel):
+    # 200k chars ≈ ~50k tokens — generous for a long contract, hard cap on
+    # adversarial multi-MB payloads.
     markdown: Optional[str] = Field(
         default=None,
+        max_length=200_000,
         description="Full contract markdown (e.g. from POST /api/upload).",
     )
     sections: Optional[list[dict]] = Field(
         default=None,
+        max_length=500,
         description="Optional pre-split sections (output of /api/upload). "
                     "Used to build the contract text when `markdown` is omitted.",
     )

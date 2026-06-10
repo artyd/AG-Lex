@@ -14,6 +14,7 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.database import get_connection, get_db, init_user_schema
 from backend.documents import (
     detect_type_and_convert,
     detect_type_and_extract_raw,
@@ -22,6 +23,7 @@ from backend.documents import (
     token_savings,
 )
 from backend.main import app
+from backend.rbac import init_permissions_schema, seed_default_permissions
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +82,33 @@ def tmp_pdf(tmp_path) -> Path:
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    # Pre-deploy audit: /api/upload now requires `current_user`. Override the
+    # DB to a hermetic in-memory copy so tests can register a real user.
+    conn = get_connection(":memory:", check_same_thread=False)
+    init_user_schema(conn)
+    init_permissions_schema(conn)
+    seed_default_permissions(conn)
+
+    def _override():
+        yield conn
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        conn.close()
+
+
+@pytest.fixture
+def auth(client):
+    r = client.post("/api/auth/register", json={
+        "name": "Uploader", "email": "up@example.com",
+        "password": "supersecret", "role": "lawyer",
+    })
+    assert r.status_code == 201, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 # ---------------------------------------------------------------------------
@@ -172,26 +200,37 @@ def test_pdf_round_trip_extracts_text(tmp_pdf):
 # /api/upload endpoint
 # ---------------------------------------------------------------------------
 
-def test_upload_rejects_unsupported_extension(client):
+def test_upload_requires_auth(client, tmp_pdf):
+    r = client.post(
+        "/api/upload",
+        files={"file": ("contract.pdf", tmp_pdf.read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 401, "unauthenticated upload must be rejected"
+
+
+def test_upload_rejects_unsupported_extension(client, auth):
     r = client.post(
         "/api/upload",
         files={"file": ("note.txt", b"hello", "text/plain")},
+        headers=auth,
     )
     assert r.status_code == 415
 
 
-def test_upload_rejects_empty_file(client):
+def test_upload_rejects_empty_file(client, auth):
     r = client.post(
         "/api/upload",
         files={"file": ("empty.pdf", b"", "application/pdf")},
+        headers=auth,
     )
     assert r.status_code == 400
 
 
-def test_upload_returns_markdown_sections_and_token_stats(client, tmp_pdf):
+def test_upload_returns_markdown_sections_and_token_stats(client, auth, tmp_pdf):
     r = client.post(
         "/api/upload",
         files={"file": ("contract.pdf", tmp_pdf.read_bytes(), "application/pdf")},
+        headers=auth,
     )
     assert r.status_code == 200, r.text
     body = r.json()
