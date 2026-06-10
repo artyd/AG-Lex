@@ -238,7 +238,10 @@ function Chat({ t, inject }) {
     setBusy(true);
     ask(inject.q).then(ans => {
       if (cancelled) return;
-      setMsgs(m => [...m, { role: 'ai', ...ans, refs: ans.refs.length ? ans.refs : (inject.refs || []) }]);
+      // Defensive: API errors / offline fallback can return a partial object;
+      // optional chaining keeps the Chat alive instead of crashing the screen.
+      const refs = (ans?.refs ?? []).length ? ans.refs : (inject?.refs ?? []);
+      setMsgs(m => [...m, { role: 'ai', ...(ans ?? {}), refs }]);
       setBusy(false);
     });
     return () => { cancelled = true; };
@@ -251,7 +254,7 @@ function Chat({ t, inject }) {
     setMsgs(m => [...m, { role: 'user', text: q }]);
     setBusy(true);
     const ans = await ask(q);
-    setMsgs(m => [...m, { role: 'ai', ...ans }]);
+    setMsgs(m => [...m, { role: 'ai', ...(ans ?? {}), refs: ans?.refs ?? [] }]);
     setBusy(false);
   };
 
