@@ -1,55 +1,39 @@
 /* ============================================================
-   AG Lex — Contract ↔ Handover (Table 3) Reconciliation screen
-   Two-file upload → analyzing → result (Documents | Table) + findings panel.
+   AG Lex — Contract ↔ Handover (Table 3) reconciliation
+   Visual port from the Claude Design prototype:
+     hub-back / hub-head / cmp-slots / cmp-vs / cmp-pairs (upload)
+     analyzing overlay (5 steps)
+     analysis-bar + analysis-body (result):
+       cmp-doctabs + cmp-paper + cmark-* highlights
+       cmp-scroll table view (cmp-rows / cmp-row / cmp-badge)
+       cmp-panel + cmp-counters + cmp-find (right side)
+   Behavior unchanged: real <input type=file>, POST /api/reconcile via
+   api.reconcile(formData), localStorage history, demo fixture fallback,
+   addEditsToTasks via api.tasks.create, library handoff via RECON_OPEN_KEY.
    ============================================================ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../ui/Icon';
-import { Modal, toast } from '../ui/components';
+import { toast } from '../ui/components';
 import { api } from '../lib/api';
 import { DEMO } from '../data/demo';
 
 const RECON_HISTORY_KEY = 'lex.recon.history';
 const RECON_OPEN_KEY = 'lex.recon.open';
 
-const STATUS_TO_HL = {
-  ok: 'hl-low',
-  mismatch: 'hl-high',
-  flag: 'hl-med',
-  absent: '',
-  positive: 'hl-info',
+const CMP_STATUS = {
+  ok:       { key: 'cmpOk',       col: 'var(--risk-low)',  bg: 'var(--risk-low-soft)',  ic: 'checkCircle' },
+  mismatch: { key: 'cmpMismatch', col: 'var(--risk-high)', bg: 'var(--risk-high-soft)', ic: 'alert' },
+  flag:     { key: 'cmpFlag',     col: 'var(--risk-med)',  bg: 'var(--risk-med-soft)',  ic: 'alert' },
+  absent:   { key: 'cmpAbsent',   col: 'var(--text-3)',    bg: 'var(--bg-2)',           ic: 'x' },
+  positive: { key: 'cmpPositive', col: 'var(--accent)',    bg: 'var(--accent-soft)',    ic: 'plus' },
 };
 
-const SEV_TO_BADGE = {
-  must: 'badge-high',
-  should: 'badge-med',
-  nice: 'badge-low',
-  flag: 'badge-info',
+const SEV = {
+  must:   { key: 'cmpMust',   col: 'var(--risk-high)', bg: 'var(--risk-high-soft)' },
+  should: { key: 'cmpShould', col: 'var(--risk-med)',  bg: 'var(--risk-med-soft)' },
+  nice:   { key: 'cmpNice',   col: 'var(--risk-low)',  bg: 'var(--risk-low-soft)' },
+  flag:   { key: 'cmpFlagL',  col: 'var(--accent)',    bg: 'var(--accent-soft)' },
 };
-
-const SEV_TO_BORDER = {
-  must: 'var(--risk-high)',
-  should: 'var(--risk-med)',
-  nice: 'var(--risk-low)',
-  flag: 'var(--accent)',
-};
-
-function sevLabel(t, sev) {
-  return ({ must: t.sevMust, should: t.sevShould, nice: t.sevNice, flag: t.sevFlag }[sev]) || sev;
-}
-
-function statusLabel(t, st) {
-  return ({
-    ok: t.statusOkR, mismatch: t.statusMismatch, flag: t.statusFlagR,
-    absent: t.statusAbsent, positive: t.statusPositive,
-  }[st]) || st;
-}
-
-function statusColor(st) {
-  return ({
-    ok: 'var(--risk-low)', mismatch: 'var(--risk-high)', flag: 'var(--risk-med)',
-    absent: 'var(--text-3)', positive: 'var(--accent)',
-  }[st]) || 'var(--text-3)';
-}
 
 function popOpenRunId() {
   if (typeof localStorage === 'undefined') return null;
@@ -75,275 +59,489 @@ function saveHistory(run) {
 }
 
 /* ---------- Upload step ---------- */
-function UploadStep({ t, onSubmit, onDemo }) {
-  const [contract, setContract] = useState(null);
-  const [handover, setHandover] = useState(null);
-  const [warn, setWarn] = useState(null);
-  const canRun = contract && handover;
-  const pick = (setter, accept) => (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    const ext = (f.name.split('.').pop() || '').toLowerCase();
-    if (!accept.includes('.' + ext)) {
-      setWarn(`${f.name} — ${(t.reconAcceptContract || '').toLowerCase()}`);
-      return;
+function UploadStep({ t, onRun, onBack, demoPair }) {
+  const [cFile, setCFile] = useState(null);
+  const [hFile, setHFile] = useState(null);
+  const [usePair, setUsePair] = useState(true);
+  const cRef = useRef(null);
+  const hRef = useRef(null);
+
+  const canRun = (cFile && hFile) || usePair;
+
+  const run = () => {
+    if (cFile && hFile) {
+      onRun({ contractFile: cFile, handoverFile: hFile, demo: false });
+    } else if (usePair) {
+      onRun({
+        contractFile: new File([''], demoPair.contractFile || 'contract.docx'),
+        handoverFile: new File([''], demoPair.handoverFile || 'handover.xlsx'),
+        demo: true,
+      });
     }
-    setWarn(null);
-    setter(f);
   };
+
+  const contractLabel = cFile ? cFile.name : (usePair ? demoPair.contractFile : t.cmpSlotHint);
+  const handoverLabel = hFile ? hFile.name : (usePair ? demoPair.handoverFile : t.cmpSlotHint);
+
   return (
-    <div className="recon-upload view-enter">
-      <div style={{ textAlign: 'center', marginBottom: 4 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>{t.reconUpload}</h2>
-        <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 6 }}>{t.reconUploadSub}</div>
-      </div>
-      <div className="recon-upload-grid">
-        <label className="recon-drop">
-          <span style={{ display: 'flex', justifyContent: 'center', color: 'var(--accent)' }}><Icon name="doc" size={22} /></span>
-          <span className="recon-drop-name">{t.reconUploadContract}</span>
-          <span className="recon-drop-sub">{t.reconAcceptContract}</span>
-          {contract ? <span className="recon-drop-file">✓ {contract.name}</span> : <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{t.reconChooseFile}</span>}
-          <input type="file" accept=".pdf,.docx" onChange={pick(setContract, ['.pdf', '.docx'])} />
-        </label>
-        <label className="recon-drop">
-          <span style={{ display: 'flex', justifyContent: 'center', color: 'var(--accent)' }}><Icon name="scales" size={22} /></span>
-          <span className="recon-drop-name">{t.reconUploadHandover}</span>
-          <span className="recon-drop-sub">{t.reconAcceptHandover}</span>
-          {handover ? <span className="recon-drop-file">✓ {handover.name}</span> : <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{t.reconChooseFile}</span>}
-          <input type="file" accept=".pdf,.docx,.xlsx" onChange={pick(setHandover, ['.pdf', '.docx', '.xlsx'])} />
-        </label>
-      </div>
-      {warn ? <div className="recon-warn"><Icon name="alert" size={13} /> {warn}</div> : null}
-      <div className="recon-demo">
-        <span className="launcher-ic launcher-ic-accent" style={{ width: 32, height: 32 }}><Icon name="sparkle" size={16} fill={true} /></span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <b>{t.reconDemoPair}</b>
-          <span style={{ display: 'block' }}>{t.reconDemoPairSub}</span>
+    <div className="page view-enter">
+      <div className="page-narrow">
+        <button className="hub-back" onClick={onBack}><Icon name="chevR" size={16} style={{ transform: 'rotate(180deg)' }} /> {t.cmpBack}</button>
+        <div className="hub-head" style={{ textAlign: 'left', marginTop: 6 }}>
+          <h1 className="hub-title" style={{ fontSize: 24 }}>{t.cmpUploadTitle}</h1>
+          <p className="hub-sub" style={{ margin: '6px 0 0' }}>{t.cmpUploadSub}</p>
         </div>
-        <button className="btn btn-subtle btn-sm" onClick={onDemo}><Icon name="arrowR" size={14} /> {t.reconDemoPair}</button>
+
+        <div className="cmp-slots">
+          <div className="cmp-slot">
+            <div className="cmp-slot-tag"><Icon name="doc" size={14} /> {t.cmpSlotContract}</div>
+            <input ref={cRef} type="file" accept=".pdf,.docx" style={{ display: 'none' }}
+                   onChange={e => { setCFile(e.target.files[0] || null); setUsePair(false); }} />
+            <button className="cmp-drop" onClick={() => cRef.current && cRef.current.click()}>
+              <span className="cmp-file-ic"><Icon name={cFile ? 'doc' : 'upload'} size={18} /></span>
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <span className="cmp-file-name">{contractLabel}</span>
+                <span className="cmp-file-meta">{cFile ? t.cmpUploadedFile : t.cmpSlotHint}</span>
+              </span>
+              {cFile ? <span className="cmp-check">✓</span> : null}
+            </button>
+          </div>
+          <div className="cmp-vs"><Icon name="scan" size={18} /></div>
+          <div className="cmp-slot">
+            <div className="cmp-slot-tag"><Icon name="folder" size={14} /> {t.cmpSlotHandover}</div>
+            <input ref={hRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display: 'none' }}
+                   onChange={e => { setHFile(e.target.files[0] || null); setUsePair(false); }} />
+            <button className="cmp-drop" onClick={() => hRef.current && hRef.current.click()}>
+              <span className="cmp-file-ic" style={{ background: 'var(--risk-med-soft)', color: 'var(--risk-med)' }}>
+                <Icon name={hFile ? 'folder' : 'upload'} size={18} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <span className="cmp-file-name">{handoverLabel}</span>
+                <span className="cmp-file-meta">{hFile ? t.cmpUploadedFile : t.cmpSlotHint}</span>
+              </span>
+              {hFile ? <span className="cmp-check">✓</span> : null}
+            </button>
+          </div>
+        </div>
+
+        <div className="cmp-pairs">
+          <div className="cmp-pairs-h">{t.cmpDemoPairs}</div>
+          <div className="cmp-pairs-list">
+            <button className={'cmp-pair' + (usePair && !cFile && !hFile ? ' on' : '')}
+                    onClick={() => { setUsePair(true); setCFile(null); setHFile(null); }}>
+              <span className="cmp-pair-ic"><Icon name="doc" size={15} /></span>
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <span className="cmp-pair-t">{demoPair.product}</span>
+                <span className="cmp-pair-s">{demoPair.counterparty}</span>
+              </span>
+              {usePair && !cFile && !hFile ? <Icon name="checkCircle" size={16} style={{ color: 'var(--accent)' }} /> : null}
+            </button>
+          </div>
+        </div>
+
+        <div className="cmp-run-row">
+          <button className="btn btn-primary btn-lg" disabled={!canRun} onClick={run}>
+            <Icon name="scan" size={17} /> {t.cmpRun}
+          </button>
+        </div>
       </div>
-      <button className="btn btn-primary" disabled={!canRun}
-              style={{ justifyContent: 'center', padding: '12px 16px' }}
-              onClick={() => onSubmit(contract, handover)}>
-        <Icon name="sparkle" size={16} fill={true} /> {t.reconRun}
-      </button>
     </div>
   );
 }
 
 /* ---------- Analyzing overlay ---------- */
 function AnalyzingStep({ t }) {
-  const steps = [t.reconStep1, t.reconStep2, t.reconStep3, t.reconStep4, t.reconStep5];
+  const steps = t.cmpSteps || [];
   const [step, setStep] = useState(0);
   const [pct, setPct] = useState(6);
   useEffect(() => {
-    const si = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 520);
-    const pi = setInterval(() => setPct(p => Math.min(p + Math.random() * 12 + 3, 98)), 240);
+    if (steps.length === 0) return;
+    const si = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 480);
+    const pi = setInterval(() => setPct(p => Math.min(p + Math.random() * 13 + 4, 98)), 240);
     return () => { clearInterval(si); clearInterval(pi); };
-  }, []);
+  }, [steps.length]);
   return (
-    <div className="analyzing">
-      <div className="analyzing-card">
-        <div className="analyzing-orb"><Icon name="sparkle" size={26} fill={true} /></div>
-        <div style={{ fontSize: 18, fontWeight: 700, marginTop: 16 }}>{t.reconcileTitle}</div>
-        <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4 }}>{t.analyzingSub}</div>
-        <div className="prog"><div className="prog-bar" style={{ width: pct + '%' }} /></div>
-        <div className="analyzing-steps">
-          {steps.map((s, i) => (
-            <div key={i} className={'astep' + (i < step ? ' done' : i === step ? ' now' : '')}>
-              <span className="astep-dot">{i < step ? <Icon name="check" size={11} stroke={3} /> : null}</span>
-              {s}
+    <div className="analysis">
+      <div className="analysis-body">
+        <div className="doc-scroll">
+          <div className="analyzing">
+            <div className="analyzing-card">
+              <div className="analyzing-orb"><Icon name="scan" size={26} /></div>
+              <div style={{ fontSize: 18, fontWeight: 700, marginTop: 16 }}>{t.cmpAnalyzing}</div>
+              <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4 }}>{t.cmpAnalyzingSub}</div>
+              <div className="prog"><div className="prog-bar" style={{ width: pct + '%' }} /></div>
+              <div className="analyzing-steps">
+                {steps.map((s, i) => (
+                  <div key={i} className={'astep' + (i < step ? ' done' : i === step ? ' now' : '')}>
+                    <span className="astep-dot">{i < step ? <Icon name="check" size={11} stroke={3} /> : null}</span>
+                    {s}
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
+          </div>
         </div>
+        <div className="panel-wrap panel-loading" />
       </div>
     </div>
   );
 }
 
-/* ---------- Rendered contract (left, doc view) ---------- */
+/* ---------- Render a parts array (string | {t, cat, st}) ---------- */
 function renderParts(parts, opts) {
-  const { onPick, applied, selectedCat } = opts;
+  const { active, onPick, refs, forceOk } = opts;
   return (parts || []).map((seg, i) => {
     if (typeof seg === 'string') return <span key={i}>{seg}</span>;
-    const hl = STATUS_TO_HL[seg.st] || '';
-    const active = selectedCat && selectedCat === seg.cat;
-    const isApplied = applied && applied[seg.cat];
+    const st = forceOk ? 'ok' : seg.st;
+    const cls = 'cmark cmark-' + st + (active === seg.cat ? ' active' : '');
+    const clickable = st === 'mismatch' || st === 'flag' || st === 'positive' || forceOk;
     return (
       <mark key={i}
-        className={'hl ' + hl + (active ? ' hl-active' : '') + (isApplied ? ' hl-done' : '')}
-        onClick={(e) => { e.stopPropagation(); onPick && onPick(seg.cat); }}>
+        ref={el => { if (el && refs) refs.current[seg.cat] = el; }}
+        className={cls}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (clickable && onPick) onPick(seg.cat);
+        }}>
         {seg.t}
       </mark>
     );
   });
 }
 
-function ContractDocView({ doc, onPick, selectedCat, applied }) {
+/* ---------- Contract paper (bilingual EN / UA) ---------- */
+function ContractPaper({ doc, active, onPick, refs }) {
   return (
-    <div className="doc">
-      <div className="doc-head">
-        <h1 className="doc-title">{doc.title}</h1>
-        <div className="doc-meta">{doc.titleUa}</div>
-        {doc.place ? <div className="doc-meta" style={{ marginTop: 4 }}>{doc.place} · {doc.placeUa}</div> : null}
+    <div className="cmp-paper cmp-paper-contract">
+      <div className="cmp-paper-head">
+        <div className="cmp-bi">
+          <div className="cmp-paper-title">{doc.title}</div>
+          <div className="cmp-paper-title">{doc.titleUa}</div>
+        </div>
+        {(doc.place || doc.placeUa) ? (
+          <div className="cmp-bi cmp-paper-place">
+            <div>{doc.place}</div>
+            <div>{doc.placeUa}</div>
+          </div>
+        ) : null}
       </div>
       {(doc.sections || []).map((s, i) => (
-        <section className="doc-clause" key={i} id={'rc-sec-' + i}>
-          <h3 className="doc-clause-title">{s.n}. {s.en} / {s.ua}</h3>
-          {(s.enP || []).map((para, k) => (
-            <p className="doc-p" key={'en' + k}>{renderParts(para, { onPick, selectedCat, applied })}</p>
-          ))}
-          {(s.uaP || []).map((para, k) => (
-            <p className="doc-p" key={'ua' + k} style={{ color: 'var(--text-2)' }}>{renderParts(para, { onPick, selectedCat, applied })}</p>
-          ))}
-        </section>
+        <div className="cmp-clause" key={i}>
+          <div className="cmp-bi cmp-clause-h">
+            <div>{s.n}. {s.en}</div>
+            <div>{s.n}. {s.ua}</div>
+          </div>
+          <div className="cmp-bi cmp-clause-b">
+            <p>{(s.enP || []).map((para, k) => (
+              <span key={k}>{renderParts(Array.isArray(para) ? para : [para], { active, onPick, refs })}</span>
+            ))}</p>
+            <p>{(s.uaP || []).map((para, k) => (
+              <span key={k}>{renderParts(Array.isArray(para) ? para : [para], { active, onPick, refs })}</span>
+            ))}</p>
+          </div>
+        </div>
       ))}
     </div>
   );
 }
 
-function HandoverDocView({ doc, onPick, selectedCat, applied, t }) {
+/* ---------- Handover paper (Лист погодження / Table 3 form) ---------- */
+function HandoverPaper({ doc, active, onPick, refs }) {
   return (
-    <div className="doc">
-      <div className="t3-head">
-        {doc.appendix ? <div className="t3-appendix">{doc.appendix}</div> : null}
-        <div className="t3-title">{doc.title}</div>
-        {doc.sub ? <div className="t3-sub">{doc.sub}</div> : null}
-        {doc.section ? <div className="t3-section">{doc.section}</div> : null}
-      </div>
-      <table className="t3">
+    <div className="cmp-paper cmp-paper-form">
+      {doc.appendix ? <div className="cmp-form-appendix">{doc.appendix}</div> : null}
+      {doc.title ? <div className="cmp-form-title">{doc.title}</div> : null}
+      {doc.sub ? <div className="cmp-form-sub">{doc.sub}</div> : null}
+      {doc.section ? <div className="cmp-form-section">{doc.section}</div> : null}
+      <table className="cmp-form-table">
         <thead>
-          <tr><th>№</th><th className="t3-label">{t.colCategory}</th><th>{t.colT3}</th></tr>
+          <tr><th className="cmp-form-no">№</th><th>Поле</th><th>Значення</th></tr>
         </thead>
         <tbody>
           {(doc.rows || []).map((r, i) => (
             <tr key={i}>
-              <td>{r.n}</td>
-              <td className="t3-label">{r.star ? <span className="t3-star">*</span> : null}{r.label}</td>
-              <td>{renderParts(r.v, { onPick, selectedCat, applied })}</td>
+              <td className="cmp-form-no">{r.star ? <span className="cmp-form-star">*</span> : null}{r.n}</td>
+              <td className="cmp-form-label">{r.label}</td>
+              <td className="cmp-form-val">{renderParts(r.v, { active, onPick, refs, forceOk: true })}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {doc.footnote ? <div className="t3-foot">{doc.footnote}</div> : null}
+      {doc.footnote ? <div className="cmp-form-foot">{doc.footnote}</div> : null}
     </div>
   );
 }
 
-/* ---------- Comparison table view ---------- */
-function CompareTable({ rows, t, selectedCat, onPick }) {
-  const cats = useMemo(() => ({
-    supplier: t.cat_supplier, product: t.cat_product, price: t.cat_price,
-    quantity: t.cat_quantity, incoterms: t.cat_incoterms, delivery: t.cat_delivery,
-    payment: t.cat_payment, origin: t.cat_origin, hscode: t.cat_hscode,
-    certificates: t.cat_certificates, packaging: t.cat_packaging, quality: t.cat_quality,
-    consignee: t.cat_consignee, regnumber: t.cat_regnumber, additional: t.cat_additional,
-  }), [t]);
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <table className="cmp">
-        <thead>
-          <tr>
-            <th>{t.colCategory}</th>
-            <th>{t.colT3}</th>
-            <th>{t.colContract}</th>
-            <th style={{ width: 140 }}>{t.colStatus}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const focus = selectedCat === r.key;
-            const col = statusColor(r.status);
-            return [
-              <tr key={r.key} className={focus ? 'cmp-focus' : ''} onClick={() => onPick(r.key)} style={{ cursor: 'pointer' }}>
-                <td><span style={{ fontWeight: 600 }}>{cats[r.key] || r.name}</span></td>
-                <td>{r.t3 || '—'}</td>
-                <td>{r.contract || '—'}<div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>{r.location}</div></td>
-                <td>
-                  <span className="cmp-status-pill" style={{ background: `color-mix(in oklab, ${col} 14%, transparent)`, color: col }}>
-                    {statusLabel(t, r.status)}
-                  </span>
-                </td>
-              </tr>,
-              focus && (r.reason || r.rec) ? (
-                <tr key={r.key + '-d'}>
-                  <td colSpan={4} className="cmp-detail">
-                    {r.reason ? <div><b>{t.whyMismatch}: </b>{r.reason}</div> : null}
-                    {r.rec ? <div style={{ marginTop: 4 }}><b>{t.recommendation}: </b>{r.rec}</div> : null}
-                  </td>
-                </tr>
-              ) : null,
-            ];
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+/* ---------- Result screen ---------- */
+function ResultStep({ t, run, onBack, onRestart }) {
+  const docs = run.docs || { contract: {}, handover: { rows: [] } };
+  const rows = run.rows || [];
+  const findings = run.findings || [];
+  const pair = run.pair || {};
 
-/* ---------- Findings panel (right) ---------- */
-function FindingsPanel({ t, findings, sevFilter, setSevFilter, selectedCat, onPick, applied, onApply }) {
+  const [view, setView] = useState('docs');
+  const [which, setWhich] = useState('contract');
+  const [active, setActive] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [reconciled, setReconciled] = useState(new Set());
+  const docRefs = useRef({});
+  const rowRefs = useRef({});
+
   const counts = useMemo(() => {
-    const c = { all: findings.length, must: 0, should: 0, nice: 0, flag: 0 };
+    const c = { must: 0, should: 0, nice: 0, flag: 0, mismatches: 0 };
     findings.forEach(f => { if (c[f.severity] != null) c[f.severity] += 1; });
+    rows.forEach(r => { if (r.status === 'mismatch') c.mismatches += 1; });
     return c;
-  }, [findings]);
-  const filtered = sevFilter === 'all' ? findings : findings.filter(f => f.severity === sevFilter);
+  }, [findings, rows]);
+
+  const verdict = counts.must > 0 || counts.mismatches > 0
+    ? 'crit'
+    : counts.should + counts.flag > 0 ? 'warn' : 'ok';
+  const overallMeta = {
+    crit: ['cmpOverallCrit', 'var(--risk-high)'],
+    warn: ['cmpOverallWarn', 'var(--risk-med)'],
+    ok:   ['cmpOverallOk',   'var(--risk-low)'],
+  }[verdict];
+
+  const counters = [
+    { k: 'must',   n: counts.must },
+    { k: 'should', n: counts.should },
+    { k: 'nice',   n: counts.nice },
+    { k: 'flag',   n: counts.flag },
+  ];
+  const shownFindings = filter === 'all' ? findings : findings.filter(f => f.severity === filter);
+  const legend = [['ok', t.cmpLegendOk], ['mismatch', t.cmpLegendDiff], ['flag', t.cmpLegendFlag]];
+
+  useEffect(() => {
+    if (!active) return;
+    const tm = setTimeout(() => {
+      const target = view === 'docs' ? docRefs.current[active] : rowRefs.current[active];
+      if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 60);
+    return () => clearTimeout(tm);
+  }, [active, view, which]);
+
+  const focusFinding = (cat) => {
+    if (active === cat) { setActive(null); return; }
+    setActive(cat);
+    if (view === 'docs') {
+      const inContract = (docs.contract.sections || []).some(s =>
+        [...(s.enP || []), ...(s.uaP || [])].some(para => {
+          const arr = Array.isArray(para) ? para : [para];
+          return arr.some(p => p && typeof p === 'object' && p.cat === cat);
+        })
+      );
+      const inHandover = (docs.handover.rows || []).some(r =>
+        (r.v || []).some(p => p && typeof p === 'object' && p.cat === cat)
+      );
+      if (!inContract && inHandover) setWhich('handover');
+      else if (inContract && !inHandover) setWhich('contract');
+    }
+  };
+
+  const toggleRec = (id) => setReconciled(s => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id); else { n.add(id); toast(t.cmpReconciled, 'check'); }
+    return n;
+  });
+
+  async function addEditsToTasks() {
+    const fixable = findings.filter(f => f.severity === 'must' || f.severity === 'should');
+    if (fixable.length === 0) { toast(t.cmpTasksAdded, 'calendar'); return; }
+    const due = new Date(Date.now() + 7 * 86400 * 1000).toISOString().slice(0, 10);
+    let created = 0;
+    for (const f of fixable) {
+      try {
+        await api.tasks.create({
+          title: 'Правка: ' + f.issue.slice(0, 80),
+          matter: pair.counterparty || pair.product,
+          assignee: '',
+          due,
+          priority: f.severity,
+          col: 'todo',
+        });
+        created += 1;
+      } catch (_e) { /* skip silently */ }
+    }
+    toast(created > 0 ? t.cmpTasksAdded : t.cmpTasksFailed, created > 0 ? 'calendar' : 'alert');
+  }
+
+  function exportReport() {
+    const lines = [];
+    lines.push(`# ${t.reconcileTitle} · ${pair.product || ''}`);
+    lines.push(`${pair.counterparty || ''} · ${pair.contractNo || ''} · ${pair.date || ''}`);
+    lines.push('');
+    rows.forEach(r => {
+      lines.push(`- [${r.status.toUpperCase()}] ${r.name}: ${t.cmpT3} = ${r.t3 || '—'} | ${t.cmpContract} = ${r.contract || '—'}`);
+      if (r.reason) lines.push(`  ${t.cmpWhy}: ${r.reason}`);
+      if (r.rec) lines.push(`  ${t.cmpRec}: ${r.rec}`);
+    });
+    lines.push('');
+    lines.push('## ' + t.cmpFindings);
+    findings.forEach((f, i) => {
+      lines.push(`${i + 1}. [${t[SEV[f.severity].key]}] ${f.location}: ${f.issue}`);
+      if (f.rec) lines.push(`   → ${f.rec}`);
+    });
+    try { navigator.clipboard.writeText(lines.join('\n')); } catch (_e) {}
+    toast(t.cmpExported, 'doc');
+  }
+
+  const contractFileLabel = run.contractFile || pair.contractFile || 'contract.docx';
+  const handoverFileLabel = run.handoverFile || pair.handoverFile || 'handover.xlsx';
+
   return (
-    <div className="aipanel">
-      <div className="aipanel-head">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, marginBottom: 12 }}>
-          <Icon name="sparkle" size={16} fill={true} /> {t.findings}
+    <div className="analysis">
+      <div className="analysis-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <button className="hub-back" style={{ margin: 0 }} onClick={onBack}>
+            <Icon name="chevR" size={16} style={{ transform: 'rotate(180deg)' }} /> {t.cmpBack}
+          </button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pair.product || '—'}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{pair.counterparty}{pair.contractNo ? ' · ' + pair.contractNo : ''}</div>
+          </div>
         </div>
-        <div className="sev-bar">
-          {[
-            ['all',    t.sevAll],
-            ['must',   t.sevMust],
-            ['should', t.sevShould],
-            ['nice',   t.sevNice],
-            ['flag',   t.sevFlag],
-          ].map(([id, label]) => (
-            <button key={id}
-                    className={'sev-pill sev-' + id + (sevFilter === id ? ' on' : '')}
-                    onClick={() => setSevFilter(id)}>
-              {label} <span className="sev-count">{counts[id]}</span>
-            </button>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <div className="seg seg-sm">
+            <button className={view === 'docs' ? 'on' : ''} onClick={() => setView('docs')}><Icon name="doc" size={13} /> {t.cmpViewDocs}</button>
+            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}><Icon name="dashboard" size={13} /> {t.cmpViewTable}</button>
+          </div>
+          <span className="cmp-overall" style={{ color: overallMeta[1], background: `color-mix(in oklab, ${overallMeta[1]} 13%, transparent)` }}>
+            <Icon name={verdict === 'ok' ? 'checkCircle' : 'alert'} size={14} /> {t[overallMeta[0]]}
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={addEditsToTasks}><Icon name="calendar" size={15} /> {t.cmpToTasks}</button>
+          <button className="btn btn-ghost btn-sm" onClick={exportReport}><Icon name="download" size={15} /> {t.cmpReexport}</button>
+          <button className="btn btn-primary btn-sm" onClick={onRestart}><Icon name="refresh" size={15} /> {t.cmpRun}</button>
         </div>
       </div>
-      <div className="aipanel-body">
-        {filtered.length === 0 ? (
-          <div className="fnd-empty">{t.reconNoFindings}</div>
-        ) : filtered.map(f => {
-          const isApplied = applied[f.id];
-          const focus = selectedCat === f.cat;
-          return (
-            <div key={f.id}
-                 className={'finding' + (focus ? ' finding-active' : '') + (isApplied ? ' finding-done' : '')}
-                 style={{ borderLeftColor: isApplied ? 'var(--risk-low)' : SEV_TO_BORDER[f.severity] }}
-                 onClick={() => onPick(f.cat)}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span className={'badge-risk ' + (SEV_TO_BADGE[f.severity] || 'badge-info')}>{sevLabel(t, f.severity)}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 'auto' }}>{f.location}</span>
-              </div>
-              <div style={{ fontWeight: 650, fontSize: 14.5, marginBottom: 4, letterSpacing: '-0.01em' }}>{f.issue}</div>
-              {f.rec ? <div style={{ fontSize: 13.5, color: 'var(--text-2)', lineHeight: 1.5 }}>{f.rec}</div> : null}
-              <div className="fnd-meta">
-                <span className={'fnd-verified ' + (f.verified === 'VERIFIED' ? 'tag-ok' : 'tag-flag')}>
-                  <Icon name={f.verified === 'VERIFIED' ? 'check' : 'flag'} size={11} stroke={2.6} />
-                  {f.verified === 'VERIFIED' ? t.verifiedTag : t.flagTag}
-                </span>
-                {f.source ? <span className="fnd-source"><Icon name="sparkle" size={11} fill={true} /> {f.source}</span> : null}
-                <button className={'btn btn-sm ' + (isApplied ? 'btn-ghost' : 'btn-subtle')}
-                        disabled={isApplied}
-                        style={{ marginLeft: 'auto' }}
-                        onClick={(e) => { e.stopPropagation(); onApply(f.id); }}>
-                  {isApplied ? <><Icon name="check" size={13} /> {t.agreed}</> : <><Icon name="check" size={13} /> {t.agreeBtn}</>}
-                </button>
-              </div>
+
+      <div className="analysis-body">
+        <div className="doc-scroll cmp-scroll">
+          <div className="view-enter">
+            {view === 'docs' ? (
+              <>
+                <div className="cmp-doctabs">
+                  <button className={'cmp-doctab' + (which === 'contract' ? ' on' : '')} onClick={() => setWhich('contract')}>
+                    <Icon name="doc" size={15} /> <span>{contractFileLabel}</span>
+                  </button>
+                  <button className={'cmp-doctab' + (which === 'handover' ? ' on' : '')} onClick={() => setWhich('handover')}>
+                    <Icon name="folder" size={15} /> <span>{handoverFileLabel}</span>
+                  </button>
+                  <div className="cmp-legend">
+                    {legend.map(([s, lbl]) => (
+                      <span key={s} className="cmp-leg-item"><span className={'cmp-leg-dot cdoc-' + s} />{lbl}</span>
+                    ))}
+                  </div>
+                </div>
+
+                {which === 'contract'
+                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs} />
+                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs} />}
+
+                <div className="cmp-src-note"><Icon name="sparkle" size={12} fill={true} /> {t.cmpSrcNote}</div>
+              </>
+            ) : (
+              <>
+                <div className="cmp-table-h">
+                  <span>{t.cmpCategory}</span>
+                  <span>{t.cmpT3}</span>
+                  <span>{t.cmpContract}</span>
+                </div>
+                <div className="cmp-rows">
+                  {rows.map(row => {
+                    const m = CMP_STATUS[row.status] || CMP_STATUS.absent;
+                    const isDiff = row.status === 'mismatch' || row.status === 'flag';
+                    return (
+                      <div key={row.key}
+                        ref={el => { if (el) rowRefs.current[row.key] = el; }}
+                        className={'cmp-row cmp-row-' + row.status + (active === row.key ? ' active' : '')}
+                        onClick={() => isDiff && setActive(active === row.key ? null : row.key)}>
+                        <div className="cmp-row-cat">
+                          <span className="cmp-row-name">{row.name}</span>
+                          <span className="cmp-row-loc">{row.location}</span>
+                        </div>
+                        <div className="cmp-row-val cmp-row-t3">{row.t3 || '—'}</div>
+                        <div className="cmp-row-val cmp-row-c">{row.contract || '—'}</div>
+                        <span className="cmp-badge" style={{ color: m.col, background: m.bg }}>
+                          <Icon name={m.ic} size={12} /> {t[m.key]}
+                        </span>
+                        {isDiff && active === row.key ? (
+                          <div className="cmp-row-detail">
+                            {row.reason ? (
+                              <div className="cmp-detail-why">
+                                <span className="cmp-detail-l">{t.cmpWhy}</span>{row.reason}
+                              </div>
+                            ) : null}
+                            {row.rec ? (
+                              <div className="cmp-detail-rec">
+                                <Icon name="sparkle" size={13} fill={true} />
+                                <span><span className="cmp-detail-l">{t.cmpRec}</span>{row.rec}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="panel-wrap">
+          <div className="cmp-panel">
+            <div className="cmp-counters">
+              {counters.map(c => {
+                const s = SEV[c.k];
+                return (
+                  <button key={c.k}
+                    className={'cmp-counter' + (filter === c.k ? ' on' : '')}
+                    onClick={() => setFilter(filter === c.k ? 'all' : c.k)}
+                    style={filter === c.k ? { borderColor: s.col } : null}>
+                    <span className="cmp-counter-n" style={{ color: s.col }}>{c.n}</span>
+                    <span className="cmp-counter-l">{t[s.key]}</span>
+                  </button>
+                );
+              })}
             </div>
-          );
-        })}
+
+            <div className="cmp-find-list">
+              {shownFindings.length === 0 ? (
+                <div className="cmp-empty">{t.cmpEmpty}</div>
+              ) : shownFindings.map(f => {
+                const s = SEV[f.severity];
+                const isRec = reconciled.has(f.id);
+                const isActive = active === f.cat;
+                return (
+                  <div key={f.id}
+                    className={'cmp-find' + (isRec ? ' done' : '') + (isActive ? ' active' : '')}
+                    style={{ borderLeftColor: s.col }}
+                    onClick={() => focusFinding(f.cat)}>
+                    <div className="cmp-find-top">
+                      <span className="cmp-sev" style={{ color: s.col, background: s.bg }}>{t[s.key]}</span>
+                      <span className="cmp-find-loc">{f.location}</span>
+                      <span className={'cmp-vtag ' + (f.verified === 'VERIFIED' ? 'v' : 'f')}>
+                        {f.verified === 'VERIFIED' ? t.cmpVerified : t.cmpNeedsCheck}
+                      </span>
+                    </div>
+                    <div className="cmp-find-issue">{f.issue}</div>
+                    {f.rec ? (
+                      <div className="cmp-find-rec"><Icon name="sparkle" size={12} fill={true} /> {f.rec}</div>
+                    ) : null}
+                    <div className="cmp-find-foot">
+                      <span className="cmp-find-jump"><Icon name="scan" size={12} /> {f.source}</span>
+                      <button className={'cmp-find-rec-btn' + (isRec ? ' on' : '')}
+                              onClick={(e) => { e.stopPropagation(); toggleRec(f.id); }}>
+                        <Icon name={isRec ? 'check' : 'plus'} size={12} /> {isRec ? t.cmpReconciled : t.cmpReconcile}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -351,17 +549,11 @@ function FindingsPanel({ t, findings, sevFilter, setSevFilter, selectedCat, onPi
 
 /* ---------- Main screen ---------- */
 function Reconcile({ t, setRoute }) {
-  const [phase, setPhase] = useState('upload');     // upload | analyzing | result
-  const [view, setView] = useState('docs');         // docs | table
-  const [docTab, setDocTab] = useState('contract'); // contract | handover
-  const [sevFilter, setSevFilter] = useState('all');
-  const [selectedCat, setSelectedCat] = useState(null);
-  const [applied, setApplied] = useState({});
+  const [phase, setPhase] = useState('upload');
   const [run, setRun] = useState(null);
-  const [warning, setWarning] = useState(null);
-  const docScrollRef = useRef(null);
+  const [warned, setWarned] = useState(false);
 
-  // Open from Library — pop the requested run id.
+  // Open a persisted run handed off from Library / Dashboard.
   useEffect(() => {
     const openId = popOpenRunId();
     if (!openId) return;
@@ -369,29 +561,18 @@ function Reconcile({ t, setRoute }) {
     (async () => {
       try {
         const r = await api.reconciliations.get(openId);
-        if (!cancelled && r) loadRun(r);
+        if (!cancelled && r) { setRun(r); setPhase('result'); }
       } catch (_e) {
         const cached = loadHistory().find(x => x.id === openId);
-        if (!cancelled && cached) loadRun(cached);
+        if (!cancelled && cached) { setRun(cached); setPhase('result'); }
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function loadRun(r) {
-    setRun(r);
-    setPhase('result');
-    setView('docs');
-    setDocTab('contract');
-    setSevFilter('all');
-    setSelectedCat(null);
-    setApplied({});
-  }
-
-  async function runReconcile(contractFile, handoverFile) {
+  async function doReconcile({ contractFile, handoverFile, demo }) {
     setPhase('analyzing');
-    setWarning(null);
+    setWarned(false);
     const startedAt = Date.now();
     try {
       const fd = new FormData();
@@ -399,162 +580,52 @@ function Reconcile({ t, setRoute }) {
       fd.append('handover_file', handoverFile);
       const res = await api.reconcile(fd);
       const elapsed = Date.now() - startedAt;
-      if (elapsed < 2200) await new Promise(r => setTimeout(r, 2200 - elapsed));
+      if (elapsed < 2400) await new Promise(r => setTimeout(r, 2400 - elapsed));
       saveHistory(res);
-      loadRun(res);
-    } catch (e) {
-      // Offline / no auth / no AI quota — show the demo fixture so the screen
-      // is still useful. Surface a friendly warning explaining the fallback.
-      await new Promise(r => setTimeout(r, 1800));
+      setRun(res);
+      setPhase('result');
+    } catch (_e) {
+      // Offline / no auth / no AI quota — fall back to the demo fixture so the
+      // screen is still useful. Backend / live calls still work normally when
+      // the API is reachable.
+      await new Promise(r => setTimeout(r, 2000));
       const fixture = {
         ...DEMO.reconciliation,
-        id: 'rec-local-' + Math.random().toString(36).slice(2, 8),
-        contractFile: contractFile && contractFile.name,
-        handoverFile: handoverFile && handoverFile.name,
+        id: demo ? DEMO.reconciliation.id : 'rec-local-' + Math.random().toString(36).slice(2, 8),
+        contractFile: contractFile.name,
+        handoverFile: handoverFile.name,
         createdAt: new Date().toISOString(),
       };
       saveHistory(fixture);
-      setWarning(e && e.message ? e.message : 'fallback');
-      loadRun(fixture);
+      setWarned(true);
+      setRun(fixture);
+      setPhase('result');
     }
   }
 
-  function runDemo() {
-    runReconcile(
-      new File([''], DEMO.reconciliation.pair.contractFile || 'contract.docx'),
-      new File([''], DEMO.reconciliation.pair.handoverFile || 'handover.xlsx'),
-    );
-  }
-
-  function pickCat(cat) {
-    setSelectedCat(cat);
-    // If we're in docs view and the cat lives in the other tab, switch tabs.
-    if (view === 'docs' && cat && run) {
-      const inContract = (run.docs.contract.sections || []).some(s => [...(s.enP || []), ...(s.uaP || [])].some(p => Array.isArray(p) && p.some(part => part && part.cat === cat)));
-      const inHandover = (run.docs.handover.rows || []).some(r => (r.v || []).some(part => part && part.cat === cat));
-      if (!inContract && inHandover) setDocTab('handover');
-      else if (!inHandover && inContract) setDocTab('contract');
-    }
-  }
-
-  async function addEditsToTasks() {
-    if (!run) return;
-    const fixable = run.findings.filter(f => f.severity === 'must' || f.severity === 'should');
-    if (fixable.length === 0) { toast(t.reconTaskCreated, 'check'); return; }
-    const due = new Date(Date.now() + 7 * 86400 * 1000).toISOString().slice(0, 10);
-    let created = 0;
-    for (const f of fixable) {
-      try {
-        await api.tasks.create({
-          title: f.issue,
-          matter: run.pair && run.pair.counterparty,
-          assignee: '',
-          due,
-          priority: f.severity,
-          col: 'todo',
-        });
-        created += 1;
-      } catch (_e) { /* offline — skip silently */ }
-    }
-    toast((created > 0 ? t.reconTaskCreated : t.reconTaskFailed) + (created ? ' · ' + created : ''), created ? 'check' : 'alert');
-  }
-
-  function exportReport() {
-    if (!run) return;
-    const lines = [];
-    lines.push(`# ${t.reconcileTitle} · ${run.pair.product || ''}`);
-    lines.push(`${run.pair.counterparty || ''} · ${run.pair.contractNo || ''} · ${run.pair.date || ''}`);
-    lines.push('');
-    run.rows.forEach(r => {
-      lines.push(`- [${r.status.toUpperCase()}] ${r.name}: ${t.colT3} = ${r.t3 || '—'} | ${t.colContract} = ${r.contract || '—'}`);
-      if (r.reason) lines.push(`  ${t.whyMismatch}: ${r.reason}`);
-      if (r.rec) lines.push(`  ${t.recommendation}: ${r.rec}`);
-    });
-    lines.push('');
-    lines.push('## ' + t.findings);
-    run.findings.forEach((f, i) => {
-      lines.push(`${i + 1}. [${sevLabel(t, f.severity)}] ${f.location}: ${f.issue}`);
-      if (f.rec) lines.push(`   → ${f.rec}`);
-    });
-    const text = lines.join('\n');
-    try { navigator.clipboard.writeText(text); } catch (_e) {}
-    toast(t.reconExportDone, 'check');
+  function reset() {
+    setPhase('upload');
+    setRun(null);
+    setWarned(false);
   }
 
   if (phase === 'upload') {
-    return <UploadStep t={t} onSubmit={runReconcile} onDemo={runDemo} />;
+    return <UploadStep t={t} onRun={doReconcile} onBack={() => setRoute('dashboard')} demoPair={DEMO.reconciliation.pair} />;
   }
   if (phase === 'analyzing' || !run) {
-    return <div className="recon"><AnalyzingStep t={t} /></div>;
+    return <AnalyzingStep t={t} />;
   }
-
-  const verdict = run.verdict || 'minor';
-  const verdictBadge = { critical: 'badge-high', minor: 'badge-med', clean: 'badge-low' }[verdict] || 'badge-med';
-  const verdictLabel = { critical: t.reconVerdictCritical, minor: t.reconVerdictMinor, clean: t.reconVerdictClean }[verdict];
-
   return (
-    <div className="recon view-enter">
-      <div className="recon-bar">
-        <span className="chip"><Icon name="scan" size={13} /> {run.pair.contractNo || run.id}</span>
-        <div style={{ minWidth: 0 }}>
-          <div className="recon-bar-title">{run.pair.product || '—'}</div>
-          <div className="recon-bar-sub">{run.pair.counterparty} · {run.pair.date}</div>
-        </div>
-        <div className="recon-bar-right">
-          <div className="seg seg-sm">
-            <button className={view === 'docs' ? 'on' : ''} onClick={() => setView('docs')}>{t.reconViewDocs}</button>
-            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>{t.reconViewTable}</button>
-          </div>
-          <span className={'badge-risk ' + verdictBadge}>{verdictLabel}</span>
-          <button className="btn btn-subtle btn-sm" onClick={addEditsToTasks}><Icon name="check" size={14} /> {t.reconAddTasks}</button>
-          <button className="btn btn-subtle btn-sm" onClick={exportReport}><Icon name="upload" size={14} style={{ transform: 'rotate(180deg)' }} /> {t.reconExport}</button>
-          <button className="btn btn-primary btn-sm" onClick={() => { setPhase('upload'); setRun(null); setApplied({}); }}><Icon name="refresh" size={14} /> {t.reconRerun}</button>
-        </div>
-      </div>
-
-      {warning ? (
-        <div className="recon-warn" style={{ borderRadius: 0 }}>
-          <Icon name="alert" size={13} /> {t.analyzingSub} — режим фолбеку (без сервера). {warning}
+    <>
+      {warned ? (
+        <div style={{ padding: '8px 16px', background: 'var(--risk-med-soft)', color: 'var(--risk-med)', fontSize: 12 }}>
+          <Icon name="alert" size={12} /> {t.cmpFallback}
         </div>
       ) : null}
-
-      <div className="recon-body">
-        <div className="doc-scroll" ref={docScrollRef}>
-          {view === 'docs' ? (
-            <>
-              <div className="recon-doc-tabs">
-                <button className={'recon-doc-tab' + (docTab === 'contract' ? ' on' : '')} onClick={() => setDocTab('contract')}>
-                  <Icon name="doc" size={14} /> {t.reconDocContract}
-                </button>
-                <button className={'recon-doc-tab' + (docTab === 'handover' ? ' on' : '')} onClick={() => setDocTab('handover')}>
-                  <Icon name="scales" size={14} /> {t.reconDocHandover}
-                </button>
-              </div>
-              <div className="recon-legend">
-                <span><span className="recon-legend-dot" style={{ background: 'var(--risk-low)' }} />{t.reconLegendOk}</span>
-                <span><span className="recon-legend-dot" style={{ background: 'var(--risk-high)' }} />{t.reconLegendMismatch}</span>
-                <span><span className="recon-legend-dot" style={{ background: 'var(--risk-med)' }} />{t.reconLegendFlag}</span>
-              </div>
-              {docTab === 'contract'
-                ? <ContractDocView doc={run.docs.contract} onPick={pickCat} selectedCat={selectedCat} applied={applied} />
-                : <HandoverDocView doc={run.docs.handover} onPick={pickCat} selectedCat={selectedCat} applied={applied} t={t} />}
-            </>
-          ) : (
-            <CompareTable rows={run.rows} t={t} selectedCat={selectedCat} onPick={pickCat} />
-          )}
-        </div>
-        <div className="panel-wrap">
-          <FindingsPanel t={t}
-                         findings={run.findings}
-                         sevFilter={sevFilter}
-                         setSevFilter={setSevFilter}
-                         selectedCat={selectedCat}
-                         onPick={pickCat}
-                         applied={applied}
-                         onApply={(id) => setApplied(a => ({ ...a, [id]: true }))} />
-        </div>
-      </div>
-    </div>
+      <ResultStep t={t} run={run}
+                  onBack={() => setPhase('upload')}
+                  onRestart={() => { setRun(null); setPhase('upload'); }} />
+    </>
   );
 }
 

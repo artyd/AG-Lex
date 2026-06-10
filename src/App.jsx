@@ -171,35 +171,27 @@ export default function App() {
 
       <Toaster />
 
-      {/* Launcher modal — what do you want to analyze? */}
-      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.launcherTitle || L.upload} sub={L.launcherSub} icon="sparkle"
-        footer={<>
-          <button className="btn btn-subtle" onClick={() => setUploadOpen(false)}>{L.cancel}</button>
-        </>}>
-        <div className="launcher">
-          <button className="launcher-card" onClick={startUpload}>
-            <span className="launcher-ic"><Icon name="scan" size={20} /></span>
-            <span className="launcher-text">
-              <span className="launcher-title">{L.launcherContract || L.analyze}</span>
-              <span className="launcher-sub">{L.launcherContractSub}</span>
-            </span>
-            <Icon name="chevR" size={16} />
+      {/* Launcher modal — analysis hub. Three hub-block cards. */}
+      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
+        <div className="hub-grid">
+          <button className="hub-block hub-accent" onClick={startUpload}>
+            <span className="hub-ic"><Icon name="doc" size={24} /></span>
+            <span className="hub-block-t">{L.hubContract}</span>
+            <span className="hub-block-s">{L.hubContractSub}</span>
+            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
-          <button className="launcher-card" onClick={startReconcile}>
-            <span className="launcher-ic launcher-ic-accent"><Icon name="scales" size={20} /></span>
-            <span className="launcher-text">
-              <span className="launcher-title">{L.launcherRecon}</span>
-              <span className="launcher-sub">{L.launcherReconSub}</span>
-            </span>
-            <Icon name="chevR" size={16} />
+          <button className="hub-block hub-accent" onClick={startReconcile}>
+            <span className="hub-new">{L.hubNew}</span>
+            <span className="hub-ic"><Icon name="scan" size={24} /></span>
+            <span className="hub-block-t">{L.hubCompare}</span>
+            <span className="hub-block-s">{L.hubCompareSub}</span>
+            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
-          <button className="launcher-card" onClick={startBatch}>
-            <span className="launcher-ic"><Icon name="sparkle" size={20} fill={true} /></span>
-            <span className="launcher-text">
-              <span className="launcher-title">{L.launcherBatch || L.batch}</span>
-              <span className="launcher-sub">{L.launcherBatchSub}</span>
-            </span>
-            <Icon name="chevR" size={16} />
+          <button className="hub-block hub-muted" onClick={startBatch}>
+            <span className="hub-ic"><Icon name="sparkle" size={24} fill={true} /></span>
+            <span className="hub-block-t">{L.hubBatch}</span>
+            <span className="hub-block-s">{L.hubBatchSub}</span>
+            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
         </div>
       </Modal>
