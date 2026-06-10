@@ -136,7 +136,9 @@ def test_ask_claude_places_cache_control_on_system_and_articles():
     assert len(system) == 2, "Expected system prompt + articles as two cache breakpoints"
     assert all(b["cache_control"] == {"type": "ephemeral"} for b in system)
     # System prompt comes first (most stable), articles second.
-    assert "помічник юриста" in system[0]["text"]
+    # Sanity-check that slot 0 is the system prompt (mentions the lawyer identity),
+    # not the article block (which mentions <context_articles>).
+    assert "адвокат" in system[0]["text"]
     assert "Стаття 651" in system[1]["text"]
 
 
