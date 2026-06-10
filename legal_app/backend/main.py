@@ -25,7 +25,7 @@ from .claude_client import ClaudeError
 from .codex import get_codex_stats
 from .config import get_settings
 from .contract_analysis import analyze_contract
-from .crud import ALL_ENTITIES, build_router
+from .crud import ALL_ENTITIES, RECONCILIATIONS, build_router, insert_row
 from .database import get_connection, get_db, init_schema, init_user_schema
 from .documents import (
     detect_type_and_convert,
@@ -40,7 +40,10 @@ from .rbac import (
     require,
     seed_default_permissions,
 )
+from . import reconciliation as reconciliation_module
+import datetime
 import sqlite3
+import uuid
 
 settings = get_settings()
 
@@ -93,6 +96,10 @@ for _entity in ALL_ENTITIES:
 # to keep a careless mis-upload from filling /tmp.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 SUPPORTED_EXTS = {".pdf", ".docx"}
+# Reconciliation accepts the contract in .pdf/.docx and the handover in
+# .pdf/.docx/.xlsx (procurement often hands over Table 3 as Excel).
+RECONCILE_CONTRACT_EXTS = {".pdf", ".docx"}
+RECONCILE_HANDOVER_EXTS = {".pdf", ".docx", ".xlsx"}
 
 
 @app.get("/health")
@@ -246,6 +253,98 @@ def analyze_contract_endpoint(
         return analyze_contract(text, conn=conn)
     except ClaudeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tuple[str, str]:
+    """Reusable: validate + persist to a temp file + convert to markdown.
+
+    Returns (markdown, original_filename). Raises HTTPException on any
+    validation failure. The temp file is deleted before returning.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in allowed:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported {role} file {suffix!r}. Supported: {sorted(allowed)}",
+        )
+    raw_bytes = await file.read()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail=f"Empty {role} upload.")
+    if len(raw_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{role.title()} file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
+        )
+    fd, tmp_str = tempfile.mkstemp(suffix=suffix, prefix=f"aglex_{role}_")
+    os.close(fd)
+    tmp_path = Path(tmp_str)
+    try:
+        tmp_path.write_bytes(raw_bytes)
+        try:
+            markdown = detect_type_and_convert(tmp_path)
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not parse {role} file: {e}",
+            ) from e
+        if not markdown.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"No text extracted from {role} file (possibly a scan without OCR).",
+            )
+        return markdown, file.filename or ""
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/reconcile", dependencies=[Depends(require("ai"))])
+async def reconcile_endpoint(
+    contract_file: UploadFile = File(...),
+    handover_file: UploadFile = File(...),
+    user: dict = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    """Contract ↔ Handover (Table 3) reconciliation.
+
+    Two-file multipart upload. Each file is parsed (PDF/DOCX/XLSX → Markdown)
+    and handed to Claude with the reconciliation schema. The result is
+    persisted to `reconciliations` so it shows up in Library/History.
+    """
+    contract_md, contract_name = await _ingest_upload(
+        contract_file, RECONCILE_CONTRACT_EXTS, "contract",
+    )
+    handover_md, handover_name = await _ingest_upload(
+        handover_file, RECONCILE_HANDOVER_EXTS, "handover",
+    )
+
+    try:
+        result = reconciliation_module.reconcile(contract_md, handover_md)
+    except ClaudeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    pair = result["pair"]
+    rows = result["rows"]
+    findings = result["findings"]
+    docs = result["docs"]
+    verdict, must_count, should_count = reconciliation_module.compute_verdict(findings)
+
+    payload = {
+        "id": f"rec-{uuid.uuid4().hex[:8]}",
+        "userId": user["id"],
+        "contractFile": contract_name,
+        "handoverFile": handover_name,
+        "product": pair.get("product") or "",
+        "counterparty": pair.get("counterparty") or "",
+        "verdict": verdict,
+        "mustCount": must_count,
+        "shouldCount": should_count,
+        "pair": pair,
+        "rows": rows,
+        "findings": findings,
+        "docs": docs,
+        "createdAt": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    return insert_row(conn, RECONCILIATIONS, payload)
 
 
 # All future API routes go above this line. The static mount below is registered

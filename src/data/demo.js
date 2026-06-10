@@ -248,5 +248,166 @@ export const DEMO = (function () {
     { id: 'tk7', date: '2026-06-30', title: 'Автопролонгація — крайній строк відмови', client: 'ТОВ «Маяк Трейд»', type: 'deadline', risk: 'high' },
   ];
 
-  return { contract, findings, missing, keyData, comparison, summary, score, legalBasis, chat, library, clients, templates, tasks };
+  /* ---------- Контракт ↔ передача справ (Таблиця 3) — демо-пара ---------- */
+  const reconciliation = {
+    id: 'rec-demo-1',
+    pair: {
+      product: 'Натрію хлорид (NaCl) фарм. якості',
+      counterparty: 'Vendor Chem Industries Ltd.',
+      contractNo: 'SUP-2026/118',
+      date: '02.06.2026',
+      contractFile: 'supply-natrium-chloride-2026.docx',
+      handoverFile: 'handover-table3-natrium.xlsx',
+    },
+    rows: [
+      { key: 'supplier',     name: 'Реквізити постачальника',     t3: 'Vendor Chem Industries Ltd. (IN)', contract: 'Vendor Chem Industries Ltd. (IN)', location: 'Преамбула',     status: 'ok',       reason: 'Назва, країна, реквізити збігаються', rec: '' },
+      { key: 'product',      name: 'Опис товару',                  t3: 'Sodium Chloride USP 99.5%',         contract: 'Sodium Chloride USP 99.5%',         location: 'п. 1.1 SUBJECT', status: 'ok',       reason: 'Найменування та грейд збігаються',     rec: '' },
+      { key: 'price',        name: 'Ціна та валюта',               t3: '0,82 USD/kg, FOB',                  contract: '0,89 USD/kg, FOB',                  location: 'п. 3.1 PRICE',    status: 'mismatch', reason: 'Ціна вище погодженої на 8,5%',          rec: 'Узгодити ціну з відділом закупівель або підписати додаткову угоду' },
+      { key: 'quantity',     name: 'Кількість / обсяг',            t3: '200 000 кг',                        contract: '200 МТ (200 000 кг)',               location: 'п. 2.1 QUANTITY', status: 'ok',       reason: 'Одиниці виміру відповідають',          rec: '' },
+      { key: 'incoterms',    name: 'Incoterms / місце поставки',   t3: 'FOB Mumbai',                        contract: 'FOB Nhava Sheva',                   location: 'п. 4.1 DELIVERY', status: 'flag',     reason: 'Порт відвантаження інший, але обидва — FOB Індія', rec: 'Перевірити логістичну схему та страхування' },
+      { key: 'delivery',     name: 'Строки поставки',              t3: 'Не пізніше 30.09.2026',             contract: '90 днів з дати передоплати',        location: 'п. 4.2 DELIVERY', status: 'mismatch', reason: 'Контракт прив\'язує строк до передоплати, а не до календарної дати', rec: 'Зафіксувати конкретну дату — 30.09.2026, або додати «не пізніше»' },
+      { key: 'payment',      name: 'Умови оплати',                 t3: '30% передоплата, 70% проти B/L',    contract: '50% передоплата, 50% проти B/L',    location: 'п. 5.2 PAYMENT',  status: 'mismatch', reason: 'Контракт вимагає вищу передоплату — додатковий ризик для покупця', rec: 'Повернути до схеми 30/70 або вимагати банківську гарантію на передоплату' },
+      { key: 'origin',       name: 'Країна походження',            t3: 'Індія',                             contract: 'Індія',                             location: 'п. 1.2 SUBJECT', status: 'ok',       reason: 'Збіг',                                  rec: '' },
+      { key: 'hscode',       name: 'Код ТН ЗЕД',                   t3: '2501 00 91',                        contract: '—',                                  location: '—',              status: 'flag',     reason: 'Код у контракті не зафіксовано',        rec: 'Додати HS-код у специфікацію' },
+      { key: 'certificates', name: 'Сертифікати / документи',      t3: 'MSDS, CoA, USP-сертифікат',         contract: 'MSDS, CoA, USP, Halal',             location: 'п. 6.1 DOCS',    status: 'positive', reason: 'Контракт додає сертифікат Halal',      rec: '' },
+      { key: 'packaging',    name: 'Пакування / маркування',       t3: 'PP-мішки по 25 кг',                 contract: 'PP-мішки по 25 кг, EUR-палети',     location: 'п. 7.1 PACKAGING', status: 'ok',     reason: 'Відповідає, контракт уточнює палетизацію', rec: '' },
+      { key: 'quality',      name: 'Вимоги до якості',             t3: 'USP/EP, чистота ≥ 99,5%',           contract: 'USP, чистота ≥ 99,5%',              location: 'п. 8.1 QUALITY', status: 'flag',     reason: 'Контракт не згадує EP',                 rec: 'Додати EP до пункту якості' },
+      { key: 'consignee',    name: 'Вантажоодержувач',             t3: 'ТОВ «Фарма ЛТД», Київ',             contract: 'ТОВ «Фарма ЛТД», Київ',             location: 'п. 4.3',         status: 'ok',       reason: 'Збіг',                                  rec: '' },
+      { key: 'regnumber',    name: 'Реєстраційний номер договору', t3: 'SUP-2026/118',                       contract: 'SUP-2026/118',                       location: 'Шапка',          status: 'ok',       reason: 'Збіг',                                  rec: '' },
+      { key: 'additional',   name: 'Додаткові вимоги',             t3: 'Відсутні',                          contract: 'Штраф 0,1%/день при простроченні',  location: 'п. 9.2',         status: 'positive', reason: 'Контракт додає пеню — посилює позицію покупця', rec: '' },
+    ],
+    findings: [
+      { id: 'MM-price',    severity: 'must',   verified: 'VERIFIED', source: 'Звірка з передачею справ',  cat: 'price',    location: 'п. 3.1 PRICE',    issue: 'Ціна 0,89 USD/kg перевищує погоджену з закупівлями 0,82 USD/kg на 8,5%', rec: 'Зафіксувати ціну 0,82 USD/kg або провести додаткове погодження бюджету' },
+      { id: 'MM-payment',  severity: 'must',   verified: 'VERIFIED', source: 'Юридично-фінансовий аналіз', cat: 'payment',  location: 'п. 5.2 PAYMENT',  issue: 'Передоплата 50% замість погоджених 30% — додатковий касовий ризик ~14 000 USD', rec: 'Повернути 30/70 або вимагати банківську гарантію на передоплату' },
+      { id: 'MM-delivery', severity: 'should', verified: 'VERIFIED', source: 'Звірка з передачею справ',  cat: 'delivery', location: 'п. 4.2 DELIVERY', issue: 'Строк прив\'язано до передоплати, а не до 30.09.2026 — постачання може зсунутися', rec: 'Додати «не пізніше 30.09.2026»' },
+      { id: 'LF-hscode',   severity: 'should', verified: 'FLAG',     source: 'Галузевий аналіз',          cat: 'hscode',   location: '—',               issue: 'У договорі немає HS-коду — ризик при митному оформленні', rec: 'Додати 2501 00 91 у специфікацію' },
+      { id: 'LS-incoterm', severity: 'flag',   verified: 'FLAG',     source: 'Двомовна звірка',           cat: 'incoterms', location: 'п. 4.1 DELIVERY', issue: 'Інший порт відвантаження (Nhava Sheva vs Mumbai) — перевірити логістику', rec: 'Уточнити з відділом ЗЕД' },
+      { id: 'LS-quality',  severity: 'nice',   verified: 'VERIFIED', source: 'Галузевий аналіз',          cat: 'quality',  location: 'п. 8.1 QUALITY',  issue: 'Контракт не згадує EP стандарт', rec: 'Додати EP поряд із USP' },
+    ],
+    docs: {
+      contract: {
+        kind: 'contract',
+        title: 'SUPPLY CONTRACT No. SUP-2026/118',
+        titleUa: 'ДОГОВІР ПОСТАЧАННЯ № SUP-2026/118',
+        place: 'Mumbai · 02.06.2026',
+        placeUa: 'Мумбаї · 02.06.2026',
+        sections: [
+          { n: '1', en: 'SUBJECT', ua: 'ПРЕДМЕТ',
+            enP: [[
+              'The Seller shall supply ',
+              { t: 'Sodium Chloride USP 99.5%', cat: 'product', st: 'ok' },
+              ', country of origin ',
+              { t: 'India', cat: 'origin', st: 'ok' },
+              '.'
+            ]],
+            uaP: [[
+              'Продавець постачає ',
+              { t: 'Натрію хлорид USP 99,5%', cat: 'product', st: 'ok' },
+              ', країна походження ',
+              { t: 'Індія', cat: 'origin', st: 'ok' },
+              '.'
+            ]],
+          },
+          { n: '2', en: 'QUANTITY', ua: 'КІЛЬКІСТЬ',
+            enP: [[
+              'Total quantity: ',
+              { t: '200 MT (200 000 kg)', cat: 'quantity', st: 'ok' },
+              '.'
+            ]],
+            uaP: [[
+              'Загальний обсяг: ',
+              { t: '200 МТ (200 000 кг)', cat: 'quantity', st: 'ok' },
+              '.'
+            ]],
+          },
+          { n: '3', en: 'PRICE', ua: 'ЦІНА',
+            enP: [[
+              'Unit price: ',
+              { t: 'USD 0.89 per kg', cat: 'price', st: 'mismatch' },
+              ' on ',
+              { t: 'FOB Nhava Sheva', cat: 'incoterms', st: 'flag' },
+              ' basis.'
+            ]],
+            uaP: [[
+              'Ціна за одиницю: ',
+              { t: '0,89 USD/кг', cat: 'price', st: 'mismatch' },
+              ' на умовах ',
+              { t: 'FOB Nhava Sheva', cat: 'incoterms', st: 'flag' },
+              '.'
+            ]],
+          },
+          { n: '4', en: 'DELIVERY', ua: 'ПОСТАВКА',
+            enP: [[
+              'Delivery: ',
+              { t: 'within 90 days from prepayment', cat: 'delivery', st: 'mismatch' },
+              '. Consignee: ',
+              { t: 'Pharma Ltd, Kyiv', cat: 'consignee', st: 'ok' },
+              '.'
+            ]],
+            uaP: [[
+              'Поставка: ',
+              { t: 'упродовж 90 днів з дати передоплати', cat: 'delivery', st: 'mismatch' },
+              '. Вантажоодержувач: ',
+              { t: 'ТОВ «Фарма ЛТД», Київ', cat: 'consignee', st: 'ok' },
+              '.'
+            ]],
+          },
+          { n: '5', en: 'PAYMENT', ua: 'ОПЛАТА',
+            enP: [[
+              'Payment: ',
+              { t: '50% prepayment, 50% against B/L copy', cat: 'payment', st: 'mismatch' },
+              '.'
+            ]],
+            uaP: [[
+              'Оплата: ',
+              { t: '50% передоплата, 50% проти копії B/L', cat: 'payment', st: 'mismatch' },
+              '.'
+            ]],
+          },
+          { n: '6', en: 'DOCUMENTS & QUALITY', ua: 'ДОКУМЕНТИ ТА ЯКІСТЬ',
+            enP: [[
+              'Documents: ',
+              { t: 'MSDS, CoA, USP, Halal certificate', cat: 'certificates', st: 'positive' },
+              '. Quality: ',
+              { t: 'USP grade, purity ≥ 99.5%', cat: 'quality', st: 'flag' },
+              '.'
+            ]],
+            uaP: [[
+              'Документи: ',
+              { t: 'MSDS, CoA, USP, сертифікат Halal', cat: 'certificates', st: 'positive' },
+              '. Якість: ',
+              { t: 'USP, чистота ≥ 99,5%', cat: 'quality', st: 'flag' },
+              '.'
+            ]],
+          },
+        ],
+      },
+      handover: {
+        kind: 'handover',
+        appendix: 'Додаток №3',
+        title: 'ЛИСТ ПОГОДЖЕННЯ ВОПРОСІВ ПО ПОСТАВЦІ СУБСТАНЦІЙ',
+        sub: 'Внутрішня форма відділу закупівель · Таблиця 3',
+        section: 'Заповнюється до підписання контракту',
+        rows: [
+          { n: '1',  star: true,  label: 'Постачальник',                v: [{ t: 'Vendor Chem Industries Ltd. (IN)', cat: 'supplier',    st: 'ok' }] },
+          { n: '2',  star: true,  label: 'Назва товару',                v: [{ t: 'Sodium Chloride USP 99.5%',        cat: 'product',     st: 'ok' }] },
+          { n: '3',  star: true,  label: 'Ціна та валюта',              v: [{ t: '0,82 USD/kg, FOB',                 cat: 'price',       st: 'mismatch' }] },
+          { n: '4',  star: true,  label: 'Кількість',                   v: [{ t: '200 000 кг',                       cat: 'quantity',    st: 'ok' }] },
+          { n: '5',  star: true,  label: 'Incoterms',                   v: [{ t: 'FOB Mumbai',                       cat: 'incoterms',   st: 'flag' }] },
+          { n: '6',  star: true,  label: 'Строк поставки',              v: [{ t: 'не пізніше 30.09.2026',            cat: 'delivery',    st: 'mismatch' }] },
+          { n: '7',  star: true,  label: 'Умови оплати',                v: [{ t: '30% передоплата, 70% проти B/L',   cat: 'payment',     st: 'mismatch' }] },
+          { n: '8',  star: false, label: 'Код ТН ЗЕД',                  v: [{ t: '2501 00 91',                       cat: 'hscode',      st: 'flag' }] },
+          { n: '9',  star: false, label: 'Сертифікати',                 v: [{ t: 'MSDS, CoA, USP',                   cat: 'certificates', st: 'positive' }] },
+          { n: '10', star: false, label: 'Вимоги до якості',            v: [{ t: 'USP/EP, чистота ≥ 99,5%',          cat: 'quality',     st: 'flag' }] },
+        ],
+        footnote: '* — поля, обов\'язкові до заповнення відділом закупівель',
+      },
+    },
+    verdict: 'critical',
+    mustCount: 2,
+    shouldCount: 2,
+    createdAt: '2026-06-10T09:00:00Z',
+  };
+
+  return { contract, findings, missing, keyData, comparison, summary, score, legalBasis, chat, library, clients, templates, tasks, reconciliation };
 })();

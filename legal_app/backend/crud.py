@@ -338,6 +338,34 @@ VERSIONS = Entity(
     id_prefix="v-",
 )
 
+# Contract ↔ Handover reconciliation runs. POST goes through the custom
+# `/api/reconcile` endpoint (multipart + Claude), but list/get/delete are
+# served by the generic router.
+RECONCILIATIONS = Entity(
+    table="reconciliations",
+    columns=(
+        "user_id", "contract_file", "handover_file",
+        "product", "counterparty", "verdict",
+        "must_count", "should_count",
+        "pair_json", "rows_json", "findings_json", "docs_json",
+        "created_at",
+    ),
+    json_columns=frozenset({"pair_json", "rows_json", "findings_json", "docs_json"}),
+    column_aliases={
+        "userId": "user_id",
+        "contractFile": "contract_file",
+        "handoverFile": "handover_file",
+        "mustCount": "must_count",
+        "shouldCount": "should_count",
+        "pair": "pair_json",
+        "rows": "rows_json",
+        "findings": "findings_json",
+        "docs": "docs_json",
+        "createdAt": "created_at",
+    },
+    id_prefix="rec-",
+)
+
 # Fix 1: drafts moved to a dedicated router (backend/drafts.py) because they
 # need per-row authorization (author vs team-shared). The generic CRUD here
 # has no row-level auth knobs; rather than complicate it for every other
@@ -347,4 +375,5 @@ VERSIONS = Entity(
 ALL_ENTITIES: tuple[Entity, ...] = (
     MATTERS, TASKS, CLIENTS, TEMPLATES, INVOICES, TIME_ENTRIES,
     CLAUSE_LIB, LAWS, COMMENTS, APPROVAL, DEADLINES, OBLIGATIONS, VERSIONS,
+    RECONCILIATIONS,
 )

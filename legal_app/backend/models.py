@@ -180,6 +180,26 @@ CREATE INDEX IF NOT EXISTS idx_drafts_type ON drafts(type_id);
 CREATE INDEX IF NOT EXISTS idx_drafts_created ON drafts(created_at);
 -- Indexes on user_id/is_shared live in migrate_drafts() so legacy DBs (which
 -- still lack those columns until migration runs) don't crash here.
+
+-- Contract ↔ Handover (Table 3) reconciliations. One row per run.
+CREATE TABLE IF NOT EXISTS reconciliations (
+    id             TEXT PRIMARY KEY,
+    user_id        INTEGER REFERENCES users(id),
+    contract_file  TEXT,
+    handover_file  TEXT,
+    product        TEXT,
+    counterparty   TEXT,
+    verdict        TEXT,           -- critical | minor | clean
+    must_count     INTEGER NOT NULL DEFAULT 0,
+    should_count   INTEGER NOT NULL DEFAULT 0,
+    pair_json      TEXT NOT NULL,
+    rows_json      TEXT NOT NULL,
+    findings_json  TEXT NOT NULL,
+    docs_json      TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
+CREATE INDEX IF NOT EXISTS idx_reconciliations_created ON reconciliations(created_at);
 """
 
 

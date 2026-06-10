@@ -9,6 +9,7 @@ sentence-transformers
 sqlite-vec
 pymupdf4llm
 mammoth
+openpyxl
 bcrypt
 python-jose[cryptography]
 python-multipart
