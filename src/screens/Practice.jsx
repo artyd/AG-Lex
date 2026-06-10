@@ -20,8 +20,11 @@ function Matters({ t, setRoute }) {
 
   useEffect(() => {
     let cancelled = false;
-    api.matters.list()
-      .then(rows => { if (!cancelled) setMatters(rows); })
+    // Defensive: api / api.matters / api.matters.list can all be undefined if
+    // the api module fails to bundle/import. Optional chaining + Promise.resolve
+    // keeps the screen mounted with the LX.matters fallback instead of crashing.
+    Promise.resolve(api?.matters?.list?.() ?? [])
+      .then(rows => { if (!cancelled && Array.isArray(rows)) setMatters(rows); })
       .catch(() => { /* keep the LX.matters fallback */ });
     return () => { cancelled = true; };
   }, []);

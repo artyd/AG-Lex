@@ -398,9 +398,12 @@ function DocBuilder({ t, setRoute, user }) {
   // to (mine OR is_shared = TRUE), so the client just needs to bucket them
   // into the two tabs.
   function refreshDrafts() {
-    return api.drafts.list()
+    // Defensive: optional chaining guards against api / api.drafts / api.drafts.list
+    // being undefined at mount (bundle order, partial module load). Promise.resolve
+    // wraps the fallback `[]` so the .then chain stays uniform.
+    return Promise.resolve(api?.drafts?.list?.() ?? [])
       .then(rows => {
-        setDrafts(rows.map(r => ({
+        setDrafts((rows ?? []).map(r => ({
           id: r.id,
           typeId: r.typeId,
           name: r.name,
