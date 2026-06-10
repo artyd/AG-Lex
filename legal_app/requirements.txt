@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+pydantic-settings
+email-validator
+anthropic
+sentence-transformers
+sqlite-vec
+pymupdf4llm
+mammoth
+bcrypt
+python-jose[cryptography]
+python-multipart
+pytest
+httpx

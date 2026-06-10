@@ -1,0 +1,46 @@
+# ---- Python ----
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Secrets / local config ----
+# Never commit `.env`; whitelist `.env.example` so the template stays in repo.
+.env
+.env.*
+!.env.example
+
+# ---- Database (large; embeddings live here) ----
+database/legal.sqlite
+database/*.sqlite
+database/*.sqlite-journal
+database/*.sqlite-wal
+database/*.sqlite-shm
+database/*.db
+data/*.db
+data/legal.db
+
+# ---- Scratch / one-off probes (kept out of history) ----
+check_db.py
+find_db.py
+
+# ---- Embedding model cache (sentence-transformers downloads on first run) ----
+.cache/
+models/
+
+# ---- OS noise ----
+.DS_Store
+Thumbs.db
+
+# ---- IDE ----
+.vscode/
+.idea/
