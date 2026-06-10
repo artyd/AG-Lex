@@ -91,8 +91,11 @@ def seeded_auth_headers(seeded_client):
 # Seed sanity — every Phase 2.2 table gets non-empty rows.
 # ---------------------------------------------------------------------------
 
-# `drafts` is intentionally user-created (Phase 3.3), not seeded with demo data.
-_SEEDED_ENTITIES = tuple(e for e in ALL_ENTITIES if e.table != "drafts")
+# `drafts` (Phase 3.3) and `reconciliations` (handover feature) are intentionally
+# user-created at runtime, not seeded with demo data.
+_SEEDED_ENTITIES = tuple(
+    e for e in ALL_ENTITIES if e.table not in {"drafts", "reconciliations"}
+)
 
 
 @pytest.mark.parametrize("entity", _SEEDED_ENTITIES, ids=lambda e: e.table)
@@ -127,9 +130,9 @@ def test_list_returns_json_array_with_auth(seeded_client, seeded_auth_headers, e
     assert r.status_code == 200, f"{path}: {r.text}"
     body = r.json()
     assert isinstance(body, list)
-    # drafts starts empty by design (Phase 3.3 — user-created);
-    # every other entity must carry demo seed rows.
-    if entity.table != "drafts":
+    # drafts (Phase 3.3) and reconciliations (handover feature) start empty by
+    # design — user-created at runtime, not seeded with demo data.
+    if entity.table not in {"drafts", "reconciliations"}:
         assert body, f"{path} returned empty list despite seed"
 
 

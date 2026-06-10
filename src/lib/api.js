@@ -56,6 +56,29 @@ function entity(slug) {
   };
 }
 
+async function multipart(path, formData) {
+  // Plain fetch — we deliberately omit Content-Type so the browser sets the
+  // multipart boundary itself. Same error/401 handling as request().
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+    body: formData,
+  });
+  if (r.status === 401) lxLogout();
+  let payload = null;
+  if (r.status !== 204) {
+    try { payload = await r.json(); } catch (_e) { /* non-JSON */ }
+  }
+  if (!r.ok) {
+    const msg =
+      (payload && typeof payload.detail === 'string' && payload.detail) ||
+      (payload && Array.isArray(payload.detail) && payload.detail[0]?.msg) ||
+      `${r.status} ${r.statusText}`;
+    throw new ApiError(msg, { status: r.status, body: payload });
+  }
+  return payload;
+}
+
 export const api = {
   request,
   matters: entity('matters'),
@@ -71,6 +94,8 @@ export const api = {
   deadlines: entity('deadlines'),
   obligations: entity('obligations'),
   versions: entity('versions'),
+  reconciliations: entity('reconciliations'),
+  reconcile: (formData) => multipart('/api/reconcile', formData),
 };
 
 export { ApiError };

@@ -32,6 +32,22 @@ def docx_raw_text(path: str | Path) -> str:
         return mammoth.extract_raw_text(f).value
 
 
+def xlsx_raw_text(path: str | Path) -> str:
+    """Flatten every non-empty cell across all sheets into newline-separated text."""
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    try:
+        lines: list[str] = []
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c).strip() for c in row if c not in (None, "")]
+                if cells:
+                    lines.append("\t".join(cells))
+        return "\n".join(lines)
+    finally:
+        wb.close()
+
+
 # ---------------------------------------------------------------------------
 # markdown conversion
 # ---------------------------------------------------------------------------
@@ -50,14 +66,53 @@ def docx_to_markdown(path: str | Path) -> str:
     return result.value
 
 
+def xlsx_to_markdown(path: str | Path) -> str:
+    """Render every sheet as a Markdown table.
+
+    Used for the procurement "Handover (Table 3)" which arrives as an Excel
+    form: two-column N/Field/Value layouts and 3+ column tables both work.
+    Empty rows are skipped; merged cells aren't expanded (openpyxl read-only
+    flattens them to the top-left value, which matches how lawyers read the
+    form anyway).
+    """
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    try:
+        parts: list[str] = []
+        for ws in wb.worksheets:
+            rows = [
+                ["" if c is None else str(c).strip() for c in row]
+                for row in ws.iter_rows(values_only=True)
+            ]
+            rows = [r for r in rows if any(cell for cell in r)]
+            if not rows:
+                continue
+            width = max(len(r) for r in rows)
+            rows = [r + [""] * (width - len(r)) for r in rows]
+            if ws.title and ws.title.lower() not in {"sheet", "sheet1", "аркуш1"}:
+                parts.append(f"## {ws.title}\n")
+            header = rows[0]
+            body = rows[1:]
+            parts.append("| " + " | ".join(header) + " |")
+            parts.append("| " + " | ".join("---" for _ in header) + " |")
+            for r in body:
+                parts.append("| " + " | ".join(c.replace("|", "\\|") for c in r) + " |")
+            parts.append("")
+        return "\n".join(parts)
+    finally:
+        wb.close()
+
+
 _CONVERTERS: dict[str, Callable[[str | Path], str]] = {
     ".pdf": pdf_to_markdown,
     ".docx": docx_to_markdown,
+    ".xlsx": xlsx_to_markdown,
 }
 
 _RAW_EXTRACTORS: dict[str, Callable[[str | Path], str]] = {
     ".pdf": pdf_raw_text,
     ".docx": docx_raw_text,
+    ".xlsx": xlsx_raw_text,
 }
 
 
@@ -65,7 +120,7 @@ def detect_type_and_convert(path: str | Path) -> str:
     suffix = Path(path).suffix.lower()
     fn = _CONVERTERS.get(suffix)
     if fn is None:
-        raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx")
+        raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx, .xlsx")
     return fn(path)
 
 
@@ -73,7 +128,7 @@ def detect_type_and_extract_raw(path: str | Path) -> str:
     suffix = Path(path).suffix.lower()
     fn = _RAW_EXTRACTORS.get(suffix)
     if fn is None:
-        raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx")
+        raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx, .xlsx")
     return fn(path)
 
 

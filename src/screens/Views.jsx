@@ -2,23 +2,85 @@
    Lexena — workspace views: Dashboard, Library, Clients,
    Templates, Calendar
    ============================================================ */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../ui/Icon';
 import { RiskBadge, SectionTitle, riskDot, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
+import { api } from '../lib/api';
+import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from './Reconcile';
+
+/* ---------- Reconciliations → library rows ----------
+   Merges backend `/api/reconciliations` with the localStorage fallback
+   (`lex.recon.history`). Backend wins on id-collision. Maps each run to the
+   same row shape the Library table already renders. */
+function useReconciliationRows(t) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let backend = [];
+      try { backend = await api.reconciliations.list(); } catch (_e) {}
+      let local = [];
+      try {
+        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RECON_HISTORY_KEY) : null;
+        local = raw ? JSON.parse(raw) : [];
+      } catch (_e) {}
+      const seen = new Set();
+      const merged = [];
+      const push = (r) => {
+        if (!r || !r.id || seen.has(r.id)) return;
+        seen.add(r.id);
+        const pair = r.pair || {};
+        const must = r.mustCount || 0;
+        const should = r.shouldCount || 0;
+        const risk = r.verdict === 'critical' ? 'high' : r.verdict === 'minor' ? 'med' : 'low';
+        const created = r.createdAt ? new Date(r.createdAt) : null;
+        const dateStr = created && !isNaN(created.getTime())
+          ? created.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          : '—';
+        merged.push({
+          id: r.id,
+          name: pair.product || t.reconcileTitle,
+          client: pair.counterparty || '—',
+          type: t.reconcileType || 'Звірка з ПД',
+          status: 'done',
+          risk,
+          date: dateStr,
+          score: Math.max(0, 100 - must * 12 - should * 5),
+          isRecon: true,
+        });
+      };
+      (backend || []).forEach(push);
+      (local || []).forEach(push);
+      if (!cancelled) setRows(merged);
+    })();
+    return () => { cancelled = true; };
+  }, [t.reconcileType, t.reconcileTitle]);
+  return rows;
+}
+
+function openReconciliation(id, setRoute) {
+  try { localStorage.setItem(RECON_OPEN_KEY, id); } catch (_e) {}
+  setRoute('reconcile');
+}
 
 /* ---------- Dashboard ---------- */
 function Dashboard({ t, setRoute, user }) {
   const D = DEMO;
   const firstName = ((user && user.name) || '').trim().split(/\s+/)[0] || '';
+  const reconRows = useReconciliationRows(t);
   const stats = [
     { icon: 'scan', label: t.statContracts, value: 4, tone: 'var(--accent)', go: 'library' },
     { icon: 'alert', label: t.statRisks, value: 10, tone: 'var(--risk-high)', go: 'analyze' },
     { icon: 'clock', label: t.statDeadlines, value: 3, tone: 'var(--risk-med)', go: 'calendar' },
     { icon: 'clients', label: t.statClients, value: 6, tone: 'var(--info)', go: 'clients' },
   ];
-  const attention = D.library.filter(c => c.risk === 'high');
-  const recent = D.library.slice(0, 5);
+  const attention = [...reconRows.filter(r => r.risk === 'high'), ...D.library.filter(c => c.risk === 'high')];
+  const recent = [...reconRows, ...D.library].slice(0, 5);
+  const openRow = (c) => {
+    if (c.isRecon) openReconciliation(c.id, setRoute);
+    else setRoute('analyze');
+  };
 
   return (
     <div className="page view-enter">
@@ -46,8 +108,8 @@ function Dashboard({ t, setRoute, user }) {
               <SectionTitle action={<button className="btn btn-subtle btn-sm" onClick={() => setRoute('library')}>{t.viewAll} <Icon name="chevR" size={14} /></button>}>{t.recent}</SectionTitle>
               <div className="recent-list">
                 {recent.map(c => (
-                  <button className="recent-row" key={c.id} onClick={() => setRoute('analyze')}>
-                    <span className="recent-ic"><Icon name="doc" size={16} /></span>
+                  <button className="recent-row" key={c.id} onClick={() => openRow(c)}>
+                    <span className="recent-ic"><Icon name={c.isRecon ? 'scan' : 'doc'} size={16} /></span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span className="recent-name">{c.name}</span>
                       <span className="recent-sub">{c.client} · {c.date}</span>
@@ -66,7 +128,7 @@ function Dashboard({ t, setRoute, user }) {
               <SectionTitle>{t.attention}</SectionTitle>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {attention.map(c => (
-                  <button className="att-row" key={c.id} onClick={() => setRoute('analyze')}>
+                  <button className="att-row" key={c.id} onClick={() => openRow(c)}>
                     <span className="att-bar" />
                     <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                       <span className="recent-name">{c.name}</span>
@@ -108,10 +170,12 @@ function Dashboard({ t, setRoute, user }) {
 /* ---------- Library ---------- */
 function Library({ t, setRoute, query }) {
   const D = DEMO;
+  const reconRows = useReconciliationRows(t);
   const [filter, setFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [typeOpen, setTypeOpen] = useState(false);
-  const types = ['all', ...Array.from(new Set(D.library.map(c => c.type)))];
+  const allItems = [...reconRows, ...D.library];
+  const types = ['all', ...Array.from(new Set(allItems.map(c => c.type)))];
   const filters = [
     { id: 'all', label: t.filterAll },
     { id: 'review', label: t.statusReview },
@@ -121,11 +185,15 @@ function Library({ t, setRoute, query }) {
   const statusLabel = { review: t.statusReview, done: t.statusDone, draft: t.statusDraft };
   const statusTone = { review: 'var(--risk-med)', done: 'var(--risk-low)', draft: 'var(--text-3)' };
   const q = (query || '').trim().toLowerCase();
-  const rows = D.library.filter(c =>
+  const rows = allItems.filter(c =>
     (filter === 'all' || c.status === filter) &&
     (typeFilter === 'all' || c.type === typeFilter) &&
     (!q || (c.name + ' ' + c.client + ' ' + c.type).toLowerCase().includes(q))
   );
+  const openRow = (c) => {
+    if (c.isRecon) openReconciliation(c.id, setRoute);
+    else setRoute('analyze');
+  };
 
   return (
     <div className="page view-enter">
@@ -167,10 +235,10 @@ function Library({ t, setRoute, query }) {
               {rows.length === 0 ? (
                 <tr><td colSpan={7} style={{ textAlign: 'center', padding: 'var(--s8)', color: 'var(--text-3)' }}>{t.searchEmpty}</td></tr>
               ) : rows.map(c => (
-                <tr key={c.id} onClick={() => setRoute('analyze')} className={c.current ? 'row-current' : ''}>
+                <tr key={c.id} onClick={() => openRow(c)} className={c.current ? 'row-current' : ''}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span className="lib-ic"><Icon name="doc" size={15} /></span>
+                      <span className="lib-ic"><Icon name={c.isRecon ? 'scan' : 'doc'} size={15} /></span>
                       <span style={{ fontWeight: 600 }}>{c.name}{c.current ? <span className="now-tag">{t.nowTag}</span> : null}</span>
                     </div>
                   </td>

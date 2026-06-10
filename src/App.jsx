@@ -13,6 +13,7 @@ import { I18N } from './data/i18n';
 import { Auth } from './screens/Auth';
 import { Dashboard, Library, Clients, Templates, Calendar } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
+import { Reconcile } from './screens/Reconcile';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
 import { Litigation } from './screens/Litigation';
@@ -42,7 +43,8 @@ const FONT_OPTIONS = [
 ];
 
 const PAGE_TITLES = {
-  dashboard: 'dashboard', analyze: 'analyze', builder: 'builderTitle', copilot: 'copilotTitle', library: 'libTitle', batch: 'batchTitle',
+  dashboard: 'dashboard', analyze: 'analyze', reconcile: 'reconcileTitle',
+  builder: 'builderTitle', copilot: 'copilotTitle', library: 'libTitle', batch: 'batchTitle',
   matters: 'mattersTitle', tasks: 'tasksTitle', calendar: 'calendarTitle', billing: 'billingTitle',
   litigation: 'litTitle', review: 'reviewTitle',
   clauses: 'clauseLibTitle', legal: 'legalTitle', counterparty: 'cpTitle',
@@ -109,10 +111,20 @@ export default function App() {
     setRoute('analyze');
     toast(L.uploadDone, 'sparkle');
   };
+  const startReconcile = () => {
+    setUploadOpen(false);
+    setAnalyzeNonce(n => n + 1);
+    setRoute('reconcile');
+  };
+  const startBatch = () => {
+    setUploadOpen(false);
+    setRoute('batch');
+  };
 
   let body;
   if (route === 'dashboard') body = <Dashboard t={L} setRoute={setRoute} user={user} />;
   else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} />;
+  else if (route === 'reconcile') body = <Reconcile t={L} key={'rc' + analyzeNonce} setRoute={setRoute} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query} />;
@@ -159,21 +171,36 @@ export default function App() {
 
       <Toaster />
 
-      {/* Upload modal */}
-      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.upload} sub={L.uploadSub} icon="upload"
+      {/* Launcher modal — what do you want to analyze? */}
+      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.launcherTitle || L.upload} sub={L.launcherSub} icon="sparkle"
         footer={<>
           <button className="btn btn-subtle" onClick={() => setUploadOpen(false)}>{L.cancel}</button>
-          <button className="btn btn-primary" onClick={startUpload}><Icon name="sparkle" size={15} fill={true} /> {L.analyzeBtn}</button>
         </>}>
-        <div className="dropzone" onClick={startUpload}>
-          <div className="dropzone-ic"><Icon name="upload" size={26} /></div>
-          <div style={{ fontWeight: 600, marginTop: 10 }}>{L.uploadSub}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginTop: 4 }}>{L.uploadHint}</div>
-        </div>
-        <div className="file-chip">
-          <span className="file-chip-ic"><Icon name="doc" size={16} /></span>
-          <span style={{ flex: 1 }}>{L.uploadDemo}</span>
-          <span style={{ fontSize: 12, color: 'var(--risk-low)', fontWeight: 600 }}>✓</span>
+        <div className="launcher">
+          <button className="launcher-card" onClick={startUpload}>
+            <span className="launcher-ic"><Icon name="scan" size={20} /></span>
+            <span className="launcher-text">
+              <span className="launcher-title">{L.launcherContract || L.analyze}</span>
+              <span className="launcher-sub">{L.launcherContractSub}</span>
+            </span>
+            <Icon name="chevR" size={16} />
+          </button>
+          <button className="launcher-card" onClick={startReconcile}>
+            <span className="launcher-ic launcher-ic-accent"><Icon name="scales" size={20} /></span>
+            <span className="launcher-text">
+              <span className="launcher-title">{L.launcherRecon}</span>
+              <span className="launcher-sub">{L.launcherReconSub}</span>
+            </span>
+            <Icon name="chevR" size={16} />
+          </button>
+          <button className="launcher-card" onClick={startBatch}>
+            <span className="launcher-ic"><Icon name="sparkle" size={20} fill={true} /></span>
+            <span className="launcher-text">
+              <span className="launcher-title">{L.launcherBatch || L.batch}</span>
+              <span className="launcher-sub">{L.launcherBatchSub}</span>
+            </span>
+            <Icon name="chevR" size={16} />
+          </button>
         </div>
       </Modal>
 
