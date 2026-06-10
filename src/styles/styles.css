@@ -38,7 +38,9 @@
   --s4: calc(16px * var(--density));
   --s5: calc(20px * var(--density));
   --s6: calc(24px * var(--density));
+  --s7: calc(28px * var(--density));
   --s8: calc(32px * var(--density));
+  --s9: calc(36px * var(--density));
   --s10: calc(40px * var(--density));
 
   --r-sm: 7px;
