@@ -63,7 +63,6 @@ export default function App() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deskOpen, setDeskOpen] = useState(false);
-  const [deskPlat, setDeskPlat] = useState('win');
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
   const [user, setUser] = useState(() => lxLoadSession());
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
@@ -121,6 +120,21 @@ export default function App() {
   const startBatch = () => {
     setUploadOpen(false);
     setRoute('batch');
+  };
+  const startDeskDownload = (plat) => {
+    const files = { win: 'AG-Lex-Setup.exe', mac: 'AG-Lex.dmg', linux: 'AG-Lex.AppImage' };
+    const filename = files[plat] || 'AG-Lex-Setup.exe';
+    const blob = new Blob(['AG-Lex desktop installer — demo placeholder.\n'], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setDeskOpen(false);
+    toast(L.deskStarted + ' · ' + filename, 'download');
   };
 
   let body;
@@ -239,39 +253,48 @@ export default function App() {
           </div>
         </div>
         <hr className="divider" />
-        <button className="set-desk" onClick={() => { setSettingsOpen(false); setDeskOpen(true); }}>
-          <span className="set-desk-ic"><Icon name="monitor" size={20} /></span>
-          <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-            <span className="set-desk-t">{L.deskTitle}</span>
-            <span className="set-desk-s">{L.deskSub}</span>
+        <button className="desk-hero" onClick={() => { setSettingsOpen(false); setDeskOpen(true); }}>
+          <span className="desk-hero-glow" aria-hidden="true" />
+          <span className="desk-hero-ic"><Icon name="download" size={22} /></span>
+          <span className="desk-hero-body">
+            <span className="desk-hero-t">{L.deskTitle}</span>
+            <span className="desk-hero-s">{L.deskSub}</span>
           </span>
-          <Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} />
+          <span className="desk-hero-plats" aria-hidden="true">
+            <Icon name="windows" size={13} />
+            <Icon name="apple" size={13} />
+            <Icon name="linux" size={13} />
+          </span>
+          <Icon name="chevR" size={16} className="desk-hero-chev" />
         </button>
       </Modal>
 
-      {/* Desktop app modal */}
-      <Modal open={deskOpen} onClose={() => setDeskOpen(false)} title={L.deskTitle} sub={L.deskSub} icon="monitor"
-        footer={<>
-          <button className="btn btn-subtle" onClick={() => setDeskOpen(false)}>{L.cancel}</button>
-          <button className="btn btn-primary" onClick={() => { setDeskOpen(false); toast(L.deskPreparing, 'download'); }}>
-            <Icon name="download" size={15} /> {L.deskDownload}
+      {/* Desktop app modal — one-click OS picker */}
+      <Modal open={deskOpen} onClose={() => setDeskOpen(false)} title={L.deskTitle} sub={L.deskChoose} icon="download">
+        <div className="os-grid">
+          <button className="os-card" onClick={() => startDeskDownload('win')}>
+            <span className="os-card-ic"><Icon name="windows" size={26} /></span>
+            <span className="os-card-body">
+              <span className="os-card-name">{L.deskWin}</span>
+              <span className="os-card-file">{L.deskWinFile}</span>
+            </span>
+            <span className="os-card-go"><Icon name="download" size={16} /></span>
           </button>
-        </>}>
-        <div className="desk-plats">
-          <button className={'desk-plat' + (deskPlat === 'win' ? ' on' : '')} onClick={() => setDeskPlat('win')}>
-            <span className="desk-plat-ic"><Icon name="monitor" size={22} /></span>
-            <span className="desk-plat-name">{L.deskWin}</span>
-            <span className="desk-plat-file">{L.deskWinFile}</span>
+          <button className="os-card" onClick={() => startDeskDownload('mac')}>
+            <span className="os-card-ic"><Icon name="apple" size={26} /></span>
+            <span className="os-card-body">
+              <span className="os-card-name">{L.deskMac}</span>
+              <span className="os-card-file">{L.deskMacFile}</span>
+            </span>
+            <span className="os-card-go"><Icon name="download" size={16} /></span>
           </button>
-          <button className={'desk-plat' + (deskPlat === 'mac' ? ' on' : '')} onClick={() => setDeskPlat('mac')}>
-            <span className="desk-plat-ic"><Icon name="apple" size={22} /></span>
-            <span className="desk-plat-name">{L.deskMac}</span>
-            <span className="desk-plat-file">{L.deskMacFile}</span>
-          </button>
-          <button className={'desk-plat' + (deskPlat === 'linux' ? ' on' : '')} onClick={() => setDeskPlat('linux')}>
-            <span className="desk-plat-ic"><Icon name="monitor" size={22} /></span>
-            <span className="desk-plat-name">{L.deskLinux}</span>
-            <span className="desk-plat-file">{L.deskLinuxFile}</span>
+          <button className="os-card" onClick={() => startDeskDownload('linux')}>
+            <span className="os-card-ic"><Icon name="linux" size={26} /></span>
+            <span className="os-card-body">
+              <span className="os-card-name">{L.deskLinux}</span>
+              <span className="os-card-file">{L.deskLinuxFile}</span>
+            </span>
+            <span className="os-card-go"><Icon name="download" size={16} /></span>
           </button>
         </div>
         <div className="desk-note">
