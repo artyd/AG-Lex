@@ -79,6 +79,7 @@ function Dashboard({ t, setRoute, user }) {
   const recent = [...reconRows, ...D.library].slice(0, 5);
   const openRow = (c) => {
     if (c.isRecon) openReconciliation(c.id, setRoute);
+    else if (c.isHandover) setRoute('reconcile');
     else setRoute('analyze');
   };
 
@@ -109,7 +110,9 @@ function Dashboard({ t, setRoute, user }) {
               <div className="recent-list">
                 {recent.map(c => (
                   <button className="recent-row" key={c.id} onClick={() => openRow(c)}>
-                    <span className="recent-ic"><Icon name={c.isRecon ? 'scan' : 'doc'} size={16} /></span>
+                    <span className={'recent-ic' + (c.isHandover ? ' recent-ic-handover' : '')}>
+                      <Icon name={c.isRecon ? 'scan' : c.isHandover ? 'folder' : 'doc'} size={16} />
+                    </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span className="recent-name">{c.name}</span>
                       <span className="recent-sub">{c.client} · {c.date}</span>
@@ -192,6 +195,7 @@ function Library({ t, setRoute, query }) {
   );
   const openRow = (c) => {
     if (c.isRecon) openReconciliation(c.id, setRoute);
+    else if (c.isHandover) setRoute('reconcile');
     else setRoute('analyze');
   };
 
@@ -238,7 +242,9 @@ function Library({ t, setRoute, query }) {
                 <tr key={c.id} onClick={() => openRow(c)} className={c.current ? 'row-current' : ''}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span className="lib-ic"><Icon name={c.isRecon ? 'scan' : 'doc'} size={15} /></span>
+                      <span className={'lib-ic' + (c.isHandover ? ' lib-ic-handover' : '')}>
+                        <Icon name={c.isRecon ? 'scan' : c.isHandover ? 'folder' : 'doc'} size={15} />
+                      </span>
                       <span style={{ fontWeight: 600 }}>{c.name}{c.current ? <span className="now-tag">{t.nowTag}</span> : null}</span>
                     </div>
                   </td>
