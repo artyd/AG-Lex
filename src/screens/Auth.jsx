@@ -4,7 +4,7 @@
    ============================================================ */
 import { useState } from 'react';
 import { Icon } from '../ui/Icon';
-import { apiLogin, apiLoginTest, apiRegister, LX_TEST } from '../lib/auth';
+import { apiLogin, apiRegister } from '../lib/auth';
 
 export function Auth({ t, lang, setLang, theme, setTheme, onAuth }) {
   const [mode, setMode] = useState('signup');
@@ -50,19 +50,6 @@ export function Auth({ t, lang, setLang, theme, setTheme, onAuth }) {
   };
 
   const onKey = (e) => { if (e.key === 'Enter') submit(); };
-
-  const useTestAccount = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const user = await apiLoginTest();
-      onAuth(user);
-    } catch (e) {
-      setErr(e.message || t.errCreds);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="auth">
@@ -145,11 +132,6 @@ export function Auth({ t, lang, setLang, theme, setTheme, onAuth }) {
                 {mode === 'signup' ? t.authSignIn : t.authSignUp}
               </button>
             </div>
-            <button type="button" className="auth-test" onClick={useTestAccount}>
-              <span className="auth-test-badge">{t.authTestTitle}</span>
-              <span className="auth-test-creds">test@aglex.ua · test1234</span>
-              <span className="auth-test-go">{t.authTestUse} <Icon name="arrowR" size={14} /></span>
-            </button>
             <div className="auth-demo">{t.authDemo}</div>
           </div>
         </div>

@@ -1,19 +1,14 @@
 /* ============================================================
    AG Lex — session helpers backed by the FastAPI auth API.
-   Phase 2.1: replaces the localStorage-only demo with real
-   register / login / me calls against /api/auth/*.
 
-   Caller surface preserved for App.jsx + Auth.jsx:
+   Surface:
      - lxLoadSession()           sync, returns cached user or null
      - lxLogout()                clears local cache (no server roundtrip)
-     - LX_TEST                   test-account constants (for the demo button)
-     - initialsOf(name), hueOf(str)   pure UI helpers
-   Plus new async API:
      - apiRegister({name,email,password,role}) → user
      - apiLogin({email,password})              → user
-     - apiLoginTest()                          → user (uses LX_TEST creds)
-     - getToken()                              → JWT string or null
-     - authHeaders()                           → { Authorization: 'Bearer …' } | {}
+     - refreshSession()                        → user from /api/auth/me
+     - getToken() / authHeaders()              → JWT helpers
+     - initialsOf(name), hueOf(str)            → pure UI helpers
    ============================================================ */
 
 const SESSION_KEY = 'aglex_session_v2';
@@ -88,18 +83,6 @@ export async function apiLogin({ email, password }) {
   const data = await postJSON('/api/auth/login', { email, password });
   writeSession(data.access_token, data.user);
   return data.user;
-}
-
-// Constants surface kept for screens/Auth.jsx (the test-login affordance).
-export const LX_TEST = {
-  name: 'Тестовий Користувач',
-  email: 'test@aglex.ua',
-  pass: 'test1234',
-  role: 'partner',
-};
-
-export async function apiLoginTest() {
-  return apiLogin({ email: LX_TEST.email, password: LX_TEST.pass });
 }
 
 // Optional: refresh the cached user from /api/auth/me. Clears the session if
