@@ -241,6 +241,7 @@
 .recent-row:last-child { border-bottom: none; }
 .recent-row:hover { background: var(--bg-2); }
 .recent-ic { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.recent-ic-handover { background: var(--risk-med-soft); color: var(--risk-med); }
 .recent-name { display: block; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent-sub { display: block; font-size: 12px; color: var(--text-3); margin-top: 1px; }
 .recent-score { font-weight: 700; font-size: 14px; min-width: 22px; text-align: right; }
@@ -267,6 +268,7 @@
 .lib-table tbody tr:hover { background: var(--bg-2); }
 .lib-table tbody tr:last-child td { border-bottom: none; }
 .lib-ic { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.lib-ic-handover { background: var(--risk-med-soft); color: var(--risk-med); }
 .row-current { background: var(--accent-softer); }
 .now-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; margin-left: 8px; }
 

@@ -1,7 +1,7 @@
 /* ============================================================
    AG Lex — App root: routing, theme, language, tweaks
    ============================================================ */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Icon } from './ui/Icon';
 import { Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
 import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, useTweaks } from './ui/tweaks-panel';
@@ -61,6 +61,9 @@ export default function App() {
   });
   const [query, setQuery] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [contractUploadOpen, setContractUploadOpen] = useState(false);
+  const [contractFile, setContractFile] = useState(null);
+  const contractFileRef = useRef(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deskOpen, setDeskOpen] = useState(false);
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
@@ -106,11 +109,23 @@ export default function App() {
 
   const goSearch = () => { if (query.trim()) setRoute('library'); };
   const logout = () => { lxLogout(); setUser(null); setSettingsOpen(false); setRoute('dashboard'); };
-  const startUpload = () => {
+  const openContractUpload = () => {
     setUploadOpen(false);
+    setContractFile(null);
+    setContractUploadOpen(true);
+  };
+  const startUpload = () => {
+    setContractUploadOpen(false);
+    setUploadOpen(false);
+    setContractFile(null);
     setAnalyzeNonce(n => n + 1);
     setRoute('analyze');
     toast(L.uploadDone, 'sparkle');
+  };
+  const onContractFileChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setContractFile(f);
+    e.target.value = '';
   };
   const startReconcile = () => {
     setUploadOpen(false);
@@ -189,26 +204,70 @@ export default function App() {
 
       {/* Launcher modal — analysis hub. Three hub-block cards. */}
       <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
-        <div className="hub-grid">
-          <button className="hub-block hub-accent" onClick={startUpload}>
-            <span className="hub-ic"><Icon name="doc" size={24} /></span>
+        <div className="hub-grid hub-grid-2">
+          <button className="hub-block hub-accent hub-block-lg" onClick={openContractUpload}>
+            <span className="hub-ic hub-ic-lg"><Icon name="doc" size={28} /></span>
             <span className="hub-block-t">{L.hubContract}</span>
             <span className="hub-block-s">{L.hubContractSub}</span>
             <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
-          <button className="hub-block hub-accent" onClick={startReconcile}>
+          <button className="hub-block hub-accent hub-block-lg" onClick={startReconcile}>
             <span className="hub-new">{L.hubNew}</span>
-            <span className="hub-ic"><Icon name="scan" size={24} /></span>
+            <span className="hub-ic hub-ic-lg"><Icon name="scan" size={28} /></span>
             <span className="hub-block-t">{L.hubCompare}</span>
             <span className="hub-block-s">{L.hubCompareSub}</span>
             <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
-          <button className="hub-block hub-muted" onClick={startBatch}>
-            <span className="hub-ic"><Icon name="sparkle" size={24} fill={true} /></span>
-            <span className="hub-block-t">{L.hubBatch}</span>
-            <span className="hub-block-s">{L.hubBatchSub}</span>
-            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
+        </div>
+        <button className="hub-block hub-muted hub-block-row" onClick={startBatch}>
+          <span className="hub-ic"><Icon name="sparkle" size={22} fill={true} /></span>
+          <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left' }}>
+            <span className="hub-block-t" style={{ fontSize: 15 }}>{L.hubBatch}</span>
+            <span className="hub-block-s" style={{ flex: '0 0 auto' }}>{L.hubBatchSub}</span>
+          </span>
+          <Icon name="arrowR" size={16} style={{ color: 'var(--text-3)' }} />
+        </button>
+      </Modal>
+
+      {/* Contract upload — real file dropzone */}
+      <Modal open={contractUploadOpen} onClose={() => setContractUploadOpen(false)} title={L.uploadTitle} sub={L.uploadSub} icon="doc"
+        footer={<>
+          <button className="btn btn-subtle" onClick={() => setContractUploadOpen(false)}>{L.cancel}</button>
+          <button className="btn btn-primary" onClick={startUpload} disabled={!contractFile}>
+            <Icon name="sparkle" size={15} fill={true} /> {L.uploadAnalyze}
           </button>
+        </>}>
+        <input ref={contractFileRef} type="file" accept=".pdf,.docx,.doc" style={{ display: 'none' }} onChange={onContractFileChange} />
+        {contractFile ? (
+          <>
+            <button className="dropzone dropzone-filled" onClick={() => contractFileRef.current && contractFileRef.current.click()}>
+              <div className="dropzone-ic" style={{ background: 'var(--risk-low-soft)', color: 'var(--risk-low)' }}><Icon name="check" size={28} stroke={2.5} /></div>
+              <div style={{ fontWeight: 700, fontSize: 15.5, marginTop: 12, color: 'var(--risk-low)' }}>{L.uploadSelected}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>{L.uploadHint}</div>
+            </button>
+            <div className="file-chip" style={{ marginTop: 12 }}>
+              <span className="file-chip-ic"><Icon name="doc" size={16} /></span>
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{contractFile.name}</span>
+              <span style={{ color: 'var(--text-3)', fontSize: 12, fontFeatureSettings: '"tnum"' }}>{(contractFile.size / 1024 / 1024).toFixed(1)} МБ</span>
+              <button className="icon-btn" aria-label={L.uploadRemove} onClick={() => setContractFile(null)} style={{ width: 28, height: 28 }}>
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <button className="dropzone dropzone-lg" onClick={() => contractFileRef.current && contractFileRef.current.click()}>
+            <div className="dropzone-ic"><Icon name="upload" size={28} /></div>
+            <div style={{ fontWeight: 700, fontSize: 15.5, marginTop: 12 }}>{L.uploadDrop}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>{L.uploadHint}</div>
+          </button>
+        )}
+        <div className="upload-demo">
+          <span className="upload-demo-ic"><Icon name="sparkle" size={14} fill={true} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{L.uploadDemoLabel}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 1 }}>{L.uploadDemoSub}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={startUpload}>{L.uploadDemoBtn}</button>
         </div>
       </Modal>
 

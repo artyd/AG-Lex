@@ -265,15 +265,15 @@ function DeadlinesModal({ open, onClose, t }) {
 
 /* ---- Contract summary / plain-language explanation ---- */
 const SUM_PLAIN_RISK = {
-  'f-prepay': 'Ви платите всю суму наперед (1 250 000 ₴), і за договором ці гроші не повертають — навіть якщо роботу не виконають. Усі фінансові ризики лягають на вас.',
-  'f-liability': 'Якщо виконавець завдасть вам збитків, він заплатить максимум 50 000 ₴ — це лише 4% від суми. Решту втрат ви не повернете.',
-  'f-terminate': 'Розірвати договір ви зможете тільки за згодою виконавця. Але закон (ст. 907 ЦК) дозволяє відмовитися будь-коли — ця умова фактично незаконна.',
+  'f-prepay': 'Ви переказуєте всі USD 15 360 наперед на індійський рахунок у HDFC Bank, Мумбаї. Якщо постачання зірветься (санкції, банкрутство, логістика) — повернути гроші буде дуже складно.',
+  'f-lang-prevail': 'У будь-якому спорі вирішальною буде англійська версія, хоча розгляд ведеться українською. Це дає Продавцю перевагу при тлумаченні термінів.',
+  'f-shelflife': 'Сорбітол постачатиметься із залишковим терміном лише 80% — це означає, що ви можете отримати товар, у якого вже минуло до 12 місяців із 5-річного терміну.',
 };
 const SUM_PLAIN_ADVICE = [
-  'Попросіть поетапну оплату: частину наперед, решту — після приймання роботи.',
-  'Підніміть межу відповідальності виконавця до повної суми можливих збитків.',
-  'Додайте право вийти з договору, попередивши за 15 днів.',
-  'Додайте розділ про захист персональних даних.',
+  'Замініть 100% передоплату на акредитив або 30% передоплати + 70% проти B/L.',
+  'Зрівняйте мовний пріоритет: українська та англійська версії повинні мати однакову силу.',
+  'Зафіксуйте у контракті залишковий термін придатності не менше 90% на момент поставки.',
+  'Додайте Pre-Shipment Inspection незалежним інспектором (SGS / Bureau Veritas) у Мумбаї.',
 ];
 
 function SummaryModal({ open, onClose, t }) {
@@ -315,10 +315,10 @@ function SummaryModal({ open, onClose, t }) {
   const kd = Object.fromEntries(D.keyData.map(k => [k.label, k.value]));
   const highs = D.findings.filter(f => f.level === 'high');
   const medN = D.findings.filter(f => f.level === 'med').length;
-  const about = `${kd['Тип договору'] || 'Договір'} між ${kd['Замовник']} (Замовник) та ${kd['Виконавець']} (Виконавець) на суму ${kd['Сума договору']}, строк дії ${kd['Строк дії']}.`;
-  const conclusion = 'Документ складено переважно на користь Виконавця. До підписання рекомендовано доопрацювати критичні пункти (оплата, відповідальність, розірвання) та додати відсутні розділи.';
-  const plainIntro = `Якщо коротко: ваша компанія (${kd['Замовник']}) наймає ${kd['Виконавець']} для надання послуг на ${kd['Сума договору']}. У поточному вигляді договір більше захищає виконавця, ніж вас.`;
-  const plainBottom = 'У поточному вигляді договір ризикований для вашої компанії. Радимо не підписувати без доопрацювання.';
+  const about = `${kd['Тип Контракту'] || 'Контракт постачання'} між ${kd['Покупець']} (Покупець) та ${kd['Продавець']} (Продавець) на суму ${kd['Сума Контракту']}, готовність до ${kd['Готовність до']}.`;
+  const conclusion = 'Контракт містить розгорнуте санкційне застереження та сприятливу юрисдикцію (МКАС при ТПП України). Основні ризики — 100% передоплата без гарантії та пріоритет англійської версії при тлумаченні. Рекомендовано опрацювати ці пункти до підписання.';
+  const plainIntro = `Якщо коротко: ваша компанія (${kd['Покупець']}) купує у ${kd['Продавець']} субстанцію Sorbitol 70% BP за ${kd['Сума Контракту']}. Загалом контракт прийнятний, але є 2 критичних і 7 помірних ризиків.`;
+  const plainBottom = 'Контракт можна підписувати після опрацювання двох ключових ризиків: схеми оплати та мовного пріоритету.';
 
   const copy = () => {
     let txt;
@@ -327,7 +327,7 @@ function SummaryModal({ open, onClose, t }) {
     } else if (mode === 'pro') {
       txt = `${t.sumAbout}: ${about}\n\n${t.sumRisks}:\n` + highs.map(f => `• ${f.clause} — ${f.title} (${f.law})`).join('\n') + `\n+ ${medN} ${t.sumModerate}\n\n${t.sumMissing}: ` + D.missing.map(m => m.title).join(', ') + `\n\n${t.sumConclusion}: ${conclusion}`;
     } else {
-      txt = `${plainIntro}\n\n${t.sumAttention}:\n` + highs.map(f => '• ' + (SUM_PLAIN_RISK[f.id] || f.title)).join('\n') + '\n• Немає розділу про захист персональних даних.\n\n' + `${t.sumAdvice}:\n` + SUM_PLAIN_ADVICE.map(a => '• ' + a).join('\n') + `\n\n${t.sumBottom}: ${plainBottom}`;
+      txt = `${plainIntro}\n\n${t.sumAttention}:\n` + highs.map(f => '• ' + (SUM_PLAIN_RISK[f.id] || f.title)).join('\n') + '\n• Немає антикорупційного застереження (вимога FCPA / UK Bribery Act).\n\n' + `${t.sumAdvice}:\n` + SUM_PLAIN_ADVICE.map(a => '• ' + a).join('\n') + `\n\n${t.sumBottom}: ${plainBottom}`;
     }
     try { navigator.clipboard.writeText(txt); } catch (e) {}
     toast(t.sumCopied, 'check');
@@ -422,19 +422,21 @@ function SummaryModal({ open, onClose, t }) {
 
 /* ---- Legal document translation (UA ⇄ EN) ---- */
 const TR_GLOSS = [
-  ['Замовник', 'Customer'], ['Виконавець', 'Contractor'], ['Передоплата', 'Advance payment'],
-  ['Неустойка / пеня', 'Penalty'], ['Відповідальність', 'Liability'], ['Конфіденційність', 'Confidentiality'],
-  ['Розірвання договору', 'Termination'], ['Форс-мажор', 'Force majeure'], ['Реквізити сторін', 'Bank details'],
+  ['Покупець', 'Buyer'], ['Продавець', 'Seller'], ['Передоплата', 'Advance payment'],
+  ['Поставка', 'Delivery'], ['Сертифікат аналізу', 'Certificate of Analysis (CoA)'],
+  ['Залишковий термін придатності', 'Remaining shelf life'], ['Форс-мажор', 'Force majeure'],
+  ['Реквізити сторін', 'Bank details'], ['Санкції', 'Sanctions'], ['МКАС при ТПП України', 'ICAC at the UCCI'],
 ];
 const TR_PAIRS = [
-  { head: true, ua: 'ДОГОВІР ПРО НАДАННЯ КОНСУЛЬТАЦІЙНИХ ПОСЛУГ № 2026/04-К', en: 'CONSULTING SERVICES AGREEMENT No. 2026/04-К' },
-  { ua: 'ТОВ «Северин» (Замовник) та ТОВ «Аркада Діджитал» (Виконавець) уклали цей Договір про таке:', en: 'LLC «Severyn» (the Customer) and LLC «Arcada Digital» (the Contractor) have entered into this Agreement as follows:' },
-  { sec: '1', ua: 'Предмет договору. Виконавець надає Замовнику консультаційні послуги у сфері цифрової трансформації.', en: '1. Subject of the Agreement. The Contractor provides the Customer with consulting services in the field of digital transformation.' },
-  { sec: '2', ua: 'Вартість послуг та порядок розрахунків. Загальна вартість становить 1 250 000 ₴; передбачено 100% передоплату протягом 3 робочих днів.', en: '2. Price of Services and Payment Procedure. The total price is UAH 1,250,000; a 100% advance payment is due within 3 business days.' },
-  { sec: '3', ua: 'Строки надання послуг. Послуги надаються в період з 20.04.2026 по 20.04.2027.', en: '3. Time Frame for the Services. The services are provided in the period from 20.04.2026 to 20.04.2027.' },
-  { sec: '5', ua: 'Відповідальність сторін. Відповідальність Виконавця обмежується сумою 50 000 ₴ незалежно від розміру збитків.', en: '5. Liability of the Parties. The Contractor’s liability is limited to UAH 50,000 regardless of the amount of damages.' },
-  { sec: '6', ua: 'Конфіденційність. Сторони зобовʼязуються не розголошувати конфіденційну інформацію, отриману під час виконання Договору.', en: '6. Confidentiality. The parties undertake not to disclose confidential information obtained during the performance of the Agreement.' },
-  { sec: '7', ua: 'Строк дії та розірвання. Замовник може відмовитися від Договору лише за згодою Виконавця (суперечить ст. 907 ЦК України).', en: '7. Term and Termination. The Customer may withdraw from the Agreement only with the Contractor’s consent (contradicts Art. 907 of the Civil Code of Ukraine).' },
+  { head: true, ua: 'КОНТРАКТ № 09032026/AKS · ПОСТАЧАННЯ SORBITOL 70% BP', en: 'CONTRACT No. 09032026/AKS · SUPPLY OF SORBITOL 70% BP' },
+  { ua: 'ТОВ «АНАЛІТІНФОРМ» (Покупець, Україна) та KASYAP SWEETNERS PRIVATE LIMITED (Продавець, Індія) уклали цей Контракт про таке:', en: 'ANALYTINFORM LLC (the Buyer, Ukraine) and KASYAP SWEETNERS PRIVATE LIMITED (the Seller, India) have entered into this Contract as follows:' },
+  { sec: '1', ua: 'Предмет Контракту. Продавець постачає, а Покупець придбаває субстанцію Sorbitol Solution 70% non crystallising BP (HS 2905449900), кількістю 24 МТ.', en: '1. Subject of the Contract. The Seller supplies, and the Buyer purchases, the substance Sorbitol Solution 70% non-crystallising BP (HS 2905449900), in the quantity of 24 MT.' },
+  { sec: '2', ua: 'Ціна та кількість. Загальна сума — 15 360,00 USD (640 USD/т × 24 т). Упаковка: 80 бочок по 300 кг на 20 EUR-палетах.', en: '2. Price and Quantity. The total amount is USD 15,360.00 (USD 640/MT × 24 MT). Packaging: 80 drums of 300 kg on 20 EUR pallets.' },
+  { sec: '3', ua: 'Умови поставки. CIF Гданськ, Польща (INCOTERMS 2020), MSC або Maersk. Готовність до відвантаження — не пізніше 12 квітня 2026 року.', en: '3. Delivery Terms. CIF Gdansk, Poland (INCOTERMS 2020), via MSC or Maersk shipping line. Ready for shipment no later than 12 April 2026.' },
+  { sec: '4', ua: 'Умови оплати. 100% передоплата банківським переказом на рахунок Продавця в HDFC Bank, Мумбаї (A/C 12120330000036, SWIFT HDFCINBBXXX). Валюта — USD.', en: '4. Payment Terms. 100% advance payment by wire transfer to the Seller’s account at HDFC Bank, Mumbai (A/C 12120330000036, SWIFT HDFCINBBXXX). Currency — USD.' },
+  { sec: '5', ua: 'Гарантії якості. Залишковий термін придатності не менше 80% на момент поставки. Лабораторний контроль протягом 90 днів. Спори — через відбір зразків ТПП України.', en: '5. Quality Guarantees. Remaining shelf life of not less than 80% at delivery. Lab control within 90 days. Disputes — via Ukrainian Chamber of Commerce sampling procedure.' },
+  { sec: '7', ua: 'Арбітраж та право. МКАС при ТПП України, Київ, мова — українська, право — матеріальне право України. У разі розбіжностей перевагу має англійська версія.', en: '7. Arbitration and Law. ICAC at the Ukrainian Chamber of Commerce, Kyiv; language — Ukrainian; substantive law of Ukraine. In case of any discrepancies, the English version shall prevail.' },
+  { sec: '8', ua: 'Санкції. Сторони не внесені до санкційних списків ООН, ЄС, OFAC, UK, України. У разі санкцій — право призупинити та розірвати Контракт без штрафів.', en: '8. Sanctions. The Parties are not included in the sanctions lists of the UN, EU, OFAC, UK, or Ukraine. In the event of sanctions, the right to suspend and terminate the Contract without penalties applies.' },
 ];
 
 function TranslateModal({ open, onClose, t }) {

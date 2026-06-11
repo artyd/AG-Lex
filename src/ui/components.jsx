@@ -48,11 +48,10 @@ export function riskDot(level) {
 export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, user }) {
   const work = [
     { id: 'dashboard', icon: 'dashboard', label: t.dashboard },
-    { id: 'analyze', icon: 'scan', label: t.analyze, badge: riskCount },
     { id: 'builder', icon: 'wand', label: t.builder },
     { id: 'copilot', icon: 'chat', label: t.copilot },
     { id: 'esign', icon: 'pen', label: t.esign },
-    { id: 'library', icon: 'library', label: t.library },
+    { id: 'library', icon: 'library', label: t.library, badge: riskCount },
     { id: 'batch', icon: 'sparkle', label: t.batch },
   ];
   const practice = [
