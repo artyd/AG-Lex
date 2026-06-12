@@ -8,6 +8,7 @@ import { RiskBadge, SectionTitle, riskDot, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
 import { api } from '../lib/api';
 import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from './Reconcile';
+import { WidgetGrid } from './WidgetGrid';
 
 /* ---------- Reconciliations → library rows ----------
    Merges backend `/api/reconciliations` with the localStorage fallback
@@ -165,6 +166,8 @@ function Dashboard({ t, setRoute, user }) {
             </div>
           </div>
         </div>
+
+        <WidgetGrid t={t} setRoute={setRoute} />
       </div>
     </div>
   );
