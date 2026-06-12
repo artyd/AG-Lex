@@ -1,19 +1,22 @@
 /* ============================================================
-   AG Lex — Dashboard widget grid (20×15 snap-to-grid canvas)
-   Fills the entire dashboard. Cell size auto-fits ~92% of stage,
-   keeping cells perfectly square at all viewport sizes.
+   AG Lex — Dashboard widget grid (full-area canvas)
+   Cell size is large and fixed (~110–130px). Cols/rows = however
+   many large square cells fit into the dashboard content area.
+   The grid fills the entire stage — no empty fields on the right
+   or bottom. Widgets can be dragged by the body to move, and by
+   corners/edges to resize. Both snap to the grid.
    ============================================================ */
-import { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
 import { Icon } from '../ui/Icon';
 import { Modal, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 
-const COLS = 20;
-const ROWS = 15;
 const GAP = 4;
-const FILL = 0.92; // grid uses ~92% of the stage's smaller dimension
-const MIN_CELL = 18;
+const CELL_TARGET = 120;
+const CELL_MIN = 110;
+const CELL_MAX = 130;
+const DRAG_THRESHOLD = 5; // pixels before a body-click becomes a body-drag
 const STORAGE_KEY = 'aglex_dashboard_widgets';
 const NOTES_KEY = 'aglex_dashboard_widget_notes';
 
@@ -43,11 +46,11 @@ const TONE = {
 };
 
 /* ---------- occupancy + placement helpers ---------- */
-function buildOccupancy(widgets) {
-  const m = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+function buildOccupancy(widgets, cols, rows) {
+  const m = Array.from({ length: rows }, () => Array(cols).fill(null));
   for (const w of widgets) {
-    for (let r = w.y; r < w.y + w.h && r < ROWS; r++) {
-      for (let c = w.x; c < w.x + w.w && c < COLS; c++) {
+    for (let r = w.y; r < w.y + w.h && r < rows; r++) {
+      for (let c = w.x; c < w.x + w.w && c < cols; c++) {
         if (r >= 0 && c >= 0) m[r][c] = w.id;
       }
     }
@@ -55,16 +58,60 @@ function buildOccupancy(widgets) {
   return m;
 }
 
-function canPlace(occ, x, y, w, h, ignoreId) {
+function canPlace(occ, cols, rows, x, y, w, h) {
   if (x < 0 || y < 0 || w < 1 || h < 1) return false;
-  if (x + w > COLS || y + h > ROWS) return false;
+  if (x + w > cols || y + h > rows) return false;
   for (let r = y; r < y + h; r++) {
     for (let c = x; c < x + w; c++) {
-      const v = occ[r][c];
-      if (v && v !== ignoreId) return false;
+      if (occ[r][c]) return false;
     }
   }
   return true;
+}
+
+/* Clamp a widget into a (cols × rows) grid without overlap awareness —
+   called when the viewport changes and existing widgets need to fit. */
+function fitWidget(w, cols, rows) {
+  const ww = Math.max(1, Math.min(w.w, cols));
+  const wh = Math.max(1, Math.min(w.h, rows));
+  const wx = Math.max(0, Math.min(cols - ww, w.x));
+  const wy = Math.max(0, Math.min(rows - wh, w.y));
+  return { ...w, x: wx, y: wy, w: ww, h: wh };
+}
+
+/* Pick (cols, rows, cell) such that the grid fills the stage as fully as
+   possible while every cell remains a square in [CELL_MIN, CELL_MAX]. We
+   iterate the small (cols × rows) candidate space and pick the layout
+   with the least wasted area. Result: tight square cells, ~120px each,
+   filling the area edge-to-edge with at most a few px of margin. */
+function computeLayout(W, H) {
+  if (W < 100 || H < 100) return null;
+  let best = null;
+  const cMin = Math.max(1, Math.floor((W + GAP) / (CELL_MAX + GAP)));
+  const cMax = Math.max(cMin, Math.ceil((W + GAP) / (CELL_MIN + GAP)));
+  const rMin = Math.max(1, Math.floor((H + GAP) / (CELL_MAX + GAP)));
+  const rMax = Math.max(rMin, Math.ceil((H + GAP) / (CELL_MIN + GAP)));
+  for (let c = cMin; c <= cMax; c++) {
+    for (let r = rMin; r <= rMax; r++) {
+      const cellW = (W - (c - 1) * GAP) / c;
+      const cellH = (H - (r - 1) * GAP) / r;
+      const cell = Math.min(cellW, cellH);
+      if (cell < CELL_MIN || cell > CELL_MAX) continue;
+      const wasteW = W - (c * cell + (c - 1) * GAP);
+      const wasteH = H - (r * cell + (r - 1) * GAP);
+      const waste = wasteW + wasteH;
+      if (!best || waste < best.waste) best = { cols: c, rows: r, cell, waste };
+    }
+  }
+  if (best) return { cols: best.cols, rows: best.rows, cell: Math.floor(best.cell) };
+  // Fallback when the area is unusually shaped — relax constraints
+  const cols = Math.max(1, Math.round((W + GAP) / (CELL_TARGET + GAP)));
+  const rows = Math.max(1, Math.round((H + GAP) / (CELL_TARGET + GAP)));
+  const cell = Math.max(CELL_MIN, Math.min(CELL_MAX, Math.floor(Math.min(
+    (W - (cols - 1) * GAP) / cols,
+    (H - (rows - 1) * GAP) / rows
+  ))));
+  return { cols, rows, cell };
 }
 
 /* ---------- widget body content ---------- */
@@ -340,24 +387,28 @@ export function WidgetGrid({ t, setRoute, user }) {
     } catch (_e) {}
     return [];
   });
-  const [picker, setPicker] = useState(null); // { x, y } when a free cell is clicked
-  const [drag, setDrag] = useState(null);     // { id, x, y, w, h, valid } during resize
-  const [cell, setCell] = useState(40);       // computed square cell side in px
+  const [picker, setPicker] = useState(null);
+  const [drag, setDrag] = useState(null); // { id, x, y, w, h, valid, mode: 'resize'|'move' }
+  const [layout, setLayout] = useState({ cols: 9, rows: 5, cell: 120 });
   const gridRef = useRef(null);
   const stageRef = useRef(null);
 
-  // Recompute cell size whenever the stage resizes so the grid fills ~92% of
-  // its smaller dimension while every cell stays a square.
+  const { cols, rows, cell } = layout;
+
+  // Recompute cols/rows/cell whenever the dashboard area changes. We aim for
+  // strictly square cells around 120px (range 110–130) packed to fill the
+  // stage with the smallest possible leftover.
   useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return;
     const compute = () => {
       const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) return;
-      const wFromW = (r.width * FILL - (COLS - 1) * GAP) / COLS;
-      const wFromH = (r.height * FILL - (ROWS - 1) * GAP) / ROWS;
-      const size = Math.max(MIN_CELL, Math.floor(Math.min(wFromW, wFromH)));
-      setCell(size);
+      const next = computeLayout(r.width, r.height);
+      if (!next) return;
+      setLayout(prev => (
+        prev.cols === next.cols && prev.rows === next.rows && prev.cell === next.cell
+          ? prev : next
+      ));
     };
     compute();
     const ro = new ResizeObserver(compute);
@@ -366,20 +417,37 @@ export function WidgetGrid({ t, setRoute, user }) {
     return () => { ro.disconnect(); window.removeEventListener('resize', compute); };
   }, []);
 
+  // When the layout shrinks, clamp existing widgets so they stay in-bounds.
+  useEffect(() => {
+    if (cols < 1 || rows < 1) return;
+    setWidgets(ws => {
+      const next = ws.map(w => fitWidget(w, cols, rows));
+      const same = next.length === ws.length && next.every((w, i) =>
+        w.x === ws[i].x && w.y === ws[i].y && w.w === ws[i].w && w.h === ws[i].h);
+      return same ? ws : next;
+    });
+  }, [cols, rows]);
+
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets)); } catch (_e) {}
   }, [widgets]);
 
-  const occ = useMemo(() => buildOccupancy(widgets), [widgets]);
+  // When the user is dragging a widget, exclude it from the occupancy map so
+  // its original cells appear empty and its new target cells render with the
+  // preview tint underneath the moving widget.
+  const occ = useMemo(() => {
+    const list = drag ? widgets.filter(w => w.id !== drag.id) : widgets;
+    return buildOccupancy(list, cols, rows);
+  }, [widgets, drag, cols, rows]);
 
   const onCellClick = (c, r) => {
-    if (occ[r][c]) return;
+    if (occ[r] && occ[r][c]) return;
     setPicker({ x: c, y: r });
   };
 
   const addWidget = (type) => {
     if (!picker) return;
-    if (!canPlace(occ, picker.x, picker.y, 1, 1, null)) {
+    if (!canPlace(occ, cols, rows, picker.x, picker.y, 1, 1)) {
       toast(t.wg_full, 'alert');
       setPicker(null);
       return;
@@ -396,56 +464,66 @@ export function WidgetGrid({ t, setRoute, user }) {
     toast(t.wg_removed, 'x');
   };
 
-  const onHandleDown = useCallback((e, id, dir) => {
+  // Map a mouse-pixel delta to a snap-to-grid cell delta using the live
+  // grid bounding box. Works even when cells aren't perfectly square in
+  // case a future change relaxes the constraint.
+  const getCellPitch = () => {
+    const el = gridRef.current;
+    if (!el) return { px: cell + GAP, py: cell + GAP };
+    const r = el.getBoundingClientRect();
+    return {
+      px: (r.width + GAP) / cols,
+      py: (r.height + GAP) / rows,
+    };
+  };
+
+  const onHandleDown = (e, id, dir) => {
     e.preventDefault();
     e.stopPropagation();
     const widget = widgets.find(w => w.id === id);
     if (!widget) return;
-    const el = gridRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    const gap = parseFloat(cs.columnGap || cs.gap || '0') || 0;
-    const cellW = (rect.width + gap) / COLS;
-    const cellH = (rect.height + gap) / ROWS;
-    const startX = e.clientX;
-    const startY = e.clientY;
+    const { px, py } = getCellPitch();
+    const startX = e.clientX, startY = e.clientY;
     const start = { x: widget.x, y: widget.y, w: widget.w, h: widget.h };
+    const baseOcc = buildOccupancy(widgets.filter(w => w.id !== id), cols, rows);
+
+    document.body.style.userSelect = 'none';
 
     const move = (ev) => {
-      const dx = Math.round((ev.clientX - startX) / cellW);
-      const dy = Math.round((ev.clientY - startY) / cellH);
+      const cellDX = Math.round((ev.clientX - startX) / px);
+      const cellDY = Math.round((ev.clientY - startY) / py);
       let x = start.x, y = start.y, w = start.w, h = start.h;
 
-      if (dir.includes('e')) w = start.w + dx;
+      if (dir.includes('e')) w = start.w + cellDX;
       if (dir.includes('w')) {
-        const newX = Math.max(0, Math.min(start.x + dx, start.x + start.w - 1));
-        w = start.w + (start.x - newX);
-        x = newX;
+        const nx = Math.max(0, Math.min(start.x + cellDX, start.x + start.w - 1));
+        w = start.w + (start.x - nx);
+        x = nx;
       }
-      if (dir.includes('s')) h = start.h + dy;
+      if (dir.includes('s')) h = start.h + cellDY;
       if (dir.includes('n')) {
-        const newY = Math.max(0, Math.min(start.y + dy, start.y + start.h - 1));
-        h = start.h + (start.y - newY);
-        y = newY;
+        const ny = Math.max(0, Math.min(start.y + cellDY, start.y + start.h - 1));
+        h = start.h + (start.y - ny);
+        y = ny;
       }
 
       w = Math.max(1, w);
       h = Math.max(1, h);
-      if (x + w > COLS) w = COLS - x;
-      if (y + h > ROWS) h = ROWS - y;
+      if (x + w > cols) w = cols - x;
+      if (y + h > rows) h = rows - y;
 
-      const valid = canPlace(occ, x, y, w, h, id);
-      setDrag({ id, x, y, w, h, valid });
+      const valid = canPlace(baseOcc, cols, rows, x, y, w, h);
+      setDrag({ id, x, y, w, h, valid, mode: 'resize' });
     };
 
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
+      document.body.style.userSelect = '';
       setDrag(d => {
         if (d && d.valid) {
           setWidgets(ws => ws.map(w => w.id === d.id ? { ...w, x: d.x, y: d.y, w: d.w, h: d.h } : w));
-        } else if (d && !d.valid) {
+        } else if (d) {
           toast(t.wg_blocked, 'alert');
         }
         return null;
@@ -454,17 +532,67 @@ export function WidgetGrid({ t, setRoute, user }) {
 
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
-  }, [widgets, occ, t]);
+  };
 
-  const onWidgetClick = (w, route) => {
-    if (drag) return;
-    if (route && setRoute) setRoute(route);
+  // Drag-by-body: mousedown on the widget body starts a potential drag.
+  // If the mouse moves more than DRAG_THRESHOLD pixels, it becomes a move;
+  // otherwise it's treated as a click (and navigates to the widget's route).
+  const onBodyDown = (e, widget, cat) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.wg-handle, .wg-widget-close, input, textarea, button')) return;
+    e.preventDefault();
+    const { px, py } = getCellPitch();
+    const startX = e.clientX, startY = e.clientY;
+    const start = { x: widget.x, y: widget.y };
+    let dragging = false;
+    const baseOcc = buildOccupancy(widgets.filter(w => w.id !== widget.id), cols, rows);
+
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!dragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (!dragging) {
+        dragging = true;
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'grabbing';
+      }
+      const cellDX = Math.round(dx / px);
+      const cellDY = Math.round(dy / py);
+      let nx = start.x + cellDX;
+      let ny = start.y + cellDY;
+      nx = Math.max(0, Math.min(cols - widget.w, nx));
+      ny = Math.max(0, Math.min(rows - widget.h, ny));
+      const valid = canPlace(baseOcc, cols, rows, nx, ny, widget.w, widget.h);
+      setDrag({ id: widget.id, x: nx, y: ny, w: widget.w, h: widget.h, valid, mode: 'move' });
+    };
+
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (!dragging) {
+        // It was a click — navigate
+        if (cat && cat.route && setRoute) setRoute(cat.route);
+        return;
+      }
+      setDrag(d => {
+        if (d && d.valid) {
+          setWidgets(ws => ws.map(w => w.id === d.id ? { ...w, x: d.x, y: d.y } : w));
+        } else if (d) {
+          toast(t.wg_blocked, 'alert');
+        }
+        return null;
+      });
+    };
+
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
   };
 
   const HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
   const firstName = ((user && user.name) || '').trim().split(/\s+/)[0] || '';
-  const gridW = COLS * cell + (COLS - 1) * GAP;
-  const gridH = ROWS * cell + (ROWS - 1) * GAP;
+  const totalCells = cols * rows;
 
   return (
     <div className="wg-shell">
@@ -474,7 +602,7 @@ export function WidgetGrid({ t, setRoute, user }) {
           <div className="wg-subtitle">{t.wgSub}</div>
         </div>
         <div className="wg-meta">
-          <span className="chip"><Icon name="sparkle" size={12} fill={true} /> {widgets.length} / {COLS * ROWS}</span>
+          <span className="chip"><Icon name="sparkle" size={12} fill={true} /> {widgets.length} / {totalCells}</span>
           {widgets.length > 0 && (
             <button className="btn btn-subtle btn-sm" onClick={() => { if (confirm(t.wg_clear_confirm)) { setWidgets([]); toast(t.wg_cleared, 'x'); } }}>
               <Icon name="x" size={13} /> {t.wg_clear}
@@ -484,29 +612,33 @@ export function WidgetGrid({ t, setRoute, user }) {
       </div>
 
       <div className="wg-stage" ref={stageRef}>
-        <div className="wg-grid" ref={gridRef} style={{
-          gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
-          gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
-          width: gridW,
-          height: gridH,
-          gap: GAP,
-        }}>
-          {Array.from({ length: ROWS }).map((_, r) =>
-            Array.from({ length: COLS }).map((_, c) => {
+        <div
+          className="wg-grid"
+          ref={gridRef}
+          style={{
+            gridTemplateColumns: `repeat(${cols}, ${cell}px)`,
+            gridTemplateRows: `repeat(${rows}, ${cell}px)`,
+            gap: GAP,
+          }}
+        >
+          {Array.from({ length: rows }).map((_, r) =>
+            Array.from({ length: cols }).map((_, c) => {
               if (occ[r][c]) return null;
-              // Show preview tint over empty cells inside drag target if drag valid
-              const inPreview = drag && drag.valid &&
+              const inPreview = drag &&
                 c >= drag.x && c < drag.x + drag.w &&
                 r >= drag.y && r < drag.y + drag.h;
+              const previewCls = inPreview
+                ? (drag.valid ? ' wg-cell-preview' : ' wg-cell-preview-bad')
+                : '';
               return (
                 <button
                   key={'e' + r + '-' + c}
-                  className={'wg-cell' + (inPreview ? ' wg-cell-preview' : '')}
+                  className={'wg-cell' + previewCls}
                   style={{ gridColumn: c + 1, gridRow: r + 1 }}
                   onClick={() => onCellClick(c, r)}
                   aria-label={t.wg_add_aria}
                 >
-                  <Icon name="plus" size={14} />
+                  <Icon name="plus" size={18} />
                 </button>
               );
             })
@@ -518,32 +650,36 @@ export function WidgetGrid({ t, setRoute, user }) {
             const isDragging = drag && drag.id === w.id;
             const display = isDragging ? drag : w;
             const tone = TONE[cat.tone] || TONE.accent;
+            const cls = [
+              'wg-widget',
+              isDragging ? 'wg-widget-dragging' : '',
+              isDragging && drag.mode === 'move' ? 'wg-widget-moving' : '',
+              isDragging && !drag.valid ? 'wg-widget-bad' : '',
+            ].filter(Boolean).join(' ');
             return (
               <div
                 key={w.id}
-                className={'wg-widget' + (isDragging ? ' wg-widget-dragging' : '') + (isDragging && !drag.valid ? ' wg-widget-bad' : '')}
+                className={cls}
                 style={{
                   gridColumn: `${display.x + 1} / span ${display.w}`,
                   gridRow: `${display.y + 1} / span ${display.h}`,
                   '--wg-tone-bg': tone.bg,
                   '--wg-tone-fg': tone.fg,
                 }}
-                onClick={() => onWidgetClick(w, cat.route)}
+                onMouseDown={(e) => onBodyDown(e, w, cat)}
                 role="button"
                 tabIndex={0}
               >
                 <div className="wg-widget-head">
-                  <span className="wg-widget-ic"><Icon name={cat.icon} size={13} /></span>
-                  {(display.w >= 2 || display.h >= 2) && (
-                    <span className="wg-widget-title">{t['wg_' + w.type + '_name']}</span>
-                  )}
+                  <span className="wg-widget-ic"><Icon name={cat.icon} size={16} /></span>
+                  <span className="wg-widget-title">{t['wg_' + w.type + '_name']}</span>
                   <button
                     className="wg-widget-close"
                     onClick={(e) => { e.stopPropagation(); removeWidget(w.id); }}
                     onMouseDown={(e) => e.stopPropagation()}
                     aria-label={t.wg_remove_aria}
                   >
-                    <Icon name="x" size={11} />
+                    <Icon name="x" size={12} />
                   </button>
                 </div>
                 <div className="wg-widget-body">
@@ -554,7 +690,6 @@ export function WidgetGrid({ t, setRoute, user }) {
                     key={dir}
                     className={'wg-handle wg-handle-' + dir}
                     onMouseDown={(e) => onHandleDown(e, w.id, dir)}
-                    onClick={(e) => e.stopPropagation()}
                   />
                 ))}
               </div>
