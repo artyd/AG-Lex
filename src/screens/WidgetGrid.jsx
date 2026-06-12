@@ -69,14 +69,63 @@ function canPlace(occ, cols, rows, x, y, w, h) {
   return true;
 }
 
-/* Clamp a widget into a (cols × rows) grid without overlap awareness —
-   called when the viewport changes and existing widgets need to fit. */
-function fitWidget(w, cols, rows) {
-  const ww = Math.max(1, Math.min(w.w, cols));
-  const wh = Math.max(1, Math.min(w.h, rows));
-  const wx = Math.max(0, Math.min(cols - ww, w.x));
-  const wy = Math.max(0, Math.min(rows - wh, w.y));
-  return { ...w, x: wx, y: wy, w: ww, h: wh };
+/* Scan a (cols × rows) occupancy map for the first free w × h rectangle in
+   reading order. Returns null when the grid is full. */
+function findFreeSlot(occ, cols, rows, w, h) {
+  if (w > cols || h > rows) return null;
+  for (let y = 0; y <= rows - h; y++) {
+    for (let x = 0; x <= cols - w; x++) {
+      let free = true;
+      for (let r = y; r < y + h && free; r++) {
+        for (let c = x; c < x + w && free; c++) {
+          if (occ[r][c]) free = false;
+        }
+      }
+      if (free) return { x, y };
+    }
+  }
+  return null;
+}
+
+/* Re-place every widget into the new (cols × rows) grid, preserving order
+   and never overlapping. Each widget is tried at its saved position first;
+   if it would collide or fall out of bounds, the next free slot is used.
+   Widgets are processed top-to-bottom, left-to-right so spatial layout
+   reads predictably after a resize.
+
+   The previous `fitWidget(w, cols, rows)` only clamped a single widget into
+   bounds without knowing about other widgets — two widgets at different
+   valid positions could collapse onto the same cells after the layout
+   shrank, which is what users were seeing on re-login when localStorage
+   restored positions saved on a larger grid. */
+function reflowWidgets(widgets, cols, rows) {
+  if (!widgets || widgets.length === 0 || cols < 1 || rows < 1) return widgets || [];
+  const ordered = [...widgets].sort(
+    (a, b) => (a.y - b.y) || (a.x - b.x)
+  );
+  const occ = Array.from({ length: rows }, () => Array(cols).fill(null));
+  const out = [];
+  for (const w of ordered) {
+    const ww = Math.max(1, Math.min(w.w, cols));
+    const wh = Math.max(1, Math.min(w.h, rows));
+    let x = Math.max(0, Math.min(cols - ww, w.x));
+    let y = Math.max(0, Math.min(rows - wh, w.y));
+    if (!canPlace(occ, cols, rows, x, y, ww, wh)) {
+      const spot = findFreeSlot(occ, cols, rows, ww, wh);
+      if (!spot) {
+        // Grid genuinely has no room for this widget at its smallest fit.
+        // Drop it rather than letting it overlap; user can re-add later.
+        continue;
+      }
+      x = spot.x;
+      y = spot.y;
+    }
+    for (let r = y; r < y + wh; r++) {
+      for (let c = x; c < x + ww; c++) occ[r][c] = w.id;
+    }
+    out.push({ ...w, x, y, w: ww, h: wh });
+  }
+  return out;
 }
 
 /* Pick (cols, rows, cell) such that the grid fills the stage as fully as
@@ -390,6 +439,11 @@ export function WidgetGrid({ t, setRoute, user }) {
   const [picker, setPicker] = useState(null);
   const [drag, setDrag] = useState(null); // { id, x, y, w, h, valid, mode: 'resize'|'move' }
   const [layout, setLayout] = useState({ cols: 9, rows: 5, cell: 120 });
+  // True only after the ResizeObserver has measured the real stage. The
+  // initial layout state above is a placeholder so the very first paint
+  // doesn't trigger a reflow against a fake grid size — that race used to
+  // collapse multiple widgets onto the same cell on page reload.
+  const [layoutMeasured, setLayoutMeasured] = useState(false);
   const gridRef = useRef(null);
   const stageRef = useRef(null);
 
@@ -409,6 +463,7 @@ export function WidgetGrid({ t, setRoute, user }) {
         prev.cols === next.cols && prev.rows === next.rows && prev.cell === next.cell
           ? prev : next
       ));
+      setLayoutMeasured(true);
     };
     compute();
     const ro = new ResizeObserver(compute);
@@ -417,16 +472,23 @@ export function WidgetGrid({ t, setRoute, user }) {
     return () => { ro.disconnect(); window.removeEventListener('resize', compute); };
   }, []);
 
-  // When the layout shrinks, clamp existing widgets so they stay in-bounds.
+  // Reflow widgets into the current grid in a collision-aware way: positions
+  // saved on a larger grid (or for widgets that no longer fit) are
+  // re-resolved into the nearest free slot instead of overlapping. Gated
+  // behind `layoutMeasured` so the placeholder 9×5 layout state never
+  // triggers an unwanted re-shuffle on first paint.
   useEffect(() => {
-    if (cols < 1 || rows < 1) return;
+    if (!layoutMeasured || cols < 1 || rows < 1) return;
     setWidgets(ws => {
-      const next = ws.map(w => fitWidget(w, cols, rows));
-      const same = next.length === ws.length && next.every((w, i) =>
-        w.x === ws[i].x && w.y === ws[i].y && w.w === ws[i].w && w.h === ws[i].h);
-      return same ? ws : next;
+      const next = reflowWidgets(ws, cols, rows);
+      // Cheap structural compare so we don't trigger an extra localStorage
+      // write when nothing actually moved.
+      if (next.length === ws.length && next.every((w, i) =>
+        w.x === ws[i].x && w.y === ws[i].y && w.w === ws[i].w && w.h === ws[i].h && w.id === ws[i].id
+      )) return ws;
+      return next;
     });
-  }, [cols, rows]);
+  }, [cols, rows, layoutMeasured]);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets)); } catch (_e) {}
