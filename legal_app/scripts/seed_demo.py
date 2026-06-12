@@ -148,6 +148,28 @@ VERSIONS_SEED = [
     {"id": "v3", "label": "Після переговорів", "author": "u2", "date": "—", "changes": 0, "note": "Очікує на узгодження", "current": 0, "draft": 1},
 ]
 
+# Phase 2.4: every prototype matter has a lead and 1-2 collaborators. Without
+# explicit members, even the legacy `test@aglex.ua` account would see nothing
+# in /api/matters after the access-control switch — so we wire the test user
+# (legacy_id u1) into every active matter as either lead or collaborator.
+CASE_MEMBERS_SEED = [
+    # m1 — lead u1, collaborator u2
+    {"case_id": "m1", "user_id": "u1", "role_in_case": "lead"},
+    {"case_id": "m1", "user_id": "u2", "role_in_case": "collaborator"},
+    # m2 — lead u2, collaborator u1 (so the test user sees it too)
+    {"case_id": "m2", "user_id": "u2", "role_in_case": "lead"},
+    {"case_id": "m2", "user_id": "u1", "role_in_case": "collaborator"},
+    # m3 — lead u3, collaborator u1
+    {"case_id": "m3", "user_id": "u3", "role_in_case": "lead"},
+    {"case_id": "m3", "user_id": "u1", "role_in_case": "collaborator"},
+    # m4 — lead u2, collaborators u4, u5
+    {"case_id": "m4", "user_id": "u2", "role_in_case": "lead"},
+    {"case_id": "m4", "user_id": "u4", "role_in_case": "collaborator"},
+    {"case_id": "m4", "user_id": "u5", "role_in_case": "collaborator"},
+    # m5 — closed, lead u4
+    {"case_id": "m5", "user_id": "u4", "role_in_case": "lead"},
+]
+
 
 _SEEDS: tuple[tuple, ...] = (
     (MATTERS, MATTERS_SEED),
@@ -166,12 +188,78 @@ _SEEDS: tuple[tuple, ...] = (
 )
 
 
+def seed_legacy_user_ids(conn) -> None:
+    """Phase 2.4: bind the test account to prototype id `u1`.
+
+    The test user (`test@aglex.ua`, seeded in auth.seed_test_user) is the
+    only account that exists out-of-the-box. We map it to `u1` so the demo
+    data — which references `u1` as the lead on m1 — is immediately
+    accessible after login. Other accounts get `u{id}` auto-fabricated by
+    `cases_acl.resolve_user_text_id` when they first hit a case endpoint.
+
+    Idempotent: only sets legacy_id if NULL.
+    """
+    conn.execute(
+        "UPDATE users SET legacy_id = 'u1' "
+        "WHERE email = 'test@aglex.ua' AND legacy_id IS NULL"
+    )
+    conn.commit()
+
+
+def seed_case_members(conn) -> None:
+    """Populate case_members from CASE_MEMBERS_SEED. Idempotent."""
+    import datetime
+    ts = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
+    for row in CASE_MEMBERS_SEED:
+        conn.execute(
+            "INSERT OR IGNORE INTO case_members "
+            "(case_id, user_id, role_in_case, added_at, added_by) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (row["case_id"], row["user_id"], row["role_in_case"], ts, "u1"),
+        )
+    conn.commit()
+
+
+def seed_demo_notification(conn) -> None:
+    """Insert one demo notification so the bell shows a count on first login.
+
+    Only adds a row if the test user has zero existing notifications, so
+    re-runs after the user has interacted with the bell don't re-spam.
+    """
+    import datetime, uuid
+    row = conn.execute(
+        "SELECT 1 FROM notifications WHERE user_id = 'u1' LIMIT 1"
+    ).fetchone()
+    if row:
+        return
+    ts = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO notifications "
+        "(id, user_id, case_id, type, message, payload, is_read, created_at) "
+        "VALUES (?, 'u1', 'm4', 'case.updated', ?, ?, 0, ?)",
+        (
+            uuid.uuid4().hex,
+            "Оновлено справу «Спір з підряду — ОСББ Зарічне»",
+            '{"field":"status","new_value":"court"}',
+            ts,
+        ),
+    )
+    conn.commit()
+
+
 def seed_all(conn) -> dict[str, int]:
-    """Seed every Phase 2.2 table. Returns {table: rows_targeted}."""
+    """Seed every Phase 2.2/2.4 table. Returns {table: rows_targeted}."""
     targeted: dict[str, int] = {}
     for entity, rows in _SEEDS:
         upsert_many(conn, entity, rows)
         targeted[entity.table] = len(rows)
+    # Phase 2.4 seeds. Order matters: legacy ids first so case_members rows
+    # actually map to a real user; notifications last because they reference
+    # an existing matter id.
+    seed_legacy_user_ids(conn)
+    seed_case_members(conn)
+    targeted["case_members"] = len(CASE_MEMBERS_SEED)
+    seed_demo_notification(conn)
     return targeted
 
 

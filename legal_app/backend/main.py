@@ -17,7 +17,10 @@ from pydantic import BaseModel, Field
 from . import assist as assist_module
 from . import auth as auth_module
 from . import builder as builder_module
+from . import calendar_routes as calendar_module
 from . import drafts as drafts_module
+from . import matters_routes as matters_module
+from . import notifications_routes as notifications_module
 from . import team as team_module
 from .audit import init_audit_schema
 from .auth import current_user
@@ -33,7 +36,12 @@ from .documents import (
     split_into_sections,
     token_savings,
 )
-from .models import init_entity_schema, migrate_drafts
+from .models import (
+    init_entity_schema,
+    migrate_drafts,
+    migrate_matters,
+    migrate_users,
+)
 from .pipeline import analyze
 from .rbac import (
     init_permissions_schema,
@@ -66,6 +74,12 @@ async def lifespan(app: FastAPI):
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
         migrate_drafts(conn)          # Fix 1: add user_id + is_shared, backfill legacy rows
+        # Phase 2.4: realtime Matters needs users.legacy_id (bridges auth ids to
+        # the prototype TEXT user_ids used across domain tables), plus richer
+        # columns on `matters` for the detail view. Order matters: users first
+        # because the matters migration references them indirectly.
+        migrate_users(conn)
+        migrate_matters(conn)
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)                # populate workspace tables from demo data
@@ -80,11 +94,20 @@ app.include_router(team_module.router)
 app.include_router(assist_module.router)
 app.include_router(builder_module.router)
 app.include_router(drafts_module.router)  # Fix 1: custom router replaces generic CRUD
+# Phase 2.4: custom routers for /api/matters, /api/notifications, /api/calendar.
+# The matters router enforces row-level access via case_members; the generic
+# CRUD loop below skips MATTERS so the two don't shadow each other.
+app.include_router(matters_module.router)
+app.include_router(notifications_module.router)
+app.include_router(calendar_module.router)
 
 # Phase 2.2: mount /api/<entity> for every workspace table. All are gated by
 # `current_user` inside `build_router`. Phase 2.3: invoices reads/writes
 # require the `billing` capability per spec §5.2.
 for _entity in ALL_ENTITIES:
+    if _entity.table == "matters":
+        # Replaced by matters_module.router above — skip to avoid conflict.
+        continue
     if _entity.table == "invoices":
         app.include_router(build_router(
             _entity, read_capability="billing", write_capability="billing",

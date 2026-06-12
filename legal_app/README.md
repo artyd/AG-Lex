@@ -36,8 +36,11 @@ pip install -r requirements.txt
 # 3. Copy .env.example to .env and fill in secrets (API_KEY, JWT_SECRET).
 copy .env.example .env
 
-# 4. Run.
-uvicorn backend.main:app --reload
+# 4. Run.  IMPORTANT: keep --workers 1.
+# The realtime WebSocket fan-out uses an in-process ConnectionManager
+# (see backend/realtime.py).  Multiple workers would silo their sockets
+# and break realtime broadcast.  Scale-out later via Redis pub/sub.
+uvicorn backend.main:app --reload --workers 1
 ```
 
 Open:

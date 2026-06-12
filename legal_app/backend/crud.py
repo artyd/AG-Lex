@@ -255,9 +255,21 @@ def build_router(
 
 MATTERS = Entity(
     table="matters",
+    # Phase 2.4 expanded shape — original 10 columns plus the migration-added
+    # ones. Frontend can ship camelCase keys; `column_aliases` lowers them.
     columns=("code", "title", "client", "type", "status", "lead",
-             "docs", "open_tasks", "hours", "color"),
-    column_aliases={"openTasks": "open_tasks"},
+             "docs", "open_tasks", "hours", "color",
+             "summary", "priority", "opponent", "court", "judge", "outcome",
+             "next_deadline", "next_label", "description", "started_at",
+             "closed_at", "updated_at"),
+    column_aliases={
+        "openTasks": "open_tasks",
+        "nextDeadline": "next_deadline",
+        "nextLabel": "next_label",
+        "startedAt": "started_at",
+        "closedAt": "closed_at",
+        "updatedAt": "updated_at",
+    },
     id_prefix="m-",
 )
 

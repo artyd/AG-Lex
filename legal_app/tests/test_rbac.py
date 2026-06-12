@@ -8,7 +8,7 @@ from backend import audit as audit_module
 from backend.audit import init_audit_schema, list_audit
 from backend.database import get_connection, get_db, init_user_schema
 from backend.main import app
-from backend.models import init_entity_schema
+from backend.models import init_entity_schema, migrate_matters, migrate_users
 from backend.rbac import (
     CAPABILITIES,
     DEFAULT_PERMISSIONS,
@@ -33,6 +33,11 @@ def db_conn():
     init_permissions_schema(conn)
     init_audit_schema(conn)
     seed_default_permissions(conn)
+    # Phase 2.4: team.list_members reads users.legacy_id, so this migration
+    # has to be in place even for the rbac suite that doesn't otherwise
+    # touch matters.
+    migrate_users(conn)
+    migrate_matters(conn)
     yield conn
     conn.close()
 
