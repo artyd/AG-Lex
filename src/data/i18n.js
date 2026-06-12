@@ -309,7 +309,7 @@ export const I18N = {
 
     /* ---------- Dashboard widget grid ---------- */
     wgTitle: 'Простір віджетів',
-    wgSub: 'Натисніть будь-яку клітинку, щоб додати віджет. Перетягуйте кути, щоб змінити розмір — підказка показує допустимий розмір.',
+    wgSub: 'Клік по клітинці — додати віджет. Перетягніть тіло — щоб перемістити, кути або краї — щоб змінити розмір. Усе зі snap до сітки.',
     wgPick: 'Оберіть віджет',
     wgPickSub: '15 готових модулів для юридичної практики',
     wg_added: 'Віджет додано',
@@ -699,7 +699,7 @@ export const I18N = {
 
     /* ---------- Dashboard widget grid ---------- */
     wgTitle: 'Widget canvas',
-    wgSub: 'Click any cell to add a widget. Drag the corners to resize — the preview shows the target span.',
+    wgSub: 'Click a cell to add a widget. Drag the body to move; drag corners or edges to resize. Everything snaps to the grid.',
     wgPick: 'Pick a widget',
     wgPickSub: '15 ready modules for legal practice',
     wg_added: 'Widget added',
