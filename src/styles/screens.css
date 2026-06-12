@@ -1593,3 +1593,73 @@ select.field { cursor: pointer; }
   background: var(--surface);
 }
 
+/* Detail-header team strip — lead + collaborators with a "+ add" button. */
+.mt-team-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.mt-team-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--text-3);
+  margin-right: 2px;
+}
+.mt-team-member {
+  position: relative;
+  display: inline-flex;
+}
+.mt-team-lead-pip {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+}
+.mt-team-add {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--border-strong);
+  background: var(--surface);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.mt-team-add:hover {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+  color: var(--accent);
+}
+
+/* Inline task add form inside the Tasks tab. Lives above the task list. */
+.mt-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+}
+.mt-task-form-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto auto;
+  gap: 8px;
+}
+.mt-task-form .field { padding: 7px 9px; font-size: 13px; }
+@media (max-width: 720px) {
+  .mt-task-form-row { grid-template-columns: 1fr 1fr; }
+  .mt-task-form-row .btn { grid-column: span 1; }
+}
+

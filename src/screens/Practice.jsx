@@ -33,13 +33,18 @@ const STATUS_COLOR = {
 // Status → matter icon. The prominent icon on each MatterCard and the
 // detail header swaps with the status so a glance through the list
 // immediately conveys workflow position (per spec).
+//
+// `fill: true` is set for glyphs whose paths are closed shapes (circle,
+// play triangle, pause bars) — without it they render as thin outlines
+// and look unfinished. Line-art glyphs (hourglass, gavel, check) stay
+// stroke-only so their interior detail stays visible.
 const STATUS_ICON = {
-  new: 'circle',
-  progress: 'play',
-  waiting: 'hourglass',
-  stuck: 'pause',
-  court: 'gavel',
-  closed: 'check',
+  new:      { name: 'circle',    fill: true  },
+  progress: { name: 'play',      fill: true  },
+  waiting:  { name: 'hourglass', fill: false },
+  stuck:    { name: 'pause',     fill: true  },
+  court:    { name: 'gavel',     fill: false },
+  closed:   { name: 'check',     fill: false },
 };
 
 const TYPE_META = {
@@ -178,19 +183,19 @@ function CloseMatterModal({ open, onClose, onConfirm, t }) {
 }
 
 /* ---------- New-matter modal ---------- */
-function NewMatterModal({ open, onClose, onCreate, t, clients }) {
-  const [form, setForm] = useState({
-    title: '', client: '', type: 'contract', lead: 'u1', priority: 'med',
-    status: 'new', startedAt: '2026-06-09', nextDate: '', nextLabel: '', description: '',
+function NewMatterModal({ open, onClose, onCreate, t, clients, defaultLead }) {
+  // Default lead = current user (legacy_id). 'u1' was a demo hardcode that
+  // produced ownerless-looking matters for any non-seed user.
+  const initial = () => ({
+    title: '', client: '', type: 'contract', lead: defaultLead || 'u1', priority: 'med',
+    status: 'new', startedAt: new Date().toISOString().slice(0, 10),
+    nextDate: '', nextLabel: '', description: '',
   });
+  const [form, setForm] = useState(initial);
   useEffect(() => {
-    if (open) {
-      setForm({
-        title: '', client: '', type: 'contract', lead: 'u1', priority: 'med',
-        status: 'new', startedAt: '2026-06-09', nextDate: '', nextLabel: '', description: '',
-      });
-    }
-  }, [open]);
+    if (open) setForm(initial());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultLead]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const submit = () => {
     if (!form.title.trim() || !form.client.trim()) {
@@ -271,13 +276,13 @@ function MatterCard({ m, t, onOpen, justAdded }) {
   // Spec: matter icon swaps with status — not type. Type remains visible
   // as a chip beside the code so the metadata isn't lost.
   const statusColor = STATUS_COLOR[m.status] || STATUS_COLOR.new;
-  const statusGlyph = STATUS_ICON[m.status] || 'circle';
+  const statusGlyph = STATUS_ICON[m.status] || STATUS_ICON.new;
   return (
     <button className={'card mt-card' + (justAdded ? ' mt-card-just-added' : '')} onClick={onOpen}>
       {justAdded ? <span className="mt-just-added-badge">{t.mt_just_added || 'Вас додали'}</span> : null}
       <div className="mt-card-head">
         <span className="mt-type-ic" style={{ background: statusColor.bg, color: statusColor.fg }}>
-          <Icon name={statusGlyph} size={18} />
+          <Icon name={statusGlyph.name} size={18} fill={statusGlyph.fill} />
         </span>
         <div className="mt-card-meta">
           <span className="mt-code">{m.code}</span>
@@ -364,13 +369,41 @@ function TabOverview({ m, t }) {
 }
 
 function TabDocuments({ m, t, setRoute }) {
-  const docs = DEMO.library.filter(c => c.client === m.client);
+  // Seed from the demo library, then append any documents the user attaches
+  // in this session. Persistence to a /api/matters/{id}/documents endpoint
+  // is a separate piece of work; for now the file picker at least *does*
+  // something — adds the entry to the list and shows a confirmation toast.
+  const initialDocs = DEMO.library.filter(c => c.client === m.client);
+  const [docs, setDocs] = useState(initialDocs);
+  const fileRef = useRef(null);
+
+  const onPick = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const stamp = new Date().toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const added = files.map(f => ({
+      id: 'd_' + Math.random().toString(36).slice(2, 8),
+      name: f.name,
+      type: (f.name.split('.').pop() || '').toUpperCase() || '—',
+      client: m.client,
+      date: stamp,
+      risk: 'low',
+      size: f.size,
+    }));
+    setDocs(d => [...added, ...d]);
+    toast(`${added.length === 1 ? added[0].name : added.length + ' файлів'} · ${t.uploadDone}`, 'upload');
+    e.target.value = '';
+  };
+
   return (
     <div className="card mt-card-pad">
       <SectionTitle action={
-        <button className="btn btn-ghost btn-sm" onClick={() => toast(t.uploadDone, 'upload')}>
-          <Icon name="upload" size={14} /> {t.mt_docs_upload}
-        </button>
+        <>
+          <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={onPick} accept=".pdf,.docx,.doc,.xlsx,.png,.jpg,.jpeg" />
+          <button className="btn btn-ghost btn-sm" onClick={() => fileRef.current && fileRef.current.click()}>
+            <Icon name="upload" size={14} /> {t.mt_docs_upload}
+          </button>
+        </>
       }>{t.mt_tab_docs}</SectionTitle>
       {docs.length === 0 ? (
         <div className="mt-empty"><Icon name="doc" size={26} /><div>{t.mt_docs_empty}</div></div>
@@ -381,7 +414,7 @@ function TabDocuments({ m, t, setRoute }) {
               <span className="recent-ic"><Icon name="doc" size={16} /></span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span className="recent-name">{c.name}</span>
-                <span className="recent-sub">{c.type} · {c.date}</span>
+                <span className="recent-sub">{c.type} · {c.date}{c.size ? ' · ' + (c.size / 1024).toFixed(0) + ' KB' : ''}</span>
               </span>
               {riskDot(c.risk)}
               <Icon name="chevR" size={15} style={{ color: 'var(--text-3)' }} />
@@ -394,16 +427,88 @@ function TabDocuments({ m, t, setRoute }) {
 }
 
 function TabTasks({ m, t }) {
+  // Seed local list with LX-prototype tasks for the matter's code so the
+  // tab isn't empty when the new collaborator visits a freshly created case.
   const [tasks, setTasks] = useState(() => LX.tasks.filter(k => k.matter === m.code));
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ title: '', assignee: m.lead || 'u1', due: '', priority: 'med' });
   const toggle = (id) => setTasks(ts => ts.map(k => k.id === id ? { ...k, col: k.col === 'done' ? 'todo' : 'done' } : k));
   const active = tasks.filter(k => k.col !== 'done');
+
+  // Pool of assignable users: case team if available, else the full LX team
+  // (covers the gap when the detail isn't hydrated yet).
+  const assignablePool = (m.members && m.members.length > 0)
+    ? m.members.map(mb => ({ id: mb.user_id, name: mb.name || mb.user_id }))
+    : LX.team.map(u => ({ id: u.id, name: u.name }));
+
+  const submit = () => {
+    if (!draft.title.trim()) { toast(t.mt_form_required, 'alert'); return; }
+    const optimistic = {
+      id: 'tk-' + Math.random().toString(36).slice(2, 8),
+      title: draft.title.trim(),
+      matter: m.code,
+      assignee: draft.assignee,
+      due: draft.due || '—',
+      priority: draft.priority,
+      col: 'todo',
+    };
+    setTasks(ts => [optimistic, ...ts]);
+    api.matters.addTask(m.id, {
+      title: optimistic.title,
+      assignee: draft.assignee,
+      due: draft.due || null,
+      priority: draft.priority,
+      col: 'todo',
+    })
+      .then(() => toast(t.taskCreated || t.mt_tasks_added || 'Задачу створено', 'check'))
+      .catch((e) => {
+        // Roll back optimistic insert on failure so the UI doesn't lie.
+        setTasks(ts => ts.filter(k => k.id !== optimistic.id));
+        toast(e.message || 'Не вдалося створити задачу', 'alert');
+      });
+    setDraft({ title: '', assignee: m.lead || 'u1', due: '', priority: 'med' });
+    setAdding(false);
+  };
+
   return (
     <div className="card mt-card-pad">
       <SectionTitle action={
-        <button className="btn btn-ghost btn-sm" onClick={() => toast(t.taskCreated, 'check')}>
+        <button className="btn btn-ghost btn-sm" onClick={() => setAdding(a => !a)}>
           <Icon name="plus" size={14} /> {t.mt_tasks_add}
         </button>
       }>{t.mt_tab_tasks}</SectionTitle>
+
+      {adding ? (
+        <div className="mt-task-form">
+          <input
+            className="field"
+            placeholder={t.taskTitleF || 'Назва задачі'}
+            value={draft.title}
+            onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
+            autoFocus
+          />
+          <div className="mt-task-form-row">
+            <select className="field" value={draft.assignee} onChange={e => setDraft(d => ({ ...d, assignee: e.target.value }))} aria-label={t.taskAssignee}>
+              {assignablePool.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <input
+              type="date"
+              className="field"
+              value={draft.due}
+              onChange={e => setDraft(d => ({ ...d, due: e.target.value }))}
+              aria-label={t.taskDue}
+            />
+            <select className="field" value={draft.priority} onChange={e => setDraft(d => ({ ...d, priority: e.target.value }))} aria-label={t.taskPrio}>
+              <option value="high">{t.prioHigh}</option>
+              <option value="med">{t.prioMed}</option>
+              <option value="low">{t.prioLow}</option>
+            </select>
+            <button className="btn btn-primary btn-sm" onClick={submit}><Icon name="check" size={13} /> {t.save}</button>
+            <button className="btn btn-subtle btn-sm" onClick={() => { setAdding(false); setDraft({ title: '', assignee: m.lead || 'u1', due: '', priority: 'med' }); }}>{t.cancel}</button>
+          </div>
+        </div>
+      ) : null}
+
       {tasks.length === 0 ? (
         <div className="mt-empty"><Icon name="check" size={26} /><div>{t.mt_tasks_empty}</div></div>
       ) : (
@@ -637,6 +742,22 @@ function Matters({ t, setRoute }) {
   const [pendingStatus, setPendingStatus] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  // Hydrated detail (members, parties, notes, hearings, timeline) for the
+  // currently open case. Card-shape from `matters` is the fallback while
+  // the GET /api/matters/{id} request is in flight; once `detail` arrives
+  // it takes precedence so the detail view has access to the full payload.
+  const { detail, reload: reloadDetail } = useMatterDetail(sel);
+
+  // Resolve the current user's TEXT id once so it can pre-populate the
+  // "new matter" lead field. Falling back to 'u1' (the demo seed user)
+  // keeps the local prototype working without a backend session.
+  const currentUserLegacyId = (() => {
+    try {
+      const raw = localStorage.getItem('aglex_session_v2');
+      const u = raw ? JSON.parse(raw)?.user : null;
+      return u?.legacy_id || (u?.id ? 'u' + u.id : 'u1');
+    } catch (_e) { return 'u1'; }
+  })();
 
   // Honour the optional "open this matter" hint set by App.jsx when the
   // user clicks a case-targeted notification in the bell.
@@ -719,19 +840,22 @@ function Matters({ t, setRoute }) {
   };
 
   const createMatter = (form) => {
+    // Default the lead to the current user — `u1` was a demo-prototype
+    // hardcode that broke for any registered account that wasn't seeded
+    // as u1 (gave a noisy mismatch and made the matter look ownerless).
     const body = {
-      title: form.title,
-      client: form.client,
-      type: form.type,
-      lead: form.lead,
-      priority: form.priority,
-      status: form.status,
-      description: form.description,
-      startedAt: form.startedAt,
+      title: (form.title || '').trim(),
+      client: (form.client || '').trim(),
+      type: form.type || 'other',
+      lead: form.lead || currentUserLegacyId,
+      priority: form.priority || 'med',
+      status: form.status || 'new',
+      description: form.description || null,
+      startedAt: form.startedAt || null,
       nextDeadline: form.nextDate || null,
       nextLabel: form.nextLabel || null,
       // Backend takes a list of legacy_id strings as the initial team. The
-      // form lead may already be a user_id; team adds happen via MemberPicker.
+      // creator is auto-added as lead; team adds happen via MemberPicker.
       team: [],
     };
     api.matters.create(body)
@@ -744,7 +868,13 @@ function Matters({ t, setRoute }) {
         setTab('overview');
       })
       .catch((e) => {
-        toast(e.message || t.mt_form_required, 'alert');
+        // Surface the actual server error so deployment mismatches (e.g.
+        // running against an old backend without these migrations) are
+        // visible instead of silently failing with a generic message.
+        const msg = e?.message || t.mt_form_required;
+        toast(msg, 'alert');
+        // eslint-disable-next-line no-console
+        console.error('matters.create failed', e);
       });
   };
 
@@ -771,7 +901,12 @@ function Matters({ t, setRoute }) {
 
   /* ---------- Detail view ---------- */
   if (sel) {
-    const m = matters.find(x => x.id === sel);
+    const card = matters.find(x => x.id === sel);
+    // Merge: detail wins when the GET landed (it has members/notes/etc),
+    // card covers the in-flight gap so the page renders something
+    // immediately. If neither exists the selection points at a deleted
+    // matter — bail back to the list.
+    const m = detail || card;
     if (!m) { setSel(null); return null; }
     const meta = TYPE_META[m.type] || TYPE_META.other;
     const TABS = [
@@ -791,9 +926,15 @@ function Matters({ t, setRoute }) {
           </button>
 
           <div className="card mt-detail-head">
-            <span className="mt-type-ic mt-type-ic-lg" style={{ background: (STATUS_COLOR[m.status] || STATUS_COLOR.new).bg, color: (STATUS_COLOR[m.status] || STATUS_COLOR.new).fg }}>
-              <Icon name={STATUS_ICON[m.status] || 'circle'} size={26} />
-            </span>
+            {(() => {
+              const sc = STATUS_COLOR[m.status] || STATUS_COLOR.new;
+              const sg = STATUS_ICON[m.status] || STATUS_ICON.new;
+              return (
+                <span className="mt-type-ic mt-type-ic-lg" style={{ background: sc.bg, color: sc.fg }}>
+                  <Icon name={sg.name} size={26} fill={sg.fill} />
+                </span>
+              );
+            })()}
             <div className="mt-detail-info">
               <div className="mt-detail-chips">
                 <span className="mt-code">{m.code}</span>
@@ -802,6 +943,28 @@ function Matters({ t, setRoute }) {
               </div>
               <h1 className="mt-detail-title">{m.title}</h1>
               <div className="mt-detail-client">{m.client}</div>
+              {/* Team strip: lead + collaborators with hover tooltips. The
+                  user wants to see at a glance who's responsible and who's
+                  on the case. Members come from the hydrated detail; if it
+                  isn't loaded yet we fall back to just the lead avatar. */}
+              <div className="mt-team-strip">
+                <span className="mt-team-label">{t.mLead}:</span>
+                {(m.members && m.members.length > 0) ? (
+                  <>
+                    {m.members.map(mb => (
+                      <span key={mb.user_id} className="mt-team-member" title={`${mb.name || mb.user_id}${mb.role_in_case === 'lead' ? ' · ' + t.mt_team_role_lead : ''}`}>
+                        <UserAvatar id={mb.user_id} size={28} />
+                        {mb.role_in_case === 'lead' ? <span className="mt-team-lead-pip" /> : null}
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  <UserAvatar id={m.lead} size={28} />
+                )}
+                <button className="mt-team-add" onClick={() => setMemberPickerOpen(true)} aria-label={t.mt_team_add}>
+                  <Icon name="plus" size={14} />
+                </button>
+              </div>
             </div>
             <div className="mt-detail-side">
               <StatusDropdown status={m.status} t={t} onChange={(s) => onStatusChange(m.id, s)} />
@@ -984,7 +1147,7 @@ function Matters({ t, setRoute }) {
         )}
       </div>
 
-      <NewMatterModal open={newOpen} onClose={() => setNewOpen(false)} onCreate={createMatter} t={t} clients={clientsList} />
+      <NewMatterModal open={newOpen} onClose={() => setNewOpen(false)} onCreate={createMatter} t={t} clients={clientsList} defaultLead={currentUserLegacyId} />
       <CloseMatterModal open={closeOpen} onClose={() => { setCloseOpen(false); setPendingStatus(null); }} onConfirm={confirmClose} t={t} />
     </div>
   );
