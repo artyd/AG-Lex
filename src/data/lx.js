@@ -28,13 +28,135 @@ export const LX = (function () {
     { key: 'manage',  cap: 'Керування командою',        partner: true,  senior: false, lawyer: false, paralegal: false, admin: true },
   ];
 
-  /* ---------- Matters (справи) ---------- */
+  /* ---------- Matters (справи) ----------
+     Workflow statuses: new | progress | waiting | stuck | court | closed.
+     Each matter carries enough context for the detail view (nextDeadline,
+     parties, court/judge, brief description, notes & timeline) so all of
+     the case lives in one place — no jumping between modules. */
   const matters = [
-    { id: 'm1', code: 'SEV-2026-04', title: 'Супровід ТОВ «Северин»', client: 'ТОВ «Северин»', type: 'Корпоративне', status: 'active', lead: 'u1', docs: 6, openTasks: 3, hours: 24.5, color: 290 },
-    { id: 'm2', code: 'VEK-2026-02', title: 'Постачання — ТД «Вектор»', client: 'ТД «Вектор»', type: 'Договірне', status: 'active', lead: 'u2', docs: 4, openTasks: 1, hours: 11.0, color: 245 },
-    { id: 'm3', code: 'SKY-2026-01', title: 'NDA та IP — Sky Labs', client: 'Sky Labs Inc.', type: 'IP / IT', status: 'active', lead: 'u3', docs: 3, openTasks: 0, hours: 7.5, color: 158 },
-    { id: 'm4', code: 'ZAR-2026-03', title: 'Спір з підряду — ОСББ «Зарічне»', client: 'ОСББ «Зарічне»', type: 'Судовий спір', status: 'active', lead: 'u2', docs: 5, openTasks: 4, hours: 31.0, color: 320 },
-    { id: 'm5', code: 'BIT-2026-01', title: 'Ліцензування ПЗ — Бітфордж', client: 'ТОВ «Бітфордж»', type: 'IP / IT', status: 'closed', lead: 'u4', docs: 4, openTasks: 0, hours: 18.0, color: 25 },
+    {
+      id: 'm1', code: 'COR-2026-04', title: 'Супровід ТОВ «Северин»',
+      client: 'ТОВ «Северин»', type: 'corporate', lead: 'u1',
+      status: 'progress', priority: 'high',
+      docs: 6, openTasks: 3, hours: 24.5, color: 290,
+      startedAt: '2026-02-04',
+      description: 'Повне юридичне обслуговування ТОВ «Северин» — корпоративні рішення, договірна робота з постачальниками, супровід зборів учасників.',
+      nextDeadline: { date: '2026-06-11', label: 'Подати протокол зборів учасників' },
+      opponent: null, court: null, judge: null,
+      result: null, closedAt: null,
+      keyFacts: [
+        'Бенефіціар — Северина І.П. (100% частки).',
+        'Готується реструктуризація з виокремленням нової юрособи під ІТ-напрям.',
+        'Аудитор — PwC; фінрік завершено 31.12.2025.',
+      ],
+      parties: { client: 'ТОВ «Северин»', clientRep: 'Северина І. П., директор', opponent: null, opponentRep: null },
+      notes: [
+        { id: 'n1', date: '2026-06-09', author: 'u1', text: 'Узгодили дату зборів учасників — 14.06. Готую проєкт протоколу.' },
+        { id: 'n2', date: '2026-06-04', author: 'u2', text: 'Запит від банку щодо реквізитів — надіслав комплект документів.' },
+      ],
+      timeline: [
+        { id: 't1', date: '2026-06-09', kind: 'note', text: 'Підготовка зборів учасників' },
+        { id: 't2', date: '2026-05-22', kind: 'doc', text: 'Підписано додаткову угоду до договору з банком' },
+        { id: 't3', date: '2026-04-18', kind: 'task', text: 'Завершено квартальний аудит' },
+      ],
+    },
+    {
+      id: 'm2', code: 'DOG-2026-02', title: 'Постачання — ТД «Вектор»',
+      client: 'ТД «Вектор»', type: 'contract', lead: 'u2',
+      status: 'waiting', priority: 'med',
+      docs: 4, openTasks: 1, hours: 11.0, color: 245,
+      startedAt: '2026-03-12',
+      description: 'Узгодження довгострокового договору постачання з ТД «Вектор» — пакет з 12 SKU, специфікації щомісяця.',
+      nextDeadline: { date: '2026-06-20', label: 'Дочекатися пакета правок від «Вектор»' },
+      opponent: null, court: null, judge: null,
+      result: null, closedAt: null,
+      keyFacts: [
+        'Цінова формула прив’язана до ринкового індексу LME.',
+        'Передоплата 30%, решта — проти CMR.',
+        'Контрагент попросив 14 днів на узгодження редакції.',
+      ],
+      parties: { client: 'ТД «Вектор»', clientRep: 'Кравчук Б. О., керівник', opponent: null, opponentRep: null },
+      notes: [
+        { id: 'n1', date: '2026-06-06', author: 'u2', text: 'Відправив редакцію №3 — чекаємо на правки від юрвідділу контрагента.' },
+      ],
+      timeline: [
+        { id: 't1', date: '2026-06-06', kind: 'doc', text: 'Надіслано редакцію №3 договору' },
+        { id: 't2', date: '2026-05-28', kind: 'note', text: 'Зустріч з керівником закупівель' },
+      ],
+    },
+    {
+      id: 'm3', code: 'IPS-2026-01', title: 'NDA та IP — Sky Labs',
+      client: 'Sky Labs Inc.', type: 'ip', lead: 'u3',
+      status: 'new', priority: 'low',
+      docs: 3, openTasks: 0, hours: 7.5, color: 158,
+      startedAt: '2026-05-15',
+      description: 'Підготовка NDA і базової IP-структури для запуску спільного R&D-проєкту зі Sky Labs Inc. (US).',
+      nextDeadline: { date: '2026-06-18', label: 'Узгодити NDA з контрагентом' },
+      opponent: null, court: null, judge: null,
+      result: null, closedAt: null,
+      keyFacts: [
+        'Юрисдикція NDA — Делавер (US), з арбітражним застереженням.',
+        'Розробка фінансується на 60% Sky Labs, на 40% клієнтом.',
+      ],
+      parties: { client: 'Sky Labs Inc.', clientRep: 'John Carter, CTO', opponent: null, opponentRep: null },
+      notes: [],
+      timeline: [
+        { id: 't1', date: '2026-05-22', kind: 'doc', text: 'Перший проєкт NDA надіслано' },
+      ],
+    },
+    {
+      id: 'm4', code: 'LIT-2026-03', title: 'Спір з підряду — ОСББ «Зарічне»',
+      client: 'ОСББ «Зарічне»', type: 'litigation', lead: 'u2',
+      status: 'court', priority: 'high',
+      docs: 5, openTasks: 4, hours: 31.0, color: 320,
+      startedAt: '2025-11-20',
+      description: 'Стягнення з підрядника заборгованості та неустойки за неякісне виконання робіт з ремонту даху багатоквартирного будинку.',
+      nextDeadline: { date: '2026-06-12', label: 'Підготувати відзив на відповідь', kind: 'court' },
+      opponent: 'ТОВ «Будкомфорт»', opponentRep: 'Адвокат Сидоренко П.І.',
+      court: 'Господарський суд м. Києва', judge: 'Шевчук О.І.',
+      result: null, closedAt: null,
+      keyFacts: [
+        'Ціна позову — 482 350 грн.',
+        'Експертиза призначена на 02.07.2026.',
+        'Контрагент намагається затягнути розгляд процесуальними запитами.',
+      ],
+      parties: {
+        client: 'ОСББ «Зарічне»', clientRep: 'Голова правління Бондар Л. М.',
+        opponent: 'ТОВ «Будкомфорт»', opponentRep: 'Адвокат Сидоренко П. І.',
+      },
+      notes: [
+        { id: 'n1', date: '2026-06-08', author: 'u2', text: 'Підготовлено проєкт відзиву — ще перевірити калькуляцію неустойки.' },
+        { id: 'n2', date: '2026-05-29', author: 'u4', text: 'Зібрано додаткові докази — фото пошкоджень, акти ОСББ.' },
+      ],
+      timeline: [
+        { id: 't1', date: '2026-06-08', kind: 'doc', text: 'Чернетка відзиву на заяву відповідача' },
+        { id: 't2', date: '2026-05-15', kind: 'court', text: 'Засідання суду — оголошено перерву до 26.06' },
+        { id: 't3', date: '2026-03-04', kind: 'doc', text: 'Подано позовну заяву' },
+      ],
+    },
+    {
+      id: 'm5', code: 'IPS-2026-01b', title: 'Ліцензування ПЗ — Бітфордж',
+      client: 'ТОВ «Бітфордж»', type: 'ip', lead: 'u4',
+      status: 'closed', priority: 'med',
+      docs: 4, openTasks: 0, hours: 18.0, color: 25,
+      startedAt: '2025-12-01',
+      description: 'Узгодження ліцензійного договору на використання внутрішньої ERP-системи Бітфорж дочірньою компанією.',
+      nextDeadline: null,
+      opponent: null, court: null, judge: null,
+      result: 'won', closedAt: '2026-05-21',
+      keyFacts: [
+        'Ліцензія — невиключна, територія України.',
+        'Роялті: 7% від виручки на ERP-модулі, з мінімальним платежем.',
+      ],
+      parties: { client: 'ТОВ «Бітфордж»', clientRep: 'CTO Шамрай Т. М.', opponent: null, opponentRep: null },
+      notes: [
+        { id: 'n1', date: '2026-05-21', author: 'u4', text: 'Договір підписано в обох сторін, справу закрито.' },
+      ],
+      timeline: [
+        { id: 't1', date: '2026-05-21', kind: 'closed', text: 'Договір підписано — справу закрито' },
+        { id: 't2', date: '2026-04-12', kind: 'doc', text: 'Узгоджено фінальну редакцію договору' },
+      ],
+    },
   ];
 
   /* ---------- Tasks (kanban) ---------- */
