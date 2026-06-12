@@ -44,6 +44,13 @@ const ICON_PATHS = {
   pen: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
   shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
   monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
+  // Phase 2.4 — status icons used by the Matters module. Pure stroke glyphs
+  // to match the rest of the line set; colors come from the consumer.
+  circle: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
+  play: 'M7 5l12 7-12 7V5z',
+  hourglass: 'M7 3h10M7 21h10M7 3v4l5 5-5 5v4M17 3v4l-5 5 5 5v4',
+  pause: 'M8 5h3v14H8zM13 5h3v14h-3z',
+  gavel: 'M14 3l7 7-3 3-7-7zM10 7l-7 7 3 3 7-7M4 21h12',
 };
 
 /* Brand OS glyphs — filled silhouettes (rendered separately from line icons) */

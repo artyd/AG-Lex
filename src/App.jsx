@@ -7,6 +7,8 @@ import { Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
 import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, useTweaks } from './ui/tweaks-panel';
 import { roleLabel } from './lib/labels';
 import { lxLoadSession, lxLogout, initialsOf, hueOf } from './lib/auth';
+import { api } from './lib/api';
+import { connect as realtimeConnect, disconnect as realtimeDisconnect, subscribe as realtimeSubscribe } from './lib/realtime';
 import { DEMO } from './data/demo';
 import { LX } from './data/lx';
 import { I18N } from './data/i18n';
@@ -89,23 +91,76 @@ export default function App() {
   const titleKey = PAGE_TITLES[route] || 'dashboard';
   const crumb = route === 'analyze' ? L.library : null;
 
-  // Notifications — multiple sources, with read/unread state
-  const readSet = new Set(notifRead);
-  const notifBase = [];
-  DEMO.tasks.filter(tk => tk.risk !== 'low').slice(0, 4).forEach(tk => {
-    const d = new Date(tk.date);
-    notifBase.push({ id: 'dl-' + tk.id, icon: 'calendar', risk: tk.risk, title: tk.title, sub: tk.client, route: 'calendar', dateLabel: d.toLocaleDateString(L.locale, { day: '2-digit', month: 'short' }) });
+  // Phase 2.4 — server-driven notifications. Loaded once on login, then
+  // appended to via `notification.new` realtime events. Marked read on
+  // click (single) or via "mark all read" (bulk).
+  const [serverNotifs, setServerNotifs] = useState([]);
+  useEffect(() => {
+    if (!user) { setServerNotifs([]); return; }
+    let cancelled = false;
+    api.notifications.list({ limit: 50 })
+      .then(rows => { if (!cancelled) setServerNotifs(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* keep empty fallback */ });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Realtime connection + subscribers. Connect on login, drop on logout,
+  // and on every reconnect refetch notifications to close the gap.
+  useEffect(() => {
+    if (!user) return;
+    realtimeConnect();
+    const unsubNew = realtimeSubscribe('notification.new', (ev) => {
+      const data = ev.data || {};
+      const row = {
+        id: data.id || ev.case_id + ':' + Date.now(),
+        user_id: data.user_id,
+        case_id: data.case_id || ev.case_id,
+        type: data.type || 'case.updated',
+        message: data.message,
+        payload: data.payload,
+        is_read: false,
+        created_at: data.created_at || ev.ts,
+      };
+      setServerNotifs(s => [row, ...s.filter(n => n.id !== row.id)].slice(0, 50));
+    });
+    const unsubReconnect = realtimeSubscribe('realtime:reconnected', () => {
+      api.notifications.list({ limit: 50 })
+        .then(rows => setServerNotifs(Array.isArray(rows) ? rows : []))
+        .catch(() => {});
+    });
+    return () => { unsubNew(); unsubReconnect(); realtimeDisconnect(); };
+  }, [user]);
+
+  // Translate server rows into the shape TopBar's bell expects.
+  const notifItems = serverNotifs.map(n => {
+    const icon = (n.type || '').startsWith('member.') ? 'clients'
+      : (n.type || '').startsWith('case.') ? 'folder'
+      : (n.type || '').startsWith('note.') ? 'pen'
+      : (n.type || '').startsWith('hearing.') ? 'scales'
+      : 'bell';
+    return {
+      id: n.id,
+      icon,
+      risk: 'low',
+      title: n.message || L.notifTask,
+      sub: n.case_id ? '#' + n.case_id : '',
+      route: n.case_id ? 'matters' : 'dashboard',
+      read: Boolean(n.is_read),
+      caseId: n.case_id,
+    };
   });
-  const apprCur = LX.approval.find(s => s.status === 'current');
-  if (apprCur) notifBase.push({ id: 'appr-cur', icon: 'checkCircle', risk: 'med', title: L.notifApproval, sub: apprCur.role, route: 'analyze' });
-  LX.comments.filter(c => !c.resolved).slice(0, 2).forEach(c => {
-    notifBase.push({ id: 'cm-' + c.id, icon: 'bell', risk: 'low', title: L.notifComment, sub: (L.clauseC || 'п.') + ' ' + c.clause, route: 'analyze' });
-  });
-  const firstTask = LX.tasks.find(k => k.col !== 'done');
-  if (firstTask) notifBase.push({ id: 'tk-' + firstTask.id, icon: 'check', risk: 'low', title: L.notifTask, sub: firstTask.title, route: 'tasks' });
-  const notifItems = notifBase.map(n => ({ ...n, read: readSet.has(n.id) }));
-  const markAllRead = () => setNotifRead(notifBase.map(n => n.id));
-  const onNotifClick = (n) => { setNotifRead(r => r.includes(n.id) ? r : [...r, n.id]); setRoute(n.route); };
+  const markAllRead = () => {
+    setServerNotifs(s => s.map(n => ({ ...n, is_read: true })));
+    api.notifications.markAllRead().catch(() => {});
+  };
+  const onNotifClick = (n) => {
+    setServerNotifs(s => s.map(it => it.id === n.id ? { ...it, is_read: true } : it));
+    api.notifications.markRead(n.id).catch(() => {});
+    if (n.caseId) {
+      try { localStorage.setItem('aglex_matter_open', n.caseId); } catch (_e) {}
+    }
+    if (n.route) setRoute(n.route);
+  };
 
   const goSearch = () => { if (query.trim()) setRoute('library'); };
   const logout = () => { lxLogout(); setUser(null); setSettingsOpen(false); setRoute('dashboard'); };

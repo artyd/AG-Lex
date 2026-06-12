@@ -7,6 +7,8 @@ import { UserAvatar, roleLabel, prioColor } from '../lib/labels';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { api } from '../lib/api';
+import { useMatters, useMatterDetail, adaptCard } from './matters/useMatters';
+import { MemberPicker } from './matters/MemberPicker';
 
 /* ============================================================
    Matters (справи) — rebuilt to give the lawyer the full case in
@@ -26,6 +28,18 @@ const STATUS_COLOR = {
   stuck:    { bg: 'color-mix(in oklab, oklch(0.62 0.16 45) 16%, transparent)', fg: 'oklch(0.5 0.16 45)', dot: 'oklch(0.62 0.16 45)' },
   court:    { bg: 'color-mix(in oklab, oklch(0.58 0.18 310) 16%, transparent)', fg: 'oklch(0.46 0.18 310)', dot: 'oklch(0.58 0.18 310)' },
   closed:   { bg: 'var(--risk-low-soft)', fg: 'oklch(0.4 0.12 158)', dot: 'var(--risk-low)' },
+};
+
+// Status → matter icon. The prominent icon on each MatterCard and the
+// detail header swaps with the status so a glance through the list
+// immediately conveys workflow position (per spec).
+const STATUS_ICON = {
+  new: 'circle',
+  progress: 'play',
+  waiting: 'hourglass',
+  stuck: 'pause',
+  court: 'gavel',
+  closed: 'check',
 };
 
 const TYPE_META = {
@@ -251,14 +265,19 @@ function NewMatterModal({ open, onClose, onCreate, t, clients }) {
 }
 
 /* ---------- Matter card (list mode) ---------- */
-function MatterCard({ m, t, onOpen }) {
+function MatterCard({ m, t, onOpen, justAdded }) {
   const meta = TYPE_META[m.type] || TYPE_META.other;
   const ddTone = m.nextDeadline ? deadlineTone(m.nextDeadline.date) : null;
+  // Spec: matter icon swaps with status — not type. Type remains visible
+  // as a chip beside the code so the metadata isn't lost.
+  const statusColor = STATUS_COLOR[m.status] || STATUS_COLOR.new;
+  const statusGlyph = STATUS_ICON[m.status] || 'circle';
   return (
-    <button className="card mt-card" onClick={onOpen}>
+    <button className={'card mt-card' + (justAdded ? ' mt-card-just-added' : '')} onClick={onOpen}>
+      {justAdded ? <span className="mt-just-added-badge">{t.mt_just_added || 'Вас додали'}</span> : null}
       <div className="mt-card-head">
-        <span className="mt-type-ic" style={{ background: `oklch(0.58 0.14 ${meta.hue} / 0.18)`, color: `oklch(0.48 0.14 ${meta.hue})` }}>
-          <Icon name={meta.icon} size={18} />
+        <span className="mt-type-ic" style={{ background: statusColor.bg, color: statusColor.fg }}>
+          <Icon name={statusGlyph} size={18} />
         </span>
         <div className="mt-card-meta">
           <span className="mt-code">{m.code}</span>
@@ -602,10 +621,14 @@ function TabNotes({ m, t, onAddNote }) {
 
 /* ---------- Matters root component ---------- */
 function Matters({ t, setRoute }) {
-  const [matters, setMatters] = useState(LX.matters);
+  // Phase 2.4: list comes from /api/matters scoped to current user.
+  // useMatters subscribes to realtime case/member events so the list
+  // refreshes when other team members make changes.
+  const { matters, setMatters, reload: reloadMatters } = useMatters();
   const [statusFilter, setStatusFilter] = useState('active'); // active | closed | all
   const [typeFilter, setTypeFilter] = useState('all');
   const [ownerFilter, setOwnerFilter] = useState('all');
+  const [mineOnly, setMineOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [view, setView] = useState('cards');
   const [sel, setSel] = useState(null);
@@ -613,24 +636,32 @@ function Matters({ t, setRoute }) {
   const [closeOpen, setCloseOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
 
+  // Honour the optional "open this matter" hint set by App.jsx when the
+  // user clicks a case-targeted notification in the bell.
   useEffect(() => {
-    let cancelled = false;
-    Promise.resolve(api?.matters?.list?.() ?? [])
+    try {
+      const pending = localStorage.getItem('aglex_matter_open');
+      if (pending) {
+        localStorage.removeItem('aglex_matter_open');
+        setSel(pending);
+      }
+    } catch (_e) {}
+  }, []);
+
+  // Set of case_ids the user has unread "member.added" notifications for.
+  // Drives the "Вас додали" badge + accent border on the matter card.
+  const [unreadCases, setUnreadCases] = useState(() => new Set());
+  useEffect(() => {
+    api.notifications.list({ unread: 1, limit: 50 })
       .then(rows => {
-        if (cancelled || !Array.isArray(rows) || rows.length === 0) return;
-        // Backward-compat: API may still emit legacy {status: 'active'|'closed'}.
-        // Merge with LX defaults to keep the rich detail-view shape.
-        const merged = rows.map(r => {
-          const local = LX.matters.find(m => m.id === r.id) || {};
-          let status = r.status;
-          if (status === 'active') status = local.status && local.status !== 'closed' ? local.status : 'progress';
-          return { ...local, ...r, status };
-        });
-        setMatters(merged);
+        const ids = (rows || [])
+          .filter(n => n.type === 'member.added' && n.case_id)
+          .map(n => n.case_id);
+        setUnreadCases(new Set(ids));
       })
-      .catch(() => { /* keep LX fallback */ });
-    return () => { cancelled = true; };
+      .catch(() => {});
   }, []);
 
   const list = matters.filter(m => {
@@ -638,6 +669,17 @@ function Matters({ t, setRoute }) {
     if (statusFilter === 'closed' && m.status !== 'closed') return false;
     if (typeFilter !== 'all' && m.type !== typeFilter) return false;
     if (ownerFilter !== 'all' && m.lead !== ownerFilter) return false;
+    if (mineOnly) {
+      // "Мої справи" — only matters where I'm the lead. Membership is
+      // already enforced server-side; this further restricts to the
+      // user's own queue.
+      try {
+        const raw = localStorage.getItem('aglex_session_v2');
+        const u = raw ? JSON.parse(raw)?.user : null;
+        const me = u?.legacy_id || (u?.id ? 'u' + u.id : null);
+        if (me && m.lead !== me) return false;
+      } catch (_e) {}
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       if (![m.code, m.title, m.client].join(' ').toLowerCase().includes(q)) return false;
@@ -651,6 +693,7 @@ function Matters({ t, setRoute }) {
     all: matters.length,
   };
 
+  // Optimistic local update; server confirms via WS broadcast.
   const updateMatter = (id, patch) => setMatters(ms => ms.map(m => m.id === id ? { ...m, ...patch } : m));
 
   const onStatusChange = (id, next) => {
@@ -660,58 +703,70 @@ function Matters({ t, setRoute }) {
       return;
     }
     updateMatter(id, { status: next, result: null, closedAt: null });
-    toast(t.mt_status_toast, 'check');
+    api.matters.update(id, { status: next })
+      .then(() => toast(t.mt_status_toast, 'check'))
+      .catch(() => { toast(t.mt_status_toast, 'alert'); reloadMatters(); });
   };
   const confirmClose = ({ result, date }) => {
     if (!pendingStatus) return;
-    updateMatter(pendingStatus, { status: 'closed', result, closedAt: date });
+    const id = pendingStatus;
+    updateMatter(id, { status: 'closed', result, outcome: result, closedAt: date });
     setCloseOpen(false);
     setPendingStatus(null);
-    toast(t.mt_closed_toast, 'checkCircle');
-  };
-
-  const generateCode = (type) => {
-    const prefix = TYPE_CODE[type] || 'GEN';
-    const year = 2026;
-    const taken = matters
-      .map(m => m.code)
-      .filter(c => c.startsWith(prefix + '-' + year + '-'))
-      .map(c => parseInt(c.split('-')[2], 10))
-      .filter(n => !isNaN(n));
-    const next = (taken.length ? Math.max(...taken) : 0) + 1;
-    return `${prefix}-${year}-${String(next).padStart(2, '0')}`;
+    api.matters.update(id, { status: 'closed', outcome: result, closedAt: date })
+      .then(() => toast(t.mt_closed_toast, 'checkCircle'))
+      .catch(() => { toast(t.mt_closed_toast, 'alert'); reloadMatters(); });
   };
 
   const createMatter = (form) => {
-    const code = generateCode(form.type);
-    const id = 'm_' + Math.random().toString(36).slice(2, 8);
-    const meta = TYPE_META[form.type] || TYPE_META.other;
-    const m = {
-      id, code, title: form.title, client: form.client,
-      type: form.type, lead: form.lead, status: form.status,
+    const body = {
+      title: form.title,
+      client: form.client,
+      type: form.type,
+      lead: form.lead,
       priority: form.priority,
-      docs: 0, openTasks: 0, hours: 0, color: meta.hue,
-      startedAt: form.startedAt, description: form.description,
-      nextDeadline: form.nextDate ? { date: form.nextDate, label: form.nextLabel || t.mt_ov_next_step } : null,
-      opponent: null, court: null, judge: null,
-      result: null, closedAt: null,
-      keyFacts: [], notes: [], timeline: [],
-      parties: { client: form.client, clientRep: null, opponent: null, opponentRep: null },
+      status: form.status,
+      description: form.description,
+      startedAt: form.startedAt,
+      nextDeadline: form.nextDate || null,
+      nextLabel: form.nextLabel || null,
+      // Backend takes a list of legacy_id strings as the initial team. The
+      // form lead may already be a user_id; team adds happen via MemberPicker.
+      team: [],
     };
-    setMatters(ms => [m, ...ms]);
-    setNewOpen(false);
-    toast(t.mt_created_toast, 'plus');
-    setSel(id);
-    setTab('overview');
+    api.matters.create(body)
+      .then(row => {
+        const card = adaptCard(row);
+        setMatters(ms => [card, ...ms.filter(m => m.id !== card.id)]);
+        setNewOpen(false);
+        toast(t.mt_created_toast, 'plus');
+        setSel(card.id);
+        setTab('overview');
+      })
+      .catch((e) => {
+        toast(e.message || t.mt_form_required, 'alert');
+      });
   };
 
   const addNote = (id, text) => {
+    // Optimistic insert so the UI feels instant; server response replaces
+    // the temp row with the canonical one (matched by case_id; arrives
+    // via the note.added broadcast too).
+    const tempId = 'n_' + Math.random().toString(36).slice(2, 7);
     setMatters(ms => ms.map(m => {
       if (m.id !== id) return m;
-      const note = { id: 'n_' + Math.random().toString(36).slice(2, 7), date: '2026-06-09', author: m.lead, text };
+      const note = { id: tempId, date: '2026-06-09', author: m.lead, text };
       return { ...m, notes: [note, ...(m.notes || [])] };
     }));
-    toast(t.mt_notes_added, 'pen');
+    api.matters.addNote(id, { text })
+      .then(() => toast(t.mt_notes_added, 'pen'))
+      .catch(() => {
+        // Roll back the optimistic insert on failure.
+        setMatters(ms => ms.map(m => m.id === id
+          ? { ...m, notes: (m.notes || []).filter(n => n.id !== tempId) }
+          : m));
+        toast(t.mt_notes_added, 'alert');
+      });
   };
 
   /* ---------- Detail view ---------- */
@@ -736,8 +791,8 @@ function Matters({ t, setRoute }) {
           </button>
 
           <div className="card mt-detail-head">
-            <span className="mt-type-ic mt-type-ic-lg" style={{ background: `oklch(0.58 0.14 ${meta.hue} / 0.18)`, color: `oklch(0.46 0.14 ${meta.hue})` }}>
-              <Icon name={meta.icon} size={26} />
+            <span className="mt-type-ic mt-type-ic-lg" style={{ background: (STATUS_COLOR[m.status] || STATUS_COLOR.new).bg, color: (STATUS_COLOR[m.status] || STATUS_COLOR.new).fg }}>
+              <Icon name={STATUS_ICON[m.status] || 'circle'} size={26} />
             </span>
             <div className="mt-detail-info">
               <div className="mt-detail-chips">
@@ -760,6 +815,9 @@ function Matters({ t, setRoute }) {
                 </div>
               ) : null}
               <div className="mt-detail-actions">
+                <button className="btn btn-ghost btn-sm" onClick={() => setMemberPickerOpen(true)}>
+                  <Icon name="plus" size={13} /> {t.mt_team_add || 'Додати учасника'}
+                </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => toast(t.timeLogged, 'clock')}><Icon name="clock" size={13} /> {t.mt_action_log}</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => toast(t.taskCreated, 'check')}><Icon name="plus" size={13} /> {t.mt_action_task}</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => setTab('notes')}><Icon name="pen" size={13} /> {t.mt_action_note}</button>
@@ -797,6 +855,14 @@ function Matters({ t, setRoute }) {
           </div>
         </div>
         <CloseMatterModal open={closeOpen} onClose={() => { setCloseOpen(false); setPendingStatus(null); }} onConfirm={confirmClose} t={t} />
+        <MemberPicker
+          open={memberPickerOpen}
+          onClose={() => setMemberPickerOpen(false)}
+          caseId={m.id}
+          currentMemberIds={(m.members || []).map(x => x.user_id).filter(Boolean)}
+          onAdded={() => reloadMatters()}
+          t={t}
+        />
       </div>
     );
   }
@@ -830,6 +896,13 @@ function Matters({ t, setRoute }) {
             <option value="all">{t.mt_all_owners}</option>
             {allOwners.map(uid => <option key={uid} value={uid}>{LX.userById[uid]?.name}</option>)}
           </select>
+          <button
+            className={'btn btn-sm ' + (mineOnly ? 'btn-primary' : 'btn-ghost')}
+            onClick={() => setMineOnly(v => !v)}
+            aria-pressed={mineOnly}
+          >
+            <Icon name="clients" size={14} /> {t.mt_my_matters || 'Мої справи'}
+          </button>
           <div className="seg seg-sm">
             <button className={view === 'cards' ? 'on' : ''} onClick={() => setView('cards')} aria-label={t.mt_view_cards}><Icon name="dashboard" size={14} /></button>
             <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')} aria-label={t.mt_view_table}><Icon name="menu" size={14} /></button>
@@ -847,7 +920,18 @@ function Matters({ t, setRoute }) {
         ) : view === 'cards' ? (
           <div className="mt-grid">
             {list.map(m => (
-              <MatterCard key={m.id} m={m} t={t} onOpen={() => { setSel(m.id); setTab('overview'); }} />
+              <MatterCard
+                key={m.id}
+                m={m}
+                t={t}
+                justAdded={unreadCases.has(m.id)}
+                onOpen={() => {
+                  setSel(m.id);
+                  setTab('overview');
+                  // Opening the matter clears the badge optimistically;
+                  // the backend clears server-side notifications on GET.
+                  setUnreadCases(s => { const n = new Set(s); n.delete(m.id); return n; });
+                }} />
             ))}
           </div>
         ) : (

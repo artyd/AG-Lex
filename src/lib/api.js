@@ -79,9 +79,57 @@ async function multipart(path, formData) {
   return payload;
 }
 
+// Matters: hybrid of the generic CRUD helpers (list/get/create/update/remove)
+// plus Phase 2.4 child + member endpoints. `get(id)` returns the hydrated
+// case (members, parties, notes, hearings, timeline); `list()` returns the
+// trimmed card shape scoped to the current user's case_members.
+const _matters = entity('matters');
+const matters = {
+  ..._matters,
+  addMember: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/members`, { method: 'POST', body }),
+  removeMember: (caseId, userTextId) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/members/${encodeURIComponent(userTextId)}`, { method: 'DELETE' }),
+  addTask: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/tasks`, { method: 'POST', body }),
+  addHearing: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/hearings`, { method: 'POST', body }),
+  addNote: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/notes`, { method: 'POST', body }),
+  addParty: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/parties`, { method: 'POST', body }),
+  addTimeEntry: (caseId, body) =>
+    request(`/api/matters/${encodeURIComponent(caseId)}/time-entries`, { method: 'POST', body }),
+};
+
+const notifications = {
+  list: ({ unread = 0, limit = 50 } = {}) =>
+    request(`/api/notifications?unread=${unread ? 1 : 0}&limit=${limit}`),
+  markRead: (id) => request(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+  markAllRead: () => request('/api/notifications/read-all', { method: 'POST' }),
+};
+
+const calendar = {
+  events: ({ from, to, onlyMine = false } = {}) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from_', from);
+    if (to) qs.set('to', to);
+    if (onlyMine) qs.set('only_mine', '1');
+    const s = qs.toString();
+    return request(`/api/calendar/events${s ? '?' + s : ''}`);
+  },
+};
+
+const team = {
+  members: () => request('/api/team/members'),
+};
+
 export const api = {
   request,
-  matters: entity('matters'),
+  matters,
+  notifications,
+  calendar,
+  team,
   tasks: entity('tasks'),
   clients: entity('clients'),
   templates: entity('templates'),

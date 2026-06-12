@@ -200,6 +200,82 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliations_created ON reconciliations(created_at);
+
+-- Phase 2.4: realtime collaboration. Six new tables turn `matters` into a
+-- shared workspace with row-level access (case_members), richer child data
+-- (case_hearings, case_parties, case_notes), an append-only edit trail
+-- (activity_log), and per-user notifications. user_id columns stay TEXT to
+-- match the prototype identifiers (`u1`, `u2`, …); the bridge to the auth
+-- INTEGER users.id lives in users.legacy_id (see migrate_users).
+CREATE TABLE IF NOT EXISTS case_members (
+    case_id        TEXT NOT NULL,
+    user_id        TEXT NOT NULL,
+    role_in_case   TEXT NOT NULL DEFAULT 'collaborator',  -- lead | collaborator
+    added_at       TEXT NOT NULL,
+    added_by       TEXT,
+    PRIMARY KEY (case_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_case_members_user ON case_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_case_members_case ON case_members(case_id);
+
+CREATE TABLE IF NOT EXISTS case_hearings (
+    id          TEXT PRIMARY KEY,
+    case_id     TEXT NOT NULL,
+    date        TEXT NOT NULL,           -- ISO YYYY-MM-DD
+    court       TEXT,
+    judge       TEXT,
+    location    TEXT,
+    outcome     TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL,
+    created_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_case_hearings_case ON case_hearings(case_id);
+CREATE INDEX IF NOT EXISTS idx_case_hearings_date ON case_hearings(date);
+
+CREATE TABLE IF NOT EXISTS case_parties (
+    id        TEXT PRIMARY KEY,
+    case_id   TEXT NOT NULL,
+    role      TEXT NOT NULL,             -- client | clientRep | opponent | opponentRep | court | judge | other
+    name      TEXT NOT NULL,
+    contact   TEXT,
+    notes     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_case_parties_case ON case_parties(case_id);
+
+CREATE TABLE IF NOT EXISTS case_notes (
+    id          TEXT PRIMARY KEY,
+    case_id     TEXT NOT NULL,
+    author_id   TEXT,
+    text        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_case_notes_case ON case_notes(case_id);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          TEXT PRIMARY KEY,
+    case_id     TEXT NOT NULL,
+    user_id     TEXT,
+    action      TEXT NOT NULL,            -- case.created | case.updated | task.added | …
+    field       TEXT,                     -- column name for case.updated, else null
+    old_value   TEXT,
+    new_value   TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activity_log_case ON activity_log(case_id, created_at);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    case_id     TEXT,
+    type        TEXT NOT NULL,            -- member.added | case.updated | task.assigned | …
+    message     TEXT,
+    payload     TEXT,                     -- JSON blob with extra context
+    is_read     INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_case ON notifications(case_id);
 """
 
 
@@ -224,7 +300,74 @@ def migrate_drafts(conn) -> None:
     conn.commit()
 
 
+def migrate_users(conn) -> None:
+    """Phase 2.4: add legacy_id bridge to auth users.
+
+    The auth `users` table uses INTEGER PKs (Phase 2.1), but the rest of the
+    domain (`matters.lead`, `tasks.assignee`, `case_members.user_id`, …) uses
+    the prototype TEXT identifiers `u1, u2, …`. `legacy_id` lets us map
+    deterministically without renumbering everything.
+
+    No-op when the column already exists. Backfill: rows without a
+    legacy_id get one fabricated as `u{users.id}` so case_members lookups
+    never see NULL.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "legacy_id" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN legacy_id TEXT")
+        # Backfill so subsequent JOINs against case_members never miss.
+        conn.execute(
+            "UPDATE users SET legacy_id = 'u' || id WHERE legacy_id IS NULL"
+        )
+    # UNIQUE constraint can't be added by ALTER in SQLite, so enforce via index.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_legacy_id "
+        "ON users(legacy_id) WHERE legacy_id IS NOT NULL"
+    )
+    conn.commit()
+
+
+def migrate_matters(conn) -> None:
+    """Phase 2.4: extend matters with the full case shape.
+
+    The original `matters` table had a minimal card-only shape. Realtime
+    Matters needs richer columns to back the detail view: summary, parties
+    metadata that doesn't fit a child row (court/judge live on the case
+    itself for fast list rendering), priority, outcome+closed_at for the
+    close-modal flow, next_deadline+next_label for the always-visible
+    "наступний крок" card, and updated_at for the last-write-wins PATCH.
+
+    No-op when columns already exist. New columns default to NULL; only
+    started_at is backfilled (using today's date) because the UI uses it
+    to anchor the timeline and an unknown value there breaks sorting.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(matters)").fetchall()}
+    additions = [
+        ("summary", "TEXT"),
+        ("priority", "TEXT DEFAULT 'med'"),
+        ("opponent", "TEXT"),
+        ("court", "TEXT"),
+        ("judge", "TEXT"),
+        ("outcome", "TEXT"),
+        ("next_deadline", "TEXT"),
+        ("next_label", "TEXT"),
+        ("description", "TEXT"),
+        ("started_at", "TEXT"),
+        ("closed_at", "TEXT"),
+        ("updated_at", "TEXT"),
+    ]
+    for col, ddl in additions:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE matters ADD COLUMN {col} {ddl}")
+    # Backfill: rows added before this migration have no started_at; assume
+    # they started today so the timeline renders something rather than `—`.
+    conn.execute(
+        "UPDATE matters SET started_at = date('now') WHERE started_at IS NULL"
+    )
+    conn.commit()
+
+
 def init_entity_schema(conn: sqlite3.Connection) -> None:
-    """Create all Phase 2.2 tables. Idempotent."""
+    """Create all Phase 2.2 + 2.4 tables. Idempotent."""
     conn.executescript(ENTITY_SCHEMA)
     conn.commit()

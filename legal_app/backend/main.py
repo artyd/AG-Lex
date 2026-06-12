@@ -17,7 +17,10 @@ from pydantic import BaseModel, Field
 from . import assist as assist_module
 from . import auth as auth_module
 from . import builder as builder_module
+from . import calendar_routes as calendar_module
 from . import drafts as drafts_module
+from . import matters_routes as matters_module
+from . import notifications_routes as notifications_module
 from . import team as team_module
 from .audit import init_audit_schema
 from .auth import current_user
@@ -33,7 +36,12 @@ from .documents import (
     split_into_sections,
     token_savings,
 )
-from .models import init_entity_schema, migrate_drafts
+from .models import (
+    init_entity_schema,
+    migrate_drafts,
+    migrate_matters,
+    migrate_users,
+)
 from .pipeline import analyze
 from .rbac import (
     init_permissions_schema,
@@ -57,6 +65,13 @@ async def lifespan(app: FastAPI):
     run on every restart.
     """
     from scripts.seed_demo import seed_all  # avoid circular import at module load
+    # Phase 2.4: capture the main event loop so sync REST handlers running
+    # in the threadpool can still schedule realtime broadcasts via
+    # `run_coroutine_threadsafe`. Without this the broadcast would silently
+    # no-op every time it fires from a sync handler.
+    import asyncio as _asyncio
+    from .realtime import set_main_loop
+    set_main_loop(_asyncio.get_running_loop())
 
     conn = get_connection()
     try:
@@ -66,6 +81,12 @@ async def lifespan(app: FastAPI):
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
         migrate_drafts(conn)          # Fix 1: add user_id + is_shared, backfill legacy rows
+        # Phase 2.4: realtime Matters needs users.legacy_id (bridges auth ids to
+        # the prototype TEXT user_ids used across domain tables), plus richer
+        # columns on `matters` for the detail view. Order matters: users first
+        # because the matters migration references them indirectly.
+        migrate_users(conn)
+        migrate_matters(conn)
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)                # populate workspace tables from demo data
@@ -80,11 +101,20 @@ app.include_router(team_module.router)
 app.include_router(assist_module.router)
 app.include_router(builder_module.router)
 app.include_router(drafts_module.router)  # Fix 1: custom router replaces generic CRUD
+# Phase 2.4: custom routers for /api/matters, /api/notifications, /api/calendar.
+# The matters router enforces row-level access via case_members; the generic
+# CRUD loop below skips MATTERS so the two don't shadow each other.
+app.include_router(matters_module.router)
+app.include_router(notifications_module.router)
+app.include_router(calendar_module.router)
 
 # Phase 2.2: mount /api/<entity> for every workspace table. All are gated by
 # `current_user` inside `build_router`. Phase 2.3: invoices reads/writes
 # require the `billing` capability per spec §5.2.
 for _entity in ALL_ENTITIES:
+    if _entity.table == "matters":
+        # Replaced by matters_module.router above — skip to avoid conflict.
+        continue
     if _entity.table == "invoices":
         app.include_router(build_router(
             _entity, read_capability="billing", write_capability="billing",
@@ -105,6 +135,63 @@ RECONCILE_HANDOVER_EXTS = {".pdf", ".docx", ".xlsx"}
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.4: realtime WebSocket. Browsers can't set Authorization headers on
+# `new WebSocket()`, so the token comes in via the query string. Validates
+# the JWT, resolves the TEXT user id, registers the socket with the singleton
+# ConnectionManager, and runs a small receive loop responding to client
+# pings to keep proxies happy. Disconnect tears down the registration.
+# ---------------------------------------------------------------------------
+
+from fastapi import Query, WebSocket, WebSocketDisconnect
+from jose import JWTError
+import sqlite3 as _sqlite3
+from .auth import decode_token
+from .cases_acl import resolve_user_text_id
+from .database import get_db
+from .realtime import manager as ws_manager
+
+
+@app.websocket("/ws")
+async def realtime_endpoint(
+    websocket: WebSocket,
+    token: str = Query(..., description="JWT access token from /api/auth/login."),
+    conn: _sqlite3.Connection = Depends(get_db),
+) -> None:
+    # 1. Validate the JWT before accepting the socket.
+    try:
+        payload = decode_token(token)
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, TypeError, ValueError):
+        # 1008 = "policy violation" — what browsers see for "401 over WS".
+        await websocket.close(code=1008)
+        return
+
+    # 2. Resolve to the prototype TEXT id using the same connection the
+    # rest of the app shares (the dependency override in tests swaps it
+    # for an in-memory DB; production passes through to get_connection).
+    try:
+        user_text_id = resolve_user_text_id(conn, user_id)
+    except Exception:
+        await websocket.close(code=1011)
+        return
+
+    await websocket.accept()
+    await ws_manager.connect(user_text_id, websocket)
+    try:
+        # Keep the socket alive; respond to client pings, ignore everything
+        # else. The server is the publisher — broadcasts come from REST
+        # handlers, not from client messages.
+        while True:
+            msg = await websocket.receive_json()
+            if isinstance(msg, dict) and msg.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_manager.disconnect(user_text_id, websocket)
 
 
 @app.post("/api/upload", dependencies=[Depends(current_user)])

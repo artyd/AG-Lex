@@ -98,13 +98,22 @@ def list_members(
     user: dict = Depends(current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[dict]:
-    """Anyone authenticated can see the roster; only `manage` can mutate it."""
+    """Anyone authenticated can see the roster; only `manage` can mutate it.
+
+    Phase 2.4: include `legacy_id` so the frontend MemberPicker can pass the
+    TEXT user id (`u1, u2, …`) to POST /api/matters/{id}/members without a
+    second round-trip to resolve the bridge.
+    """
     rows = conn.execute(
-        "SELECT id, email, name, role, password_hash, created_at FROM users ORDER BY id"
+        "SELECT id, email, name, role, password_hash, created_at, legacy_id "
+        "FROM users ORDER BY id"
     ).fetchall()
     return [
-        _public_user({"id": r[0], "email": r[1], "name": r[2], "role": r[3],
-                      "password_hash": r[4], "created_at": r[5]})
+        {
+            **_public_user({"id": r[0], "email": r[1], "name": r[2], "role": r[3],
+                            "password_hash": r[4], "created_at": r[5]}),
+            "legacy_id": r[6],
+        }
         for r in rows
     ]
 

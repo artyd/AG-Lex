@@ -14,7 +14,7 @@ from backend import auth as auth_module
 from backend.crud import ALL_ENTITIES
 from backend.database import get_connection, get_db, init_user_schema
 from backend.main import app
-from backend.models import init_entity_schema
+from backend.models import init_entity_schema, migrate_matters, migrate_users
 from backend.rbac import init_permissions_schema, seed_default_permissions
 from scripts.seed_demo import seed_all
 
@@ -32,6 +32,10 @@ def db_conn():
     # permissions matrix populated or every gated request returns 403.
     init_permissions_schema(conn)
     seed_default_permissions(conn)
+    # Phase 2.4: seed_all now writes case_members + sets users.legacy_id, so
+    # both migrations must run for seed_all to succeed against fresh test DBs.
+    migrate_users(conn)
+    migrate_matters(conn)
     yield conn
     conn.close()
 
@@ -140,109 +144,13 @@ def test_list_returns_json_array_with_auth(seeded_client, seeded_auth_headers, e
 # matters — full CRUD coverage.
 # ---------------------------------------------------------------------------
 
-def test_matters_list_shape(seeded_client, seeded_auth_headers):
-    r = seeded_client.get("/api/matters", headers=seeded_auth_headers)
-    assert r.status_code == 200
-    rows = r.json()
-    sample = next(m for m in rows if m["id"] == "m1")
-    # camelCase alias survives the wire round-trip
-    assert sample["openTasks"] == 3
-    assert "open_tasks" not in sample
-    assert sample["code"] == "SEV-2026-04"
-    assert sample["color"] == 290
-
-
-def test_matters_get_by_id(seeded_client, seeded_auth_headers):
-    r = seeded_client.get("/api/matters/m1", headers=seeded_auth_headers)
-    assert r.status_code == 200
-    assert r.json()["title"] == "Супровід ТОВ «Северин»"
-
-
-def test_matters_get_unknown_returns_404(seeded_client, seeded_auth_headers):
-    r = seeded_client.get("/api/matters/does-not-exist", headers=seeded_auth_headers)
-    assert r.status_code == 404
-
-
-def test_matters_create_and_read_back(client, auth_headers):
-    r = client.post("/api/matters", json={
-        "id": "m-new",
-        "code": "NEW-2026-99",
-        "title": "Нова справа",
-        "client": "Клієнт Х",
-        "type": "Корпоративне",
-        "status": "active",
-        "openTasks": 2,
-        "hours": 0,
-    }, headers=auth_headers)
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["id"] == "m-new"
-    assert body["openTasks"] == 2
-
-    # Round-trip via GET
-    r2 = client.get("/api/matters/m-new", headers=auth_headers)
-    assert r2.status_code == 200
-    assert r2.json()["title"] == "Нова справа"
-
-
-def test_matters_create_auto_generates_id_when_omitted(client, auth_headers):
-    r = client.post("/api/matters", json={
-        "code": "AUTO-2026-01",
-        "title": "Auto-id matter",
-        "client": "X",
-    }, headers=auth_headers)
-    assert r.status_code == 201
-    body = r.json()
-    assert body["id"].startswith("m-")
-    assert len(body["id"]) > 2
-
-
-def test_matters_create_duplicate_code_returns_409(client, auth_headers):
-    client.post("/api/matters", json={"id": "m-a", "code": "DUP-1", "title": "A", "client": "X"}, headers=auth_headers)
-    r = client.post("/api/matters", json={"id": "m-b", "code": "DUP-1", "title": "B", "client": "Y"}, headers=auth_headers)
-    assert r.status_code == 409
-
-
-def test_matters_patch_updates_fields(seeded_client, seeded_auth_headers):
-    r = seeded_client.patch(
-        "/api/matters/m1",
-        json={"hours": 99.5, "openTasks": 0, "status": "closed"},
-        headers=seeded_auth_headers,
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["hours"] == 99.5
-    assert body["openTasks"] == 0
-    assert body["status"] == "closed"
-    # Unchanged fields survive
-    assert body["code"] == "SEV-2026-04"
-
-
-def test_matters_patch_ignores_unknown_fields(seeded_client, seeded_auth_headers):
-    r = seeded_client.patch(
-        "/api/matters/m1",
-        json={"hours": 50, "phantom_column": "ignored"},
-        headers=seeded_auth_headers,
-    )
-    assert r.status_code == 200
-    assert r.json()["hours"] == 50
-
-
-def test_matters_patch_unknown_id_returns_404(seeded_client, seeded_auth_headers):
-    r = seeded_client.patch("/api/matters/nope", json={"hours": 1}, headers=seeded_auth_headers)
-    assert r.status_code == 404
-
-
-def test_matters_delete(seeded_client, seeded_auth_headers):
-    r = seeded_client.delete("/api/matters/m1", headers=seeded_auth_headers)
-    assert r.status_code == 204
-    r2 = seeded_client.get("/api/matters/m1", headers=seeded_auth_headers)
-    assert r2.status_code == 404
-
-
-def test_matters_delete_unknown_returns_404(client, auth_headers):
-    r = client.delete("/api/matters/nope", headers=auth_headers)
-    assert r.status_code == 404
+# NOTE: Matters CRUD tests moved to tests/test_matters_endpoints.py.
+# /api/matters is no longer generic CRUD as of Phase 2.4 — it has row-level
+# access control through case_members, field-level activity_log on PATCH,
+# and dedicated child endpoints (notes, hearings, parties, time entries).
+# The Phase 2.2 tests that lived here probed behavior the new router does
+# not expose (e.g. open create-by-id, no membership check); equivalent
+# coverage lives in the dedicated test file.
 
 
 # ---------------------------------------------------------------------------
