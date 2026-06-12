@@ -40,6 +40,7 @@ from .cases_acl import (
     resolve_user_text_id,
 )
 from .database import get_db
+from .realtime import schedule_broadcast, schedule_notify
 
 
 router = APIRouter(prefix="/api/matters", tags=["matters"])
@@ -433,6 +434,18 @@ def create_matter(
         (log_id, case_id, user_text_id, body.title, _now()),
     )
     conn.commit()
+
+    # Realtime fan-out: every member sees the new case appear in their list;
+    # the added collaborators also get a `notification.new` (the helper queued
+    # a notifications row already).
+    schedule_broadcast(conn, case_id=case_id, type_="case.created",
+                       actor_id=user_text_id,
+                       data={"title": body.title, "code": code})
+    for notif in notifications:
+        schedule_notify(
+            user_text_id=notif["user_id"], type_="notification.new",
+            case_id=case_id, data=notif,
+        )
     return _hydrate_case(conn, case_id)
 
 
@@ -501,6 +514,10 @@ def patch_matter(
             new_value=None if new_val is None else str(new_val),
         )
     conn.commit()
+    # Broadcast the diff so every open detail tab updates without reload.
+    schedule_broadcast(conn, case_id=case_id, type_="case.updated",
+                       actor_id=user_text_id,
+                       data={"fields": {k: v[1] for k, v in changes.items()}})
     return _hydrate_case(conn, case_id)
 
 
@@ -520,6 +537,13 @@ def add_member_route(
         added_by_text_id=user_text_id, role_in_case=body.role_in_case,
     )
     conn.commit()
+    schedule_broadcast(conn, case_id=case_id, type_="member.added",
+                       actor_id=user_text_id,
+                       data={"user_id": body.user_id,
+                             "role_in_case": body.role_in_case})
+    if notif is not None:
+        schedule_notify(user_text_id=notif["user_id"], type_="notification.new",
+                        case_id=case_id, data=notif)
     return {"ok": True, "user_id": body.user_id, "notification": notif}
 
 
@@ -535,6 +559,15 @@ def remove_member_route(
         removed_by_text_id=user_text_id,
     )
     conn.commit()
+    # Broadcast BEFORE the user actually drops off the room — they should
+    # see a "you were removed" event in their open tab. Members list is
+    # looked up at broadcast time and naturally excludes them after commit.
+    schedule_broadcast(conn, case_id=case_id, type_="member.removed",
+                       actor_id=user_text_id,
+                       data={"user_id": member_user_id})
+    schedule_notify(user_text_id=member_user_id, type_="member.removed",
+                    case_id=case_id,
+                    data={"by": user_text_id})
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +591,11 @@ def add_note(
     log_field_change(conn, case_id=case_id, user_text_id=user_text_id,
                      field="note", old_value=None, new_value=body.text[:120])
     conn.commit()
-    return {"id": note_id, "case_id": case_id, "author_id": user_text_id,
-            "text": body.text, "created_at": ts}
+    note_row = {"id": note_id, "case_id": case_id, "author_id": user_text_id,
+                "text": body.text, "created_at": ts}
+    schedule_broadcast(conn, case_id=case_id, type_="note.added",
+                       actor_id=user_text_id, data=note_row)
+    return note_row
 
 
 @router.post("/{case_id}/hearings", status_code=status.HTTP_201_CREATED)
@@ -582,8 +618,11 @@ def add_hearing(
                      field="hearing", old_value=None,
                      new_value=f"{body.date}: {body.court or ''}".strip())
     conn.commit()
-    return {"id": hid, "case_id": case_id, **body.model_dump(),
-            "created_at": ts, "created_by": user_text_id}
+    row = {"id": hid, "case_id": case_id, **body.model_dump(),
+           "created_at": ts, "created_by": user_text_id}
+    schedule_broadcast(conn, case_id=case_id, type_="hearing.added",
+                       actor_id=user_text_id, data=row)
+    return row
 
 
 @router.post("/{case_id}/parties", status_code=status.HTTP_201_CREATED)
@@ -603,7 +642,10 @@ def add_party(
                      field="party", old_value=None,
                      new_value=f"{body.role}: {body.name}")
     conn.commit()
-    return {"id": pid, "case_id": case_id, **body.model_dump()}
+    row = {"id": pid, "case_id": case_id, **body.model_dump()}
+    schedule_broadcast(conn, case_id=case_id, type_="party.added",
+                       actor_id=user_text_id, data=row)
+    return row
 
 
 @router.post("/{case_id}/tasks", status_code=status.HTTP_201_CREATED)
@@ -631,8 +673,11 @@ def add_task(
     log_field_change(conn, case_id=case_id, user_text_id=user_text_id,
                      field="task", old_value=None, new_value=body.title[:120])
     conn.commit()
-    return {"id": tid, "case_id": case_id, "matter": code_row[0],
-            **body.model_dump()}
+    row = {"id": tid, "case_id": case_id, "matter": code_row[0],
+           **body.model_dump()}
+    schedule_broadcast(conn, case_id=case_id, type_="task.added",
+                       actor_id=user_text_id, data=row)
+    return row
 
 
 @router.post("/{case_id}/time-entries", status_code=status.HTTP_201_CREATED)
@@ -659,4 +704,7 @@ def add_time_entry(
                      field="time", old_value=None,
                      new_value=f"{body.hours}h: {body.descr or ''}"[:120])
     conn.commit()
-    return {"id": teid, "matter": code_row[0], **body.model_dump()}
+    row = {"id": teid, "matter": code_row[0], **body.model_dump()}
+    schedule_broadcast(conn, case_id=case_id, type_="time.added",
+                       actor_id=user_text_id, data=row)
+    return row

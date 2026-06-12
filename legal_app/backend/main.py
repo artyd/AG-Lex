@@ -65,6 +65,13 @@ async def lifespan(app: FastAPI):
     run on every restart.
     """
     from scripts.seed_demo import seed_all  # avoid circular import at module load
+    # Phase 2.4: capture the main event loop so sync REST handlers running
+    # in the threadpool can still schedule realtime broadcasts via
+    # `run_coroutine_threadsafe`. Without this the broadcast would silently
+    # no-op every time it fires from a sync handler.
+    import asyncio as _asyncio
+    from .realtime import set_main_loop
+    set_main_loop(_asyncio.get_running_loop())
 
     conn = get_connection()
     try:
@@ -128,6 +135,63 @@ RECONCILE_HANDOVER_EXTS = {".pdf", ".docx", ".xlsx"}
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.4: realtime WebSocket. Browsers can't set Authorization headers on
+# `new WebSocket()`, so the token comes in via the query string. Validates
+# the JWT, resolves the TEXT user id, registers the socket with the singleton
+# ConnectionManager, and runs a small receive loop responding to client
+# pings to keep proxies happy. Disconnect tears down the registration.
+# ---------------------------------------------------------------------------
+
+from fastapi import Query, WebSocket, WebSocketDisconnect
+from jose import JWTError
+import sqlite3 as _sqlite3
+from .auth import decode_token
+from .cases_acl import resolve_user_text_id
+from .database import get_db
+from .realtime import manager as ws_manager
+
+
+@app.websocket("/ws")
+async def realtime_endpoint(
+    websocket: WebSocket,
+    token: str = Query(..., description="JWT access token from /api/auth/login."),
+    conn: _sqlite3.Connection = Depends(get_db),
+) -> None:
+    # 1. Validate the JWT before accepting the socket.
+    try:
+        payload = decode_token(token)
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, TypeError, ValueError):
+        # 1008 = "policy violation" — what browsers see for "401 over WS".
+        await websocket.close(code=1008)
+        return
+
+    # 2. Resolve to the prototype TEXT id using the same connection the
+    # rest of the app shares (the dependency override in tests swaps it
+    # for an in-memory DB; production passes through to get_connection).
+    try:
+        user_text_id = resolve_user_text_id(conn, user_id)
+    except Exception:
+        await websocket.close(code=1011)
+        return
+
+    await websocket.accept()
+    await ws_manager.connect(user_text_id, websocket)
+    try:
+        # Keep the socket alive; respond to client pings, ignore everything
+        # else. The server is the publisher — broadcasts come from REST
+        # handlers, not from client messages.
+        while True:
+            msg = await websocket.receive_json()
+            if isinstance(msg, dict) and msg.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_manager.disconnect(user_text_id, websocket)
 
 
 @app.post("/api/upload", dependencies=[Depends(current_user)])
