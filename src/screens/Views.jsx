@@ -65,110 +65,13 @@ function openReconciliation(id, setRoute) {
   setRoute('reconcile');
 }
 
-/* ---------- Dashboard ---------- */
+/* ---------- Dashboard ----------
+   The dashboard is now a full-canvas widget constructor.
+   The grid is the only content of the page and fills the viewport. */
 function Dashboard({ t, setRoute, user }) {
-  const D = DEMO;
-  const firstName = ((user && user.name) || '').trim().split(/\s+/)[0] || '';
-  const reconRows = useReconciliationRows(t);
-  const stats = [
-    { icon: 'scan', label: t.statContracts, value: 4, tone: 'var(--accent)', go: 'library' },
-    { icon: 'alert', label: t.statRisks, value: 10, tone: 'var(--risk-high)', go: 'analyze' },
-    { icon: 'clock', label: t.statDeadlines, value: 3, tone: 'var(--risk-med)', go: 'calendar' },
-    { icon: 'clients', label: t.statClients, value: 6, tone: 'var(--info)', go: 'clients' },
-  ];
-  const attention = [...reconRows.filter(r => r.risk === 'high'), ...D.library.filter(c => c.risk === 'high')];
-  const recent = [...reconRows, ...D.library].slice(0, 5);
-  const openRow = (c) => {
-    if (c.isRecon) openReconciliation(c.id, setRoute);
-    else if (c.isHandover) setRoute('reconcile');
-    else setRoute('analyze');
-  };
-
   return (
-    <div className="page view-enter">
-      <div className="page-narrow">
-        <div style={{ marginBottom: 'var(--s6)' }}>
-          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.025em' }}>{t.greeting}{firstName ? ', ' + firstName : ''}</h1>
-          <div style={{ color: 'var(--text-2)', fontSize: 15, marginTop: 4 }}>{t.greetingSub}</div>
-        </div>
-
-        <div className="stat-grid">
-          {stats.map((s, i) => (
-            <button className="card stat-card" key={i} onClick={() => setRoute(s.go)}>
-              <div className="stat-ic" style={{ background: `color-mix(in oklab, ${s.tone} 14%, transparent)`, color: s.tone }}>
-                <Icon name={s.icon} size={20} />
-              </div>
-              <div className="stat-val">{s.value}</div>
-              <div className="stat-lbl">{s.label}</div>
-            </button>
-          ))}
-        </div>
-
-        <div className="dash-grid">
-          <div>
-            <div className="card" style={{ padding: 'var(--s5)' }}>
-              <SectionTitle action={<button className="btn btn-subtle btn-sm" onClick={() => setRoute('library')}>{t.viewAll} <Icon name="chevR" size={14} /></button>}>{t.recent}</SectionTitle>
-              <div className="recent-list">
-                {recent.map(c => (
-                  <button className="recent-row" key={c.id} onClick={() => openRow(c)}>
-                    <span className={'recent-ic' + (c.isHandover ? ' recent-ic-handover' : '')}>
-                      <Icon name={c.isRecon ? 'scan' : c.isHandover ? 'folder' : 'doc'} size={16} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span className="recent-name">{c.name}</span>
-                      <span className="recent-sub">{c.client} · {c.date}</span>
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {riskDot(c.risk)}
-                      <span className="recent-score" style={{ color: c.score >= 75 ? 'var(--risk-low)' : c.score >= 55 ? 'var(--risk-med)' : 'var(--risk-high)' }}>{c.score}</span>
-                      <Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="card attention-card" style={{ padding: 'var(--s5)', marginTop: 'var(--s4)' }}>
-              <SectionTitle>{t.attention}</SectionTitle>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {attention.map(c => (
-                  <button className="att-row" key={c.id} onClick={() => openRow(c)}>
-                    <span className="att-bar" />
-                    <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                      <span className="recent-name">{c.name}</span>
-                      <span className="recent-sub">{c.client}</span>
-                    </span>
-                    <RiskBadge level={c.risk} t={t} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: 'var(--s5)', alignSelf: 'start' }}>
-            <SectionTitle action={<button className="btn btn-subtle btn-sm" onClick={() => setRoute('calendar')}>{t.viewAll} <Icon name="chevR" size={14} /></button>}>{t.upcoming}</SectionTitle>
-            <div className="timeline">
-              {D.tasks.slice(0, 5).map(tk => {
-                const d = new Date(tk.date);
-                const dd = d.toLocaleDateString(t.locale, { day: '2-digit' });
-                const mo = d.toLocaleDateString(t.locale, { month: 'short' });
-                return (
-                  <div className="tl-row" key={tk.id}>
-                    <div className="tl-date"><b>{dd}</b><span>{mo}</span></div>
-                    <span className="tl-dot" style={{ background: { high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)' }[tk.risk] }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{tk.title}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{tk.client}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        <WidgetGrid t={t} setRoute={setRoute} />
-      </div>
+    <div className="page page-dashboard view-enter">
+      <WidgetGrid t={t} setRoute={setRoute} user={user} />
     </div>
   );
 }

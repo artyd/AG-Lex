@@ -1,14 +1,19 @@
 /* ============================================================
-   AG Lex — Dashboard widget grid (15×20 snap-to-grid canvas)
+   AG Lex — Dashboard widget grid (20×15 snap-to-grid canvas)
+   Fills the entire dashboard. Cell size auto-fits ~92% of stage,
+   keeping cells perfectly square at all viewport sizes.
    ============================================================ */
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import { Icon } from '../ui/Icon';
 import { Modal, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 
-const COLS = 15;
-const ROWS = 20;
+const COLS = 20;
+const ROWS = 15;
+const GAP = 4;
+const FILL = 0.92; // grid uses ~92% of the stage's smaller dimension
+const MIN_CELL = 18;
 const STORAGE_KEY = 'aglex_dashboard_widgets';
 const NOTES_KEY = 'aglex_dashboard_widget_notes';
 
@@ -327,7 +332,7 @@ function WidgetBody({ widget, t }) {
 }
 
 /* ---------- main grid component ---------- */
-export function WidgetGrid({ t, setRoute }) {
+export function WidgetGrid({ t, setRoute, user }) {
   const [widgets, setWidgets] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -337,7 +342,29 @@ export function WidgetGrid({ t, setRoute }) {
   });
   const [picker, setPicker] = useState(null); // { x, y } when a free cell is clicked
   const [drag, setDrag] = useState(null);     // { id, x, y, w, h, valid } during resize
+  const [cell, setCell] = useState(40);       // computed square cell side in px
   const gridRef = useRef(null);
+  const stageRef = useRef(null);
+
+  // Recompute cell size whenever the stage resizes so the grid fills ~92% of
+  // its smaller dimension while every cell stays a square.
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const compute = () => {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const wFromW = (r.width * FILL - (COLS - 1) * GAP) / COLS;
+      const wFromH = (r.height * FILL - (ROWS - 1) * GAP) / ROWS;
+      const size = Math.max(MIN_CELL, Math.floor(Math.min(wFromW, wFromH)));
+      setCell(size);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    window.addEventListener('resize', compute);
+    return () => { ro.disconnect(); window.removeEventListener('resize', compute); };
+  }, []);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets)); } catch (_e) {}
@@ -435,12 +462,15 @@ export function WidgetGrid({ t, setRoute }) {
   };
 
   const HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+  const firstName = ((user && user.name) || '').trim().split(/\s+/)[0] || '';
+  const gridW = COLS * cell + (COLS - 1) * GAP;
+  const gridH = ROWS * cell + (ROWS - 1) * GAP;
 
   return (
-    <div className="card wg-card">
-      <div className="wg-head">
-        <div>
-          <h2 className="wg-title">{t.wgTitle}</h2>
+    <div className="wg-shell">
+      <div className="wg-toolbar">
+        <div className="wg-toolbar-left">
+          <h1 className="wg-greet">{t.greeting}{firstName ? ', ' + firstName : ''}</h1>
           <div className="wg-subtitle">{t.wgSub}</div>
         </div>
         <div className="wg-meta">
@@ -453,8 +483,14 @@ export function WidgetGrid({ t, setRoute }) {
         </div>
       </div>
 
-      <div className="wg-grid-wrap">
-        <div className="wg-grid" ref={gridRef}>
+      <div className="wg-stage" ref={stageRef}>
+        <div className="wg-grid" ref={gridRef} style={{
+          gridTemplateColumns: `repeat(${COLS}, ${cell}px)`,
+          gridTemplateRows: `repeat(${ROWS}, ${cell}px)`,
+          width: gridW,
+          height: gridH,
+          gap: GAP,
+        }}>
           {Array.from({ length: ROWS }).map((_, r) =>
             Array.from({ length: COLS }).map((_, c) => {
               if (occ[r][c]) return null;
