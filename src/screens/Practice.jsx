@@ -8,130 +8,901 @@ import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { api } from '../lib/api';
 
-/* ---------- Matters (Phase 2.2: backed by /api/matters) ---------- */
-function Matters({ t, setRoute }) {
-  const D = DEMO;
-  const [filter, setFilter] = useState('active');
-  const [sel, setSel] = useState(null);
-  // Hydrate from LX.matters so the screen renders something even before the
-  // first fetch completes (and when running Vite without the FastAPI backend
-  // — a dev convenience, not a production guarantee).
-  const [matters, setMatters] = useState(LX.matters);
+/* ============================================================
+   Matters (справи) — rebuilt to give the lawyer the full case in
+   one place. List with filters/search/views, detail with 7 tabs,
+   one-click status workflow, dedicated "new matter" form.
+   ============================================================ */
 
-  useEffect(() => {
-    let cancelled = false;
-    // Defensive: api / api.matters / api.matters.list can all be undefined if
-    // the api module fails to bundle/import. Optional chaining + Promise.resolve
-    // keeps the screen mounted with the LX.matters fallback instead of crashing.
-    Promise.resolve(api?.matters?.list?.() ?? [])
-      .then(rows => { if (!cancelled && Array.isArray(rows)) setMatters(rows); })
-      .catch(() => { /* keep the LX.matters fallback */ });
-    return () => { cancelled = true; };
-  }, []);
+const STATUS_ORDER = ['new', 'progress', 'waiting', 'stuck', 'court', 'closed'];
 
-  const list = matters.filter(m => filter === 'all' ? true : m.status === filter);
+// Single source of truth for status colours. The visible badge in the list
+// view, the dropdown swatch, the closing banner, and the dark/light themes
+// all read from this map.
+const STATUS_COLOR = {
+  new:      { bg: 'color-mix(in oklab, var(--text-3) 18%, transparent)', fg: 'var(--text-2)', dot: 'var(--text-3)' },
+  progress: { bg: 'color-mix(in oklab, oklch(0.6 0.14 245) 16%, transparent)', fg: 'oklch(0.46 0.14 245)', dot: 'oklch(0.6 0.14 245)' },
+  waiting:  { bg: 'var(--risk-med-soft)', fg: 'oklch(0.45 0.12 70)', dot: 'var(--risk-med)' },
+  stuck:    { bg: 'color-mix(in oklab, oklch(0.62 0.16 45) 16%, transparent)', fg: 'oklch(0.5 0.16 45)', dot: 'oklch(0.62 0.16 45)' },
+  court:    { bg: 'color-mix(in oklab, oklch(0.58 0.18 310) 16%, transparent)', fg: 'oklch(0.46 0.18 310)', dot: 'oklch(0.58 0.18 310)' },
+  closed:   { bg: 'var(--risk-low-soft)', fg: 'oklch(0.4 0.12 158)', dot: 'var(--risk-low)' },
+};
 
-  if (sel) {
-    const m = matters.find(x => x.id === sel);
-    const docs = D.library.filter(c => c.client === m.client);
-    const mtasks = LX.tasks.filter(k => k.matter === m.code);
-    return (
-      <div className="page view-enter"><div className="page-narrow">
-        <button className="btn btn-subtle btn-sm" onClick={() => setSel(null)} style={{ marginBottom: 'var(--s4)' }}><Icon name="chevR" size={15} style={{ transform: 'rotate(180deg)' }} /> {t.matters}</button>
-        <div className="matter-detail-head card" style={{ padding: 'var(--s5)' }}>
-          <span className="matter-av" style={{ background: `oklch(0.58 0.14 ${m.color})` }}><Icon name="folder" size={22} /></span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="chip">{m.code}</span><span className="chip">{m.type}</span>
-              <span className={'chip'} style={{ color: m.status === 'active' ? 'var(--risk-low)' : 'var(--text-3)' }}>{m.status === 'active' ? t.mActive : t.mClosed}</span>
-            </div>
-            <h1 style={{ margin: '8px 0 2px', fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>{m.title}</h1>
-            <div style={{ color: 'var(--text-3)', fontSize: 14 }}>{m.client}</div>
-          </div>
-          <div className="matter-stats">
-            <div><div className="ms-v">{m.docs}</div><div className="ms-l">{t.mDocs}</div></div>
-            <div><div className="ms-v">{m.openTasks}</div><div className="ms-l">{t.mTasksShort}</div></div>
-            <div><div className="ms-v">{m.hours}</div><div className="ms-l">{t.mHours}</div></div>
-          </div>
-        </div>
+const TYPE_META = {
+  corporate:   { icon: 'building', hue: 290 },
+  contract:    { icon: 'pen', hue: 25 },
+  ip:          { icon: 'sparkle', hue: 158 },
+  litigation:  { icon: 'flag', hue: 320 },
+  labor:       { icon: 'clients', hue: 70 },
+  family:      { icon: 'shield', hue: 245 },
+  inheritance: { icon: 'book', hue: 200 },
+  other:       { icon: 'folder', hue: 0 },
+};
+const TYPE_CODE = {
+  corporate: 'COR', contract: 'DOG', ip: 'IPS', litigation: 'LIT',
+  labor: 'LAB', family: 'FAM', inheritance: 'HER', other: 'GEN',
+};
 
-        <div className="dash-grid" style={{ marginTop: 'var(--s4)' }}>
-          <div className="card" style={{ padding: 'var(--s5)' }}>
-            <SectionTitle>{t.mDocuments}</SectionTitle>
-            <div className="recent-list">
-              {docs.map(c => (
-                <button className="recent-row" key={c.id} onClick={() => setRoute('analyze')}>
-                  <span className="recent-ic"><Icon name="doc" size={16} /></span>
-                  <span style={{ flex: 1, minWidth: 0 }}><span className="recent-name">{c.name}</span><span className="recent-sub">{c.date}</span></span>
-                  {riskDot(c.risk)}<Icon name="chevR" size={15} style={{ color: 'var(--text-3)' }} />
-                </button>
-              ))}
-            </div>
-            <SectionTitle action={null}><span style={{ marginTop: 'var(--s4)', display: 'block' }}>{t.mTasks}</span></SectionTitle>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {mtasks.length === 0 ? <div style={{ color: 'var(--text-3)', fontSize: 13 }}>—</div> : mtasks.map(k => (
-                <div key={k.id} className="mini-task">
-                  <span className="chip-dot" style={{ background: prioColor[k.priority] }} />
-                  <span style={{ flex: 1, fontSize: 13.5 }}>{k.title}</span>
-                  <UserAvatar id={k.assignee} size={24} />
-                  <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{k.due}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="card" style={{ padding: 'var(--s5)', alignSelf: 'start' }}>
-            <SectionTitle>{t.mTeam}</SectionTitle>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[m.lead, ...LX.team.slice(1, 4).map(u => u.id)].filter((v, i, a) => a.indexOf(v) === i).map(uid => {
-                const u = LX.userById[uid];
-                return (
-                  <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <UserAvatar id={uid} size={32} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.name}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{roleLabel(t, u.role)}{uid === m.lead ? ' · ' + t.mLead : ''}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div></div>
-    );
-  }
+const PRIO_COLOR = { high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)' };
 
+function typeLabel(t, type) { return t['mt_type_' + type] || type; }
+function statusLabel(t, status) { return t['mt_st_' + status]; }
+function prioLabel(t, p) { return t['mt_prio_' + p] || p; }
+
+function parseISODate(s) {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+function fmtDate(iso, locale) {
+  const d = parseISODate(iso);
+  if (!d) return '—';
+  return d.toLocaleDateString(locale || 'uk-UA', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function fmtDateShort(iso, locale) {
+  const d = parseISODate(iso);
+  if (!d) return '—';
+  return d.toLocaleDateString(locale || 'uk-UA', { day: '2-digit', month: 'short' });
+}
+function daysUntil(iso) {
+  const d = parseISODate(iso);
+  if (!d) return null;
+  const today = new Date(2026, 5, 9); // freeze "today" for the demo
+  const ms = d - today;
+  return Math.round(ms / 86400000);
+}
+function deadlineTone(iso) {
+  const days = daysUntil(iso);
+  if (days === null) return null;
+  if (days < 0) return 'overdue';
+  if (days <= 7) return 'soon';
+  return 'ok';
+}
+
+/* ---------- Status pill + workflow dropdown ---------- */
+function StatusBadge({ status, t, size = 'md' }) {
+  const c = STATUS_COLOR[status] || STATUS_COLOR.new;
   return (
-    <div className="page view-enter"><div className="page-narrow">
-      <div style={{ display: 'flex', gap: 12, marginBottom: 'var(--s5)' }}>
-        <div className="seg">
-          {[['active', t.mActive], ['closed', t.mClosed], ['all', t.filterAll]].map(([id, l]) => (
-            <button key={id} className={filter === id ? 'on' : ''} onClick={() => setFilter(id)}>{l}</button>
+    <span className={'mt-status mt-status-' + size} style={{ background: c.bg, color: c.fg }}>
+      <span className="mt-status-dot" style={{ background: c.dot }} />
+      {statusLabel(t, status)}
+    </span>
+  );
+}
+
+function StatusDropdown({ status, onChange, t }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const c = STATUS_COLOR[status] || STATUS_COLOR.new;
+  return (
+    <div className="mt-status-drop" ref={wrapRef}>
+      <button className="mt-status mt-status-md mt-status-trigger" style={{ background: c.bg, color: c.fg }} onClick={() => setOpen(o => !o)}>
+        <span className="mt-status-dot" style={{ background: c.dot }} />
+        {statusLabel(t, status)}
+        <Icon name="chevD" size={13} />
+      </button>
+      {open && (
+        <div className="menu mt-status-menu" style={{ right: 'auto', left: 0 }}>
+          {STATUS_ORDER.map(s => {
+            const sc = STATUS_COLOR[s];
+            return (
+              <button key={s} className={'menu-item mt-status-opt' + (status === s ? ' on' : '')}
+                onClick={() => { setOpen(false); onChange(s); }}>
+                <span className="mt-status-dot" style={{ background: sc.dot }} />
+                <span style={{ color: sc.fg, fontWeight: 600 }}>{statusLabel(t, s)}</span>
+                {status === s ? <Icon name="check" size={13} /> : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Close-matter modal (result + date) ---------- */
+function CloseMatterModal({ open, onClose, onConfirm, t }) {
+  const [result, setResult] = useState('won');
+  const [date, setDate] = useState('2026-06-09');
+  useEffect(() => { if (open) { setResult('won'); setDate('2026-06-09'); } }, [open]);
+  return (
+    <Modal open={open} onClose={onClose} title={t.mt_close_title} sub={t.mt_close_sub} icon="checkCircle"
+      footer={<>
+        <button className="btn btn-subtle" onClick={onClose}>{t.cancel}</button>
+        <button className="btn btn-primary" onClick={() => onConfirm({ result, date })}>
+          <Icon name="check" size={14} /> {t.mt_close_confirm}
+        </button>
+      </>}>
+      <div className="field-row">
+        <div className="field-label">{t.mt_result}</div>
+        <div className="mt-result-grid">
+          {['won', 'lost', 'settled'].map(r => {
+            const tone = r === 'won' ? 'var(--risk-low)' : r === 'lost' ? 'var(--risk-high)' : 'var(--info)';
+            return (
+              <button key={r} className={'mt-result-opt' + (result === r ? ' on' : '')}
+                style={{ '--tone': tone }} onClick={() => setResult(r)}>
+                <span className="mt-result-ic"><Icon name={r === 'won' ? 'checkCircle' : r === 'lost' ? 'alert' : 'scales'} size={18} /></span>
+                <span>{t['mt_result_' + r]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="field-row" style={{ marginTop: 'var(--s4)' }}>
+        <label className="field-label" htmlFor="mt-close-date">{t.mt_close_date}</label>
+        <input id="mt-close-date" type="date" className="field" value={date} onChange={e => setDate(e.target.value)} />
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- New-matter modal ---------- */
+function NewMatterModal({ open, onClose, onCreate, t, clients }) {
+  const [form, setForm] = useState({
+    title: '', client: '', type: 'contract', lead: 'u1', priority: 'med',
+    status: 'new', startedAt: '2026-06-09', nextDate: '', nextLabel: '', description: '',
+  });
+  useEffect(() => {
+    if (open) {
+      setForm({
+        title: '', client: '', type: 'contract', lead: 'u1', priority: 'med',
+        status: 'new', startedAt: '2026-06-09', nextDate: '', nextLabel: '', description: '',
+      });
+    }
+  }, [open]);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const submit = () => {
+    if (!form.title.trim() || !form.client.trim()) {
+      toast(t.mt_form_required, 'alert');
+      return;
+    }
+    onCreate(form);
+  };
+  return (
+    <Modal open={open} onClose={onClose} title={t.mt_form_title} sub={t.mt_form_sub} icon="folder" wide
+      footer={<>
+        <button className="btn btn-subtle" onClick={onClose}>{t.cancel}</button>
+        <button className="btn btn-primary" onClick={submit}><Icon name="plus" size={14} /> {t.mt_form_create}</button>
+      </>}>
+      <div className="form-grid">
+        <div className="field-row" style={{ gridColumn: '1 / -1' }}>
+          <label className="field-label">{t.mt_form_name}</label>
+          <input className="field" placeholder={t.mt_form_name_ph} value={form.title} onChange={e => set('title', e.target.value)} />
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_client}</label>
+          <input className="field" placeholder={t.mt_form_client_ph} value={form.client} onChange={e => set('client', e.target.value)} list="mt-clients" />
+          <datalist id="mt-clients">{clients.map(c => <option key={c} value={c} />)}</datalist>
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_type}</label>
+          <select className="field" value={form.type} onChange={e => set('type', e.target.value)}>
+            {Object.keys(TYPE_META).map(k => <option key={k} value={k}>{typeLabel(t, k)}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_owner}</label>
+          <select className="field" value={form.lead} onChange={e => set('lead', e.target.value)}>
+            {LX.team.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_priority}</label>
+          <select className="field" value={form.priority} onChange={e => set('priority', e.target.value)}>
+            {['high', 'med', 'low'].map(p => <option key={p} value={p}>{prioLabel(t, p)}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_status}</label>
+          <select className="field" value={form.status} onChange={e => set('status', e.target.value)}>
+            {STATUS_ORDER.filter(s => s !== 'closed').map(s => <option key={s} value={s}>{statusLabel(t, s)}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_start}</label>
+          <input type="date" className="field" value={form.startedAt} onChange={e => set('startedAt', e.target.value)} />
+        </div>
+        <div className="field-row">
+          <label className="field-label">{t.mt_form_next_date}</label>
+          <input type="date" className="field" value={form.nextDate} onChange={e => set('nextDate', e.target.value)} />
+        </div>
+        <div className="field-row" style={{ gridColumn: '1 / -1' }}>
+          <label className="field-label">{t.mt_form_next_label}</label>
+          <input className="field" value={form.nextLabel} onChange={e => set('nextLabel', e.target.value)} />
+        </div>
+        <div className="field-row" style={{ gridColumn: '1 / -1' }}>
+          <label className="field-label">{t.mt_form_desc}</label>
+          <textarea className="field" rows={3} placeholder={t.mt_form_desc_ph} value={form.description} onChange={e => set('description', e.target.value)} />
+        </div>
+      </div>
+      <div className="mt-form-codehint">
+        <Icon name="sparkle" size={13} fill={true} />
+        <span>{t.mt_form_code_hint}: <b>{TYPE_CODE[form.type]}-2026-NN</b></span>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Matter card (list mode) ---------- */
+function MatterCard({ m, t, onOpen }) {
+  const meta = TYPE_META[m.type] || TYPE_META.other;
+  const ddTone = m.nextDeadline ? deadlineTone(m.nextDeadline.date) : null;
+  return (
+    <button className="card mt-card" onClick={onOpen}>
+      <div className="mt-card-head">
+        <span className="mt-type-ic" style={{ background: `oklch(0.58 0.14 ${meta.hue} / 0.18)`, color: `oklch(0.48 0.14 ${meta.hue})` }}>
+          <Icon name={meta.icon} size={18} />
+        </span>
+        <div className="mt-card-meta">
+          <span className="mt-code">{m.code}</span>
+          <span className="chip" style={{ fontSize: 11 }}>{typeLabel(t, m.type)}</span>
+          {m.priority === 'high' ? <span className="chip mt-chip-prio"><span className="chip-dot" style={{ background: PRIO_COLOR.high }} />{prioLabel(t, 'high')}</span> : null}
+        </div>
+        <StatusBadge status={m.status} t={t} size="sm" />
+      </div>
+      <div className="mt-card-title">{m.title}</div>
+      <div className="mt-card-client">{m.client}</div>
+      <div className="mt-card-foot">
+        <span className="mt-metric"><b>{m.docs}</b> {t.mt_metric_docs}</span>
+        <span className="mt-metric"><b style={{ color: m.openTasks ? 'var(--risk-med)' : 'var(--text-3)' }}>{m.openTasks}</b> {t.mt_metric_tasks}</span>
+        <span className="mt-metric"><b>{m.hours}</b> {t.mt_metric_hours}</span>
+        <span className="mt-card-lead"><UserAvatar id={m.lead} size={28} /></span>
+      </div>
+      {m.nextDeadline ? (
+        <div className={'mt-deadline mt-dd-' + (ddTone || 'ok')}>
+          <Icon name={ddTone === 'overdue' ? 'alert' : 'clock'} size={13} />
+          <span className="mt-dd-date">{fmtDateShort(m.nextDeadline.date, t.locale)}</span>
+          <span className="mt-dd-label">{m.nextDeadline.label}</span>
+        </div>
+      ) : (
+        <div className="mt-deadline mt-dd-none">
+          <Icon name="clock" size={13} />
+          <span>{t.mt_no_deadline}</span>
+        </div>
+      )}
+    </button>
+  );
+}
+
+/* ---------- Matter detail tabs ---------- */
+function TabOverview({ m, t }) {
+  return (
+    <div className="mt-ov-grid">
+      <div className="card mt-card-pad">
+        <SectionTitle>{t.mt_ov_summary}</SectionTitle>
+        <p className="mt-text">{m.description || '—'}</p>
+        <hr className="divider" />
+        <SectionTitle>{t.mt_ov_key}</SectionTitle>
+        <ul className="mt-key-list">
+          {(m.keyFacts || []).map((f, i) => (
+            <li key={i}><span className="mt-key-dot" /> {f}</li>
+          ))}
+          {(m.keyFacts || []).length === 0 ? <li style={{ color: 'var(--text-3)', fontSize: 13 }}>—</li> : null}
+        </ul>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s4)' }}>
+        <div className={'card mt-next ' + (m.nextDeadline ? 'mt-next-' + (deadlineTone(m.nextDeadline.date) || 'ok') : 'mt-next-empty')}>
+          <div className="mt-next-label">{t.mt_ov_next_step}</div>
+          {m.nextDeadline ? (
+            <>
+              <div className="mt-next-title">{m.nextDeadline.label}</div>
+              <div className="mt-next-date">
+                <Icon name="calendar" size={14} />
+                <span>{fmtDate(m.nextDeadline.date, t.locale)}</span>
+                {deadlineTone(m.nextDeadline.date) === 'overdue' ? <span className="badge-risk badge-high">{t.mt_overdue}</span>
+                  : deadlineTone(m.nextDeadline.date) === 'soon' ? <span className="badge-risk badge-med">{t.mt_soon}</span> : null}
+              </div>
+            </>
+          ) : (
+            <div className="mt-next-title" style={{ color: 'var(--text-3)' }}>{t.mt_ov_no_next}</div>
+          )}
+        </div>
+        <div className="card mt-card-pad">
+          <SectionTitle>{t.mt_ov_dates}</SectionTitle>
+          <div className="mt-dates-mini">
+            <div><div className="ms-l">{t.mt_started}</div><div className="mt-dates-v">{fmtDate(m.startedAt, t.locale)}</div></div>
+            {m.closedAt ? <div><div className="ms-l">{t.mt_closed_on}</div><div className="mt-dates-v">{fmtDate(m.closedAt, t.locale)}</div></div> : null}
+          </div>
+        </div>
+        <div className="card mt-card-pad">
+          <SectionTitle>{t.mt_ov_parties_short}</SectionTitle>
+          <div className="mt-parties-mini">
+            <div><div className="ms-l">{t.mt_party_client}</div><div className="mt-parties-v">{m.parties?.client || m.client}</div></div>
+            {m.parties?.opponent ? <div><div className="ms-l">{t.mt_party_opponent}</div><div className="mt-parties-v">{m.parties.opponent}</div></div> : null}
+            {m.court ? <div><div className="ms-l">{t.mt_party_court}</div><div className="mt-parties-v">{m.court}</div></div> : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabDocuments({ m, t, setRoute }) {
+  const docs = DEMO.library.filter(c => c.client === m.client);
+  return (
+    <div className="card mt-card-pad">
+      <SectionTitle action={
+        <button className="btn btn-ghost btn-sm" onClick={() => toast(t.uploadDone, 'upload')}>
+          <Icon name="upload" size={14} /> {t.mt_docs_upload}
+        </button>
+      }>{t.mt_tab_docs}</SectionTitle>
+      {docs.length === 0 ? (
+        <div className="mt-empty"><Icon name="doc" size={26} /><div>{t.mt_docs_empty}</div></div>
+      ) : (
+        <div className="recent-list">
+          {docs.map(c => (
+            <button className="recent-row" key={c.id} onClick={() => setRoute && setRoute('analyze')}>
+              <span className="recent-ic"><Icon name="doc" size={16} /></span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span className="recent-name">{c.name}</span>
+                <span className="recent-sub">{c.type} · {c.date}</span>
+              </span>
+              {riskDot(c.risk)}
+              <Icon name="chevR" size={15} style={{ color: 'var(--text-3)' }} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabTasks({ m, t }) {
+  const [tasks, setTasks] = useState(() => LX.tasks.filter(k => k.matter === m.code));
+  const toggle = (id) => setTasks(ts => ts.map(k => k.id === id ? { ...k, col: k.col === 'done' ? 'todo' : 'done' } : k));
+  const active = tasks.filter(k => k.col !== 'done');
+  return (
+    <div className="card mt-card-pad">
+      <SectionTitle action={
+        <button className="btn btn-ghost btn-sm" onClick={() => toast(t.taskCreated, 'check')}>
+          <Icon name="plus" size={14} /> {t.mt_tasks_add}
+        </button>
+      }>{t.mt_tab_tasks}</SectionTitle>
+      {tasks.length === 0 ? (
+        <div className="mt-empty"><Icon name="check" size={26} /><div>{t.mt_tasks_empty}</div></div>
+      ) : (
+        <div className="mt-tasks">
+          {tasks.map(k => (
+            <div key={k.id} className={'mt-task' + (k.col === 'done' ? ' mt-task-done' : '')}>
+              <button className={'mt-check' + (k.col === 'done' ? ' on' : '')} onClick={() => { toggle(k.id); if (k.col !== 'done') toast(t.mt_tasks_done_toast, 'check'); }} aria-label={t.markDone}>
+                {k.col === 'done' ? <Icon name="check" size={13} stroke={3} /> : null}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="mt-task-title">{k.title}</div>
+                <div className="mt-task-sub">{t.taskDue}: {k.due} · {prioLabel(t, k.priority)}</div>
+              </div>
+              <span className="chip-dot" style={{ background: PRIO_COLOR[k.priority] }} />
+              <UserAvatar id={k.assignee} size={26} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-tasks-summary">
+        <span>{active.length} {t.mt_tasks_add.toLowerCase()}</span>
+      </div>
+    </div>
+  );
+}
+
+function TabDates({ m, t }) {
+  const items = [];
+  if (m.nextDeadline) items.push({ id: 'd0', date: m.nextDeadline.date, label: m.nextDeadline.label, kind: m.nextDeadline.kind || 'proc' });
+  DEMO.tasks.filter(tk => tk.client === m.client).forEach(tk => {
+    items.push({ id: 'd-' + tk.id, date: tk.date, label: tk.title, kind: tk.type === 'meeting' ? 'court' : 'proc' });
+  });
+  items.sort((a, b) => a.date.localeCompare(b.date));
+  return (
+    <div className="card mt-card-pad">
+      <SectionTitle action={
+        <button className="btn btn-ghost btn-sm" onClick={() => toast(t.addedToCal, 'calendar')}>
+          <Icon name="plus" size={14} /> {t.mt_dates_add}
+        </button>
+      }>{t.mt_tab_dates}</SectionTitle>
+      {items.length === 0 ? (
+        <div className="mt-empty"><Icon name="calendar" size={26} /><div>{t.mt_dates_empty}</div></div>
+      ) : (
+        <div className="mt-tl">
+          {items.map(it => {
+            const tone = deadlineTone(it.date);
+            const tone_color = tone === 'overdue' ? 'var(--risk-high)' : tone === 'soon' ? 'var(--risk-med)' : 'var(--info)';
+            return (
+              <div key={it.id} className="mt-tl-row">
+                <div className="mt-tl-date">
+                  <b>{parseISODate(it.date)?.toLocaleDateString(t.locale, { day: '2-digit' })}</b>
+                  <span>{parseISODate(it.date)?.toLocaleDateString(t.locale, { month: 'short' })}</span>
+                </div>
+                <span className="mt-tl-dot" style={{ background: tone_color }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mt-tl-title">{it.label}</div>
+                  <div className="mt-tl-sub">
+                    {it.kind === 'court' ? t.mt_dates_court : t.mt_dates_proc}
+                  </div>
+                </div>
+                {tone === 'overdue' ? <span className="badge-risk badge-high">{t.mt_overdue}</span>
+                  : tone === 'soon' ? <span className="badge-risk badge-med">{t.mt_soon}</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabBilling({ m, t }) {
+  const entries = LX.timeEntries.filter(e => e.matter === m.code);
+  const totalHours = entries.reduce((s, e) => s + e.hours, 0);
+  const totalAmount = entries.reduce((s, e) => s + (e.billable ? e.hours * e.rate : 0), 0);
+  const invoices = LX.invoices.filter(i => i.client === m.client);
+  return (
+    <div className="mt-ov-grid">
+      <div className="card mt-card-pad">
+        <SectionTitle action={
+          <button className="btn btn-ghost btn-sm" onClick={() => toast(t.timeLogged, 'clock')}>
+            <Icon name="plus" size={14} /> {t.mt_bill_add}
+          </button>
+        }>{t.mt_bill_entries}</SectionTitle>
+        {entries.length === 0 ? (
+          <div className="mt-empty"><Icon name="clock" size={26} /><div>—</div></div>
+        ) : (
+          <table className="mt-bill-table">
+            <thead><tr><th>{t.colDate}</th><th>{t.mLead}</th><th style={{ textAlign: 'right' }}>{t.mHours}</th><th style={{ textAlign: 'right' }}>{t.mt_bill_amount}</th></tr></thead>
+            <tbody>
+              {entries.map(e => (
+                <tr key={e.id}>
+                  <td>{e.date}</td>
+                  <td><UserAvatar id={e.who} size={22} /> <span style={{ marginLeft: 6 }}>{LX.userById[e.who]?.name}</span></td>
+                  <td style={{ textAlign: 'right', fontFeatureSettings: '"tnum"' }}>{e.hours.toFixed(1)}</td>
+                  <td style={{ textAlign: 'right', fontFeatureSettings: '"tnum"', color: e.billable ? 'var(--text)' : 'var(--text-3)' }}>{e.billable ? (e.hours * e.rate).toLocaleString('uk-UA') + ' ₴' : '—'}</td>
+                </tr>
+              ))}
+              <tr className="mt-bill-total"><td colSpan={2}>{t.mt_bill_total_hours} / {t.mt_bill_total_amount}</td>
+                <td style={{ textAlign: 'right' }}>{totalHours.toFixed(1)}</td>
+                <td style={{ textAlign: 'right' }}>{totalAmount.toLocaleString('uk-UA')} ₴</td></tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="card mt-card-pad">
+        <SectionTitle>{t.mt_bill_invoices}</SectionTitle>
+        {invoices.length === 0 ? (
+          <div className="mt-empty"><Icon name="pay" size={26} /><div>—</div></div>
+        ) : (
+          <div className="mt-inv-list">
+            {invoices.map(i => (
+              <div key={i.id} className="mt-inv-row">
+                <Icon name="pay" size={18} style={{ color: 'var(--accent)' }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{i.num} · {i.period}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{i.client}</div>
+                </div>
+                <div style={{ fontWeight: 700, fontFeatureSettings: '"tnum"' }}>{i.amount.toLocaleString('uk-UA')} ₴</div>
+                <span className={'badge-risk ' + (i.status === 'paid' ? 'badge-low' : i.status === 'sent' ? 'badge-med' : 'badge-info')}>
+                  {i.status === 'paid' ? t.invPaid : i.status === 'sent' ? t.invSent : t.invDraft}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabParties({ m, t }) {
+  const p = m.parties || {};
+  const rows = [
+    { label: t.mt_party_client, value: p.client || m.client },
+    { label: t.mt_party_client_rep, value: p.clientRep },
+    { label: t.mt_party_opponent, value: p.opponent || m.opponent },
+    { label: t.mt_party_opp_rep, value: p.opponentRep },
+    { label: t.mt_party_court, value: m.court },
+    { label: t.mt_party_judge, value: m.judge },
+  ];
+  return (
+    <div className="card mt-card-pad">
+      <SectionTitle>{t.mt_tab_parties}</SectionTitle>
+      <div className="mt-parties">
+        {rows.map((r, i) => (
+          <div key={i} className="mt-party-row">
+            <div className="ms-l">{r.label}</div>
+            <div className="mt-parties-v" style={{ color: r.value ? 'var(--text)' : 'var(--text-3)', fontStyle: r.value ? 'normal' : 'italic' }}>
+              {r.value || t.mt_party_none}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TabNotes({ m, t, onAddNote }) {
+  const [draft, setDraft] = useState('');
+  return (
+    <div className="mt-ov-grid">
+      <div className="card mt-card-pad">
+        <SectionTitle>{t.mt_tab_notes}</SectionTitle>
+        <div className="mt-note-add">
+          <textarea className="field" rows={2} placeholder={t.mt_notes_ph} value={draft} onChange={e => setDraft(e.target.value)} />
+          <button className="btn btn-primary btn-sm" disabled={!draft.trim()} onClick={() => {
+            if (!draft.trim()) return;
+            onAddNote(draft.trim());
+            setDraft('');
+          }}><Icon name="plus" size={13} /> {t.mt_notes_save}</button>
+        </div>
+        {(!m.notes || m.notes.length === 0) ? (
+          <div className="mt-empty" style={{ marginTop: 'var(--s4)' }}><Icon name="pen" size={22} /><div>{t.mt_notes_empty}</div></div>
+        ) : (
+          <div className="mt-notes">
+            {m.notes.map(n => (
+              <div key={n.id} className="mt-note">
+                <UserAvatar id={n.author} size={28} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mt-note-head">
+                    <span style={{ fontWeight: 600 }}>{LX.userById[n.author]?.name || n.author}</span>
+                    <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmtDate(n.date, t.locale)}</span>
+                  </div>
+                  <div className="mt-note-text">{n.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="card mt-card-pad">
+        <SectionTitle>{t.mt_timeline_title}</SectionTitle>
+        <div className="mt-tl">
+          {(m.timeline || []).map(it => (
+            <div key={it.id} className="mt-tl-row">
+              <div className="mt-tl-date">
+                <b>{parseISODate(it.date)?.toLocaleDateString(t.locale, { day: '2-digit' })}</b>
+                <span>{parseISODate(it.date)?.toLocaleDateString(t.locale, { month: 'short' })}</span>
+              </div>
+              <span className="mt-tl-dot" style={{ background: it.kind === 'closed' ? 'var(--risk-low)' : it.kind === 'court' ? 'oklch(0.58 0.18 310)' : 'var(--info)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="mt-tl-title">{it.text}</div>
+                <div className="mt-tl-sub">
+                  {it.kind === 'doc' ? t.mt_tab_docs : it.kind === 'court' ? t.mt_dates_court : it.kind === 'closed' ? t.mt_st_closed : t.mt_notes_add}
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       </div>
-      <div className="matter-grid">
-        {list.map(m => (
-          <button className="card matter-card" key={m.id} onClick={() => setSel(m.id)}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span className="matter-av" style={{ background: `oklch(0.58 0.14 ${m.color})` }}><Icon name="folder" size={20} /></span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <span className="chip" style={{ fontSize: 11 }}>{m.code}</span>
-                <div style={{ fontWeight: 650, fontSize: 15, marginTop: 5, lineHeight: 1.3 }}>{m.title}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>{m.client}</div>
+    </div>
+  );
+}
+
+/* ---------- Matters root component ---------- */
+function Matters({ t, setRoute }) {
+  const [matters, setMatters] = useState(LX.matters);
+  const [statusFilter, setStatusFilter] = useState('active'); // active | closed | all
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [ownerFilter, setOwnerFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState('cards');
+  const [sel, setSel] = useState(null);
+  const [tab, setTab] = useState('overview');
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState(null);
+  const [newOpen, setNewOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(api?.matters?.list?.() ?? [])
+      .then(rows => {
+        if (cancelled || !Array.isArray(rows) || rows.length === 0) return;
+        // Backward-compat: API may still emit legacy {status: 'active'|'closed'}.
+        // Merge with LX defaults to keep the rich detail-view shape.
+        const merged = rows.map(r => {
+          const local = LX.matters.find(m => m.id === r.id) || {};
+          let status = r.status;
+          if (status === 'active') status = local.status && local.status !== 'closed' ? local.status : 'progress';
+          return { ...local, ...r, status };
+        });
+        setMatters(merged);
+      })
+      .catch(() => { /* keep LX fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const list = matters.filter(m => {
+    if (statusFilter === 'active' && m.status === 'closed') return false;
+    if (statusFilter === 'closed' && m.status !== 'closed') return false;
+    if (typeFilter !== 'all' && m.type !== typeFilter) return false;
+    if (ownerFilter !== 'all' && m.lead !== ownerFilter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      if (![m.code, m.title, m.client].join(' ').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const counts = {
+    active: matters.filter(m => m.status !== 'closed').length,
+    closed: matters.filter(m => m.status === 'closed').length,
+    all: matters.length,
+  };
+
+  const updateMatter = (id, patch) => setMatters(ms => ms.map(m => m.id === id ? { ...m, ...patch } : m));
+
+  const onStatusChange = (id, next) => {
+    if (next === 'closed') {
+      setPendingStatus(id);
+      setCloseOpen(true);
+      return;
+    }
+    updateMatter(id, { status: next, result: null, closedAt: null });
+    toast(t.mt_status_toast, 'check');
+  };
+  const confirmClose = ({ result, date }) => {
+    if (!pendingStatus) return;
+    updateMatter(pendingStatus, { status: 'closed', result, closedAt: date });
+    setCloseOpen(false);
+    setPendingStatus(null);
+    toast(t.mt_closed_toast, 'checkCircle');
+  };
+
+  const generateCode = (type) => {
+    const prefix = TYPE_CODE[type] || 'GEN';
+    const year = 2026;
+    const taken = matters
+      .map(m => m.code)
+      .filter(c => c.startsWith(prefix + '-' + year + '-'))
+      .map(c => parseInt(c.split('-')[2], 10))
+      .filter(n => !isNaN(n));
+    const next = (taken.length ? Math.max(...taken) : 0) + 1;
+    return `${prefix}-${year}-${String(next).padStart(2, '0')}`;
+  };
+
+  const createMatter = (form) => {
+    const code = generateCode(form.type);
+    const id = 'm_' + Math.random().toString(36).slice(2, 8);
+    const meta = TYPE_META[form.type] || TYPE_META.other;
+    const m = {
+      id, code, title: form.title, client: form.client,
+      type: form.type, lead: form.lead, status: form.status,
+      priority: form.priority,
+      docs: 0, openTasks: 0, hours: 0, color: meta.hue,
+      startedAt: form.startedAt, description: form.description,
+      nextDeadline: form.nextDate ? { date: form.nextDate, label: form.nextLabel || t.mt_ov_next_step } : null,
+      opponent: null, court: null, judge: null,
+      result: null, closedAt: null,
+      keyFacts: [], notes: [], timeline: [],
+      parties: { client: form.client, clientRep: null, opponent: null, opponentRep: null },
+    };
+    setMatters(ms => [m, ...ms]);
+    setNewOpen(false);
+    toast(t.mt_created_toast, 'plus');
+    setSel(id);
+    setTab('overview');
+  };
+
+  const addNote = (id, text) => {
+    setMatters(ms => ms.map(m => {
+      if (m.id !== id) return m;
+      const note = { id: 'n_' + Math.random().toString(36).slice(2, 7), date: '2026-06-09', author: m.lead, text };
+      return { ...m, notes: [note, ...(m.notes || [])] };
+    }));
+    toast(t.mt_notes_added, 'pen');
+  };
+
+  /* ---------- Detail view ---------- */
+  if (sel) {
+    const m = matters.find(x => x.id === sel);
+    if (!m) { setSel(null); return null; }
+    const meta = TYPE_META[m.type] || TYPE_META.other;
+    const TABS = [
+      ['overview', t.mt_tab_overview, 'dashboard'],
+      ['docs', t.mt_tab_docs, 'doc'],
+      ['tasks', t.mt_tab_tasks, 'check'],
+      ['dates', t.mt_tab_dates, 'calendar'],
+      ['billing', t.mt_tab_billing, 'clock'],
+      ['parties', t.mt_tab_parties, 'clients'],
+      ['notes', t.mt_tab_notes, 'pen'],
+    ];
+    return (
+      <div className="page view-enter">
+        <div className="page-narrow">
+          <button className="btn btn-subtle btn-sm mt-back" onClick={() => setSel(null)}>
+            <Icon name="chevR" size={14} style={{ transform: 'rotate(180deg)' }} /> {t.mt_back}
+          </button>
+
+          <div className="card mt-detail-head">
+            <span className="mt-type-ic mt-type-ic-lg" style={{ background: `oklch(0.58 0.14 ${meta.hue} / 0.18)`, color: `oklch(0.46 0.14 ${meta.hue})` }}>
+              <Icon name={meta.icon} size={26} />
+            </span>
+            <div className="mt-detail-info">
+              <div className="mt-detail-chips">
+                <span className="mt-code">{m.code}</span>
+                <span className="chip">{typeLabel(t, m.type)}</span>
+                <span className="chip mt-chip-prio"><span className="chip-dot" style={{ background: PRIO_COLOR[m.priority] }} />{prioLabel(t, m.priority)}</span>
+              </div>
+              <h1 className="mt-detail-title">{m.title}</h1>
+              <div className="mt-detail-client">{m.client}</div>
+            </div>
+            <div className="mt-detail-side">
+              <StatusDropdown status={m.status} t={t} onChange={(s) => onStatusChange(m.id, s)} />
+              {m.nextDeadline ? (
+                <div className={'mt-detail-deadline mt-dd-' + (deadlineTone(m.nextDeadline.date) || 'ok')}>
+                  <Icon name="calendar" size={14} />
+                  <div style={{ minWidth: 0 }}>
+                    <div className="mt-detail-deadline-l">{t.mt_next}</div>
+                    <div className="mt-detail-deadline-v">{fmtDate(m.nextDeadline.date, t.locale)} · {m.nextDeadline.label}</div>
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-detail-actions">
+                <button className="btn btn-ghost btn-sm" onClick={() => toast(t.timeLogged, 'clock')}><Icon name="clock" size={13} /> {t.mt_action_log}</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => toast(t.taskCreated, 'check')}><Icon name="plus" size={13} /> {t.mt_action_task}</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setTab('notes')}><Icon name="pen" size={13} /> {t.mt_action_note}</button>
               </div>
             </div>
-            <hr className="divider" style={{ margin: 'var(--s4) 0' }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <span className="mt-stat"><b>{m.docs}</b> {t.mDocs}</span>
-              <span className="mt-stat"><b style={{ color: m.openTasks ? 'var(--risk-med)' : 'var(--text-3)' }}>{m.openTasks}</b> {t.mTasksShort}</span>
-              <span className="mt-stat"><b>{m.hours}</b> {t.mHours}</span>
-              <span style={{ marginLeft: 'auto' }}><UserAvatar id={m.lead} size={28} /></span>
+          </div>
+
+          {m.status === 'closed' && m.result ? (
+            <div className={'mt-closed-banner mt-result-' + m.result}>
+              <Icon name={m.result === 'won' ? 'checkCircle' : m.result === 'lost' ? 'alert' : 'scales'} size={18} />
+              <div style={{ flex: 1 }}>
+                <b>{t['mt_result_' + m.result]}</b>
+                <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>· {t.mt_closed_on}: {fmtDate(m.closedAt, t.locale)}</span>
+              </div>
             </div>
-          </button>
-        ))}
+          ) : null}
+
+          <div className="mt-tabs">
+            {TABS.map(([id, label, icon]) => (
+              <button key={id} className={'mt-tab' + (tab === id ? ' on' : '')} onClick={() => setTab(id)}>
+                <Icon name={icon} size={14} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-tab-body">
+            {tab === 'overview' ? <TabOverview m={m} t={t} /> : null}
+            {tab === 'docs' ? <TabDocuments m={m} t={t} setRoute={setRoute} /> : null}
+            {tab === 'tasks' ? <TabTasks m={m} t={t} /> : null}
+            {tab === 'dates' ? <TabDates m={m} t={t} /> : null}
+            {tab === 'billing' ? <TabBilling m={m} t={t} /> : null}
+            {tab === 'parties' ? <TabParties m={m} t={t} /> : null}
+            {tab === 'notes' ? <TabNotes m={m} t={t} onAddNote={(text) => addNote(m.id, text)} /> : null}
+          </div>
+        </div>
+        <CloseMatterModal open={closeOpen} onClose={() => { setCloseOpen(false); setPendingStatus(null); }} onConfirm={confirmClose} t={t} />
       </div>
-    </div></div>
+    );
+  }
+
+  /* ---------- List view ---------- */
+  const allTypes = Object.keys(TYPE_META);
+  const allOwners = LX.team.map(u => u.id);
+  const clientsList = Array.from(new Set(matters.map(m => m.client))).sort();
+
+  return (
+    <div className="page view-enter">
+      <div className="page-narrow">
+        <div className="mt-toolbar">
+          <div className="seg">
+            {[['active', t.mt_active], ['closed', t.mt_closed], ['all', t.mt_all]].map(([id, l]) => (
+              <button key={id} className={statusFilter === id ? 'on' : ''} onClick={() => setStatusFilter(id)}>
+                {l} <span className="mt-count">{counts[id]}</span>
+              </button>
+            ))}
+          </div>
+          <div className="search mt-search">
+            <Icon name="search" size={16} />
+            <input placeholder={t.mt_search} value={search} onChange={e => setSearch(e.target.value)} />
+            {search ? <button className="search-clear" onClick={() => setSearch('')}><Icon name="x" size={13} /></button> : null}
+          </div>
+          <select className="field mt-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} aria-label={t.mt_filter_type}>
+            <option value="all">{t.mt_all_types}</option>
+            {allTypes.map(tp => <option key={tp} value={tp}>{typeLabel(t, tp)}</option>)}
+          </select>
+          <select className="field mt-select" value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} aria-label={t.mt_filter_owner}>
+            <option value="all">{t.mt_all_owners}</option>
+            {allOwners.map(uid => <option key={uid} value={uid}>{LX.userById[uid]?.name}</option>)}
+          </select>
+          <div className="seg seg-sm">
+            <button className={view === 'cards' ? 'on' : ''} onClick={() => setView('cards')} aria-label={t.mt_view_cards}><Icon name="dashboard" size={14} /></button>
+            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')} aria-label={t.mt_view_table}><Icon name="menu" size={14} /></button>
+          </div>
+          <button className="btn btn-primary btn-sm mt-new-btn" onClick={() => setNewOpen(true)}>
+            <Icon name="plus" size={14} /> {t.mt_new}
+          </button>
+        </div>
+
+        {list.length === 0 ? (
+          <div className="card mt-empty mt-empty-lg">
+            <Icon name="folder" size={32} />
+            <div>{t.mt_empty}</div>
+          </div>
+        ) : view === 'cards' ? (
+          <div className="mt-grid">
+            {list.map(m => (
+              <MatterCard key={m.id} m={m} t={t} onOpen={() => { setSel(m.id); setTab('overview'); }} />
+            ))}
+          </div>
+        ) : (
+          <div className="card" style={{ overflow: 'visible' }}>
+            <table className="lib-table mt-table">
+              <thead>
+                <tr>
+                  <th>{t.colName}</th><th>{t.mt_filter_type}</th><th>{t.colClient}</th>
+                  <th>{t.mt_filter_owner}</th><th>{t.colStatus}</th>
+                  <th>{t.mt_next}</th>
+                  <th style={{ textAlign: 'right' }}>{t.mt_metric_hours}</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map(m => {
+                  const meta = TYPE_META[m.type] || TYPE_META.other;
+                  const tone = m.nextDeadline ? deadlineTone(m.nextDeadline.date) : null;
+                  return (
+                    <tr key={m.id} onClick={() => { setSel(m.id); setTab('overview'); }}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span className="mt-type-ic" style={{ width: 30, height: 30, background: `oklch(0.58 0.14 ${meta.hue} / 0.16)`, color: `oklch(0.46 0.14 ${meta.hue})` }}>
+                            <Icon name={meta.icon} size={14} />
+                          </span>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-3)', fontFeatureSettings: '"tnum"' }}>{m.code}</span>
+                            <div style={{ fontWeight: 600 }}>{m.title}</div>
+                          </span>
+                        </div>
+                      </td>
+                      <td><span className="chip">{typeLabel(t, m.type)}</span></td>
+                      <td style={{ color: 'var(--text-2)' }}>{m.client}</td>
+                      <td><UserAvatar id={m.lead} size={26} /></td>
+                      <td><StatusBadge status={m.status} t={t} size="sm" /></td>
+                      <td>
+                        {m.nextDeadline ? (
+                          <span className={'mt-dd-inline mt-dd-' + (tone || 'ok')}>
+                            {fmtDateShort(m.nextDeadline.date, t.locale)}
+                          </span>
+                        ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, fontFeatureSettings: '"tnum"' }}>{m.hours}</td>
+                      <td><Icon name="chevR" size={15} style={{ color: 'var(--text-3)' }} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <NewMatterModal open={newOpen} onClose={() => setNewOpen(false)} onCreate={createMatter} t={t} clients={clientsList} />
+      <CloseMatterModal open={closeOpen} onClose={() => { setCloseOpen(false); setPendingStatus(null); }} onConfirm={confirmClose} t={t} />
+    </div>
   );
 }
 
