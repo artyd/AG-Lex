@@ -40,13 +40,17 @@ copy .env.example .env
 # The realtime WebSocket fan-out uses an in-process ConnectionManager
 # (see backend/realtime.py).  Multiple workers would silo their sockets
 # and break realtime broadcast.  Scale-out later via Redis pub/sub.
-uvicorn backend.main:app --reload --workers 1
+#
+# Port 8001 matches the production Caddy reverse proxy. If you need a
+# different local port (e.g. 8000 is busy), pick another with --port and
+# set AGLEX_BACKEND_PORT in the frontend env so vite.config.js follows.
+uvicorn backend.main:app --reload --workers 1 --port 8001
 ```
 
 Open:
-- http://localhost:8000/         — AG Lex UI (served from dist/)
-- http://localhost:8000/health   — `{"status":"ok"}`
-- http://localhost:8000/docs     — OpenAPI (only once API routes exist)
+- http://localhost:8001/         — AG Lex UI (served from dist/)
+- http://localhost:8001/health   — `{"status":"ok"}`
+- http://localhost:8001/docs     — OpenAPI (only once API routes exist)
 
 ## Running tests
 
