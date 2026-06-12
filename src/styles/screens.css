@@ -688,3 +688,342 @@ select.field { cursor: pointer; }
   .cmp-vs { transform: rotate(90deg); margin: 0 auto; }
   .cmp-doc-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* ============================================================
+   Dashboard widget grid (15×20 builder canvas)
+   ============================================================ */
+.wg-card { padding: var(--s5); margin-top: var(--s4); }
+.wg-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
+.wg-title { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.wg-subtitle { font-size: 12.5px; color: var(--text-3); margin-top: 4px; }
+.wg-meta { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; }
+.wg-meta .chip { font-feature-settings: 'tnum'; }
+
+.wg-grid-wrap { display: flex; justify-content: center; overflow-x: auto; padding: 2px; }
+.wg-grid {
+  --wg-gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(15, minmax(28px, 44px));
+  grid-template-rows: repeat(20, minmax(28px, 44px));
+  gap: var(--wg-gap);
+  position: relative;
+  width: max-content;
+}
+
+/* Empty cell (transparent by default, accent tint on hover) */
+.wg-cell {
+  border: 1px dashed transparent;
+  background: transparent;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: transparent;
+  padding: 0;
+  font-family: inherit;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.12s ease;
+}
+.wg-cell:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.wg-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  background: var(--accent-softer);
+  color: var(--accent);
+}
+.wg-cell-preview {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Widget container */
+.wg-widget {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+  min-width: 0;
+  min-height: 0;
+}
+.wg-widget:hover {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+.wg-widget-dragging {
+  border-color: var(--accent);
+  box-shadow: 0 12px 28px color-mix(in oklab, var(--accent) 32%, transparent);
+  z-index: 12;
+}
+.wg-widget-bad {
+  border-color: var(--risk-high) !important;
+  background: var(--risk-high-soft) !important;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--risk-high) 38%, transparent);
+}
+
+.wg-widget-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.wg-widget-ic {
+  width: 20px; height: 20px;
+  border-radius: 6px;
+  background: var(--wg-tone-bg, var(--accent-soft));
+  color: var(--wg-tone-fg, var(--accent));
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.wg-widget-title {
+  flex: 1; min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.wg-widget-close {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  display: grid; place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.14s, background 0.14s, color 0.14s;
+}
+.wg-widget:hover .wg-widget-close,
+.wg-widget:focus-within .wg-widget-close {
+  opacity: 1;
+}
+.wg-widget-close:hover { background: var(--risk-high-soft); color: var(--risk-high); }
+
+.wg-widget-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* Stat block inside widget */
+.wg-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.05;
+}
+.wg-stat-v {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--wg-tone-fg, var(--accent));
+  font-feature-settings: 'tnum';
+}
+.wg-stat-l {
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.wg-sub { font-size: 11px; color: var(--text-2); }
+.wg-sub b { color: var(--text); font-weight: 700; }
+.wg-mini {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--wg-tone-fg, var(--accent));
+  text-align: center;
+}
+
+/* Lists inside widgets */
+.wg-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+.wg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+.wg-row-date {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  font-feature-settings: 'tnum';
+  min-width: 36px;
+}
+.wg-row-code {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--wg-tone-fg, var(--accent));
+  background: var(--wg-tone-bg, var(--accent-soft));
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.wg-row-t {
+  flex: 1; min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wg-av {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Notes widget */
+.wg-notes {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.35;
+  cursor: text;
+}
+.wg-notes:focus { background: color-mix(in oklab, var(--accent) 6%, var(--surface-2)); }
+
+/* Legal search inline */
+.wg-search-mini {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 4px 7px;
+  color: var(--text-3);
+}
+.wg-search-mini input {
+  flex: 1; min-width: 0;
+  border: none; outline: none; background: none;
+  font-family: inherit; font-size: 11px;
+  color: var(--text);
+}
+.wg-search-mini input::placeholder { color: var(--text-3); }
+
+/* Analytics bars */
+.wg-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 30px;
+  margin-top: 4px;
+}
+.wg-bar {
+  flex: 1;
+  background: var(--wg-tone-bg, var(--accent-soft));
+  border-radius: 2px 2px 0 0;
+  min-width: 4px;
+  transition: height 0.3s ease;
+}
+
+/* Resize handles */
+.wg-handle {
+  position: absolute;
+  background: transparent;
+  opacity: 0;
+  z-index: 6;
+  transition: opacity 0.14s ease;
+}
+.wg-widget:hover .wg-handle,
+.wg-widget-dragging .wg-handle {
+  opacity: 1;
+}
+.wg-handle-n { top: -3px; left: 10px; right: 10px; height: 7px; cursor: ns-resize; }
+.wg-handle-s { bottom: -3px; left: 10px; right: 10px; height: 7px; cursor: ns-resize; }
+.wg-handle-e { right: -3px; top: 10px; bottom: 10px; width: 7px; cursor: ew-resize; }
+.wg-handle-w { left: -3px; top: 10px; bottom: 10px; width: 7px; cursor: ew-resize; }
+.wg-handle-ne { top: -4px; right: -4px; width: 12px; height: 12px; cursor: nesw-resize; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); border-top-right-radius: 4px; }
+.wg-handle-nw { top: -4px; left: -4px; width: 12px; height: 12px; cursor: nwse-resize; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); border-top-left-radius: 4px; }
+.wg-handle-se { bottom: -4px; right: -4px; width: 12px; height: 12px; cursor: nwse-resize; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); border-bottom-right-radius: 4px; }
+.wg-handle-sw { bottom: -4px; left: -4px; width: 12px; height: 12px; cursor: nesw-resize; border-bottom: 2px solid var(--accent); border-left: 2px solid var(--accent); border-bottom-left-radius: 4px; }
+
+/* Widget picker modal grid */
+.wg-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+}
+.wg-pick-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.wg-pick-item:hover {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.wg-pick-ic {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+}
+.wg-pick-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.wg-pick-t { font-size: 13px; font-weight: 700; letter-spacing: -0.005em; }
+.wg-pick-s { font-size: 11.5px; color: var(--text-3); line-height: 1.35; }
+
+@media (max-width: 720px) {
+  .wg-pick-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .wg-pick-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wg-cell, .wg-widget, .wg-handle, .wg-pick-item { transition: none; }
+}
+
