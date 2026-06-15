@@ -190,6 +190,166 @@ _RAW_EXTRACTORS: dict[str, Callable[[str | Path], str]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Display PDF (Phase 4.x) — produce a single PDF the FE renders via PDF.js.
+# Lawyers see the original 1-to-1 (with tables, columns, fonts) and the
+# transparent highlight overlay paints over the actual words — no
+# reconstruction in the browser. PDF inputs pass through unchanged; DOCX and
+# XLSX go through headless LibreOffice (`soffice --headless --convert-to pdf`).
+# ---------------------------------------------------------------------------
+
+DISPLAY_PDF_EXTS: frozenset[str] = frozenset({".pdf", ".docx", ".xlsx"})
+
+
+class DisplayPdfError(RuntimeError):
+    """Raised when the display-PDF render fails.
+
+    `kind` lets the caller decide how to surface the failure:
+      missing    — soffice binary not on PATH / not executable
+      crash      — soffice exited non-zero
+      timeout    — render exceeded DISPLAY_PDF_TIMEOUT
+      empty      — produced PDF is missing, not %PDF-, or absurdly small
+      too_large  — produced PDF exceeds MAX_DISPLAY_PDF_BYTES
+    """
+
+    def __init__(self, kind: str, message: str = "") -> None:
+        super().__init__(message or kind)
+        self.kind = kind
+
+
+def to_display_pdf(
+    path: "str | Path",
+    *,
+    timeout: float | None = None,
+    max_bytes: int | None = None,
+    soffice_path: str | None = None,
+) -> bytes:
+    """Render any supported source (.pdf/.docx/.xlsx) to a display PDF.
+
+    PDF inputs are returned as-is (no re-render — skips the ~2s soffice
+    roundtrip when the user already gave us a PDF). DOCX/XLSX go through
+    a headless `soffice --convert-to pdf` into a per-call mkdtemp so
+    parallel calls never collide. The temp dir is cleaned in `finally`.
+
+    Returns the raw PDF bytes. Raises `DisplayPdfError(kind=…)` on:
+      - soffice binary missing / not executable
+      - subprocess non-zero exit or timeout
+      - empty / not-`%PDF-` output
+      - output exceeding `max_bytes`
+
+    Settings are read from `get_settings()` unless overridden via kwargs
+    (useful for tests).
+    """
+    import shutil as _shutil
+    import subprocess
+    import sys
+    import tempfile as _tempfile
+    import time as _time
+    from .config import get_settings
+
+    settings = get_settings()
+    timeout = settings.DISPLAY_PDF_TIMEOUT if timeout is None else timeout
+    max_bytes = settings.MAX_DISPLAY_PDF_BYTES if max_bytes is None else max_bytes
+    soffice = soffice_path if soffice_path is not None else settings.SOFFICE_PATH
+
+    src = Path(path)
+    suffix = src.suffix.lower()
+    if suffix not in DISPLAY_PDF_EXTS:
+        raise ValueError(
+            f"Unsupported display-PDF source {suffix!r}. "
+            f"Supported: {sorted(DISPLAY_PDF_EXTS)}"
+        )
+
+    if suffix == ".pdf":
+        data = src.read_bytes()
+        if not data.startswith(b"%PDF-"):
+            raise DisplayPdfError("empty", f"input PDF is not a valid PDF: {src}")
+        if len(data) > max_bytes:
+            raise DisplayPdfError(
+                "too_large",
+                f"input PDF size {len(data)} exceeds cap {max_bytes}",
+            )
+        return data
+
+    # DOCX/XLSX → soffice
+    soffice_resolved = _shutil.which(soffice) if soffice else None
+    if not soffice_resolved:
+        raise DisplayPdfError(
+            "missing",
+            f"soffice binary not found (looked up {soffice!r}); "
+            f"install LibreOffice on the host (apt-get install --no-install-recommends "
+            f"libreoffice-core libreoffice-writer libreoffice-calc).",
+        )
+
+    outdir = _tempfile.mkdtemp(prefix="aglex_pdf_")
+    try:
+        cmd = [
+            soffice_resolved,
+            "--headless",
+            "--nologo",
+            "--nofirststartwizard",
+            "--convert-to", "pdf",
+            "--outdir", outdir,
+            str(src),
+        ]
+        t0 = _time.perf_counter()
+        try:
+            proc = subprocess.run(
+                cmd,
+                timeout=timeout,
+                capture_output=True,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise DisplayPdfError(
+                "timeout",
+                f"soffice exceeded {timeout}s rendering {src.name}",
+            ) from e
+        elapsed = _time.perf_counter() - t0
+
+        if proc.returncode != 0:
+            # stderr tail in log only — NOT in any user-facing message.
+            stderr_tail = (proc.stderr or b"")[-1024:].decode("utf-8", errors="replace")
+            print(
+                f"[to_display_pdf] soffice exit {proc.returncode} for {src.name} "
+                f"after {elapsed:.2f}s — stderr: {stderr_tail!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise DisplayPdfError(
+                "crash",
+                f"soffice exit {proc.returncode} rendering {src.name}",
+            )
+
+        produced = Path(outdir) / (src.stem + ".pdf")
+        if not produced.is_file():
+            raise DisplayPdfError(
+                "empty",
+                f"soffice produced no output PDF for {src.name}",
+            )
+        data = produced.read_bytes()
+        if len(data) < 256 or not data.startswith(b"%PDF-"):
+            raise DisplayPdfError(
+                "empty",
+                f"soffice output for {src.name} is not a valid PDF ({len(data)} bytes)",
+            )
+        if len(data) > max_bytes:
+            raise DisplayPdfError(
+                "too_large",
+                f"display PDF for {src.name} is {len(data)} bytes (cap {max_bytes})",
+            )
+
+        # Lightweight observability — the systemd journal already collects stderr.
+        print(
+            f"[to_display_pdf] OK {src.name}: {len(data)} bytes in {elapsed:.2f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+        return data
+    finally:
+        _shutil.rmtree(outdir, ignore_errors=True)
+
+
 def detect_type_and_convert(path: str | Path) -> str:
     suffix = Path(path).suffix.lower()
     fn = _CONVERTERS.get(suffix)
