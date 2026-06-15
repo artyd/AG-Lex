@@ -11,15 +11,7 @@ import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
 import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
-import { findingsToHighlights } from '../lib/pdfHighlight';
-import { PdfViewer } from './analysis/PdfViewer';
-
-// Phase 4.x PR2: opt into the pixel-perfect PDF viewer behind ?pdfview=1
-// so QA can exercise it in isolation before PR4 unifies the screens.
-function isPdfViewEnabled() {
-  if (typeof window === 'undefined') return false;
-  return new URLSearchParams(window.location.search).has('pdfview');
-}
+import { AnalysisView } from './analysis/AnalysisView';
 
 // Decode the upload's base64 PDF to a Uint8Array PDF.js can consume directly.
 function decodePdfB64(b64) {
@@ -510,7 +502,7 @@ function Chat({ t, inject }) {
 }
 
 /* ---------- AI panel ---------- */
-function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
+export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
   // `data` (always defined) is the merged real-or-demo bundle from
   // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
   // from DEMO until the backend learns to return them (Task 5/future).
@@ -924,27 +916,25 @@ function ContractAnalysis({ t, incoming }) {
   const [loadedDoc, setLoadedDoc] = useState(null);
   const effectiveDoc = incoming || loadedDoc;
 
-  // Phase 4.x PR2: behind ?pdfview=1, mount the pixel-perfect PdfViewer
-  // instead of the markdown-based ContractDocReal. PR4 lifts this into
-  // AnalysisView and the flag goes away. Only the fresh-upload path is
-  // wired here — the library-reopen path still uses ContractDocReal.
-  const pdfViewBytes = useMemo(() => {
-    if (!isPdfViewEnabled()) return null;
+  // Phase 4.x PR4: PDF view is now the default for any flow that has a
+  // display PDF. Fresh uploads carry the b64 in `incoming.displayPdfB64`;
+  // library re-opens carry a `displayPdfUrl` on `loadedDoc`. Either path
+  // ends up in <AnalysisView/>. DEMO mode (no incoming, no loadedDoc)
+  // keeps using ContractDoc below.
+  const uploadedBytes = useMemo(() => {
     if (!incoming || !incoming.displayPdfB64) return null;
     return decodePdfB64(incoming.displayPdfB64);
   }, [incoming]);
-  // Phase 4.x PR3 state: rendered-page accumulator + memo'd highlight rects.
-  // The actual `active`/`hovered`-dependent useMemo lives further down once
-  // those state hooks are declared (JS temporal-dead-zone otherwise).
-  const [pdfPages, setPdfPages] = useState({});
-  const onPdfPagesReady = useMemo(() => (added) => {
-    if (!added || !added.length) return;
-    setPdfPages((prev) => {
-      const next = { ...prev };
-      for (const p of added) next[p.pageNumber] = p;
-      return next;
-    });
-  }, []);
+  const reopenedDisplayUrl = (loadedDoc && loadedDoc.displayPdfUrl) || null;
+  const docsForView = useMemo(() => {
+    const label = (effectiveDoc && effectiveDoc.filename) || 'Договір';
+    return [{
+      label,
+      displayPdfBytes: uploadedBytes,
+      displayPdfUrl: reopenedDisplayUrl,
+    }];
+  }, [effectiveDoc, uploadedBytes, reopenedDisplayUrl]);
+  const usePdfView = Boolean(uploadedBytes || reopenedDisplayUrl);
 
   // Merged data source: real fields override DEMO when available. `missing` /
   // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
@@ -971,18 +961,6 @@ function ContractAnalysis({ t, incoming }) {
   const [highlightsOn, setHighlightsOn] = useState(true);
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
 
-  // Phase 4.x PR3: now that `active`/`hovered` are declared, compute the
-  // PdfViewer overlay rects from accumulated pages + current findings.
-  const pdfHighlights = useMemo(() => {
-    if (!pdfViewBytes) return [];
-    const pages = Object.values(pdfPages).sort((a, b) => a.pageNumber - b.pageNumber);
-    if (pages.length === 0) return [];
-    return findingsToHighlights(pages, data.findings).map((h) => ({
-      ...h,
-      active: h.findingId === active,
-      hovered: h.findingId === hovered,
-    }));
-  }, [pdfViewBytes, pdfPages, data.findings, active, hovered]);
   const [protocolOpen, setProtocolOpen] = useState(false);
   const [addedSet, setAddedSet] = useState(new Set());
   const [chatInject, setChatInject] = useState(null);
@@ -1075,6 +1053,10 @@ function ContractAnalysis({ t, incoming }) {
           filename: c.filename || (a._doc && a._doc.filename) || 'Договір',
           sections: (a._doc && a._doc.sections) || [],
           tokenStats: a.tokenStats || null,
+          // Phase 4.x PR4: AnalysisView fetches the bytes from this URL.
+          // Returns 404 for legacy rows persisted before PR1 — the FE
+          // then renders the "preview unavailable" banner.
+          displayPdfUrl: `/api/contracts/${encodeURIComponent(id)}/display.pdf`,
         });
         setAnalysisStatus('ready');
         setPhase('ready');
@@ -1258,49 +1240,64 @@ function ContractAnalysis({ t, incoming }) {
         />
       ) : null}
 
-      <div className="analysis-body">
-        <div className="doc-scroll" ref={docScrollRef}>
-          {phase === 'loading'
-            ? <AnalyzingOverlay t={t} />
-            : <div className="view-enter">
-                {pdfViewBytes
-                  ? <PdfViewer
-                      data={pdfViewBytes}
-                      highlights={pdfHighlights}
-                      onPagesReady={onPdfPagesReady}
-                      onHighlightClick={(fid) => { setActive(fid); scrollFindingCard(fid); }}
-                      onHighlightHover={(fid) => setHovered(fid)}
-                    />
-                  : effectiveDoc && Array.isArray(effectiveDoc.sections) && effectiveDoc.sections.length > 0
-                  ? <ContractDocReal filename={effectiveDoc.filename} sections={effectiveDoc.sections}
-                      findings={data.findings}
-                      hl={{ segRefs, active, hovered, setHovered, onHover, onPick, onAsk }} />
-                  : <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
-                      highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
-                      onHover={onHover} onPick={onPick} onAsk={onAsk} />}
-              </div>}
-          {tooltip && (
-            <div className="hl-tip" style={{ left: tooltip.x, top: tooltip.y }}>
-              <div className="hl-tip-head">
-                <span className={'badge-risk ' + { high: 'badge-high', med: 'badge-med', low: 'badge-low' }[tooltip.f.level]}>{tooltip.f.clause}</span>
-                <span style={{ fontWeight: 650, fontSize: 13 }}>{tooltip.f.title}</span>
-              </div>
-              <div className="hl-tip-desc">{tooltip.f.desc}</div>
-              {tooltip.f.law ? <div className="hl-tip-law"><Icon name="scales" size={11} /> {tooltip.f.law}</div> : null}
-              <div className="hl-tip-hint">{t.hoverHint}</div>
+      {phase === 'loading' ? (
+        <div className="analysis-body">
+          <div className="doc-scroll" ref={docScrollRef}>
+            <AnalyzingOverlay t={t} />
+          </div>
+          <div className="panel-wrap panel-loading"><PanelSkeleton /></div>
+        </div>
+      ) : usePdfView ? (
+        // Phase 4.x PR4: unified view — pixel-perfect PDF on the left,
+        // AiPanel on the right. AnalysisView owns the bytes fetch +
+        // highlight overlay + 404 fallback banner.
+        <AnalysisView
+          documents={docsForView}
+          findings={data.findings}
+          active={active}
+          setActive={(fid) => { setActive(fid); scrollFindingCard(fid); }}
+          hovered={hovered}
+          setHovered={setHovered}
+          t={t}
+          panel={
+            <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
+              hovered={hovered} setHovered={setHovered}
+              applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
+              chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
+              data={data} isDemo={isDemo} />
+          }
+        />
+      ) : (
+        // DEMO / no-upload fallback — legacy ContractDoc with inline marks
+        // stays so the prototype demo still renders sensibly.
+        <div className="analysis-body">
+          <div className="doc-scroll" ref={docScrollRef}>
+            <div className="view-enter">
+              <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
+                highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
+                onHover={onHover} onPick={onPick} onAsk={onAsk} />
             </div>
-          )}
+            {tooltip && (
+              <div className="hl-tip" style={{ left: tooltip.x, top: tooltip.y }}>
+                <div className="hl-tip-head">
+                  <span className={'badge-risk ' + { high: 'badge-high', med: 'badge-med', low: 'badge-low' }[tooltip.f.level]}>{tooltip.f.clause}</span>
+                  <span style={{ fontWeight: 650, fontSize: 13 }}>{tooltip.f.title}</span>
+                </div>
+                <div className="hl-tip-desc">{tooltip.f.desc}</div>
+                {tooltip.f.law ? <div className="hl-tip-law"><Icon name="scales" size={11} /> {tooltip.f.law}</div> : null}
+                <div className="hl-tip-hint">{t.hoverHint}</div>
+              </div>
+            )}
+          </div>
+          <div className="panel-wrap">
+            <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
+              hovered={hovered} setHovered={setHovered}
+              applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
+              chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
+              data={data} isDemo={isDemo} />
+          </div>
         </div>
-        <div className={'panel-wrap' + (phase === 'loading' ? ' panel-loading' : '')}>
-          {phase === 'ready'
-            ? <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
-                hovered={hovered} setHovered={setHovered}
-                applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
-                chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
-                data={data} isDemo={isDemo} />
-            : <PanelSkeleton />}
-        </div>
-      </div>
+      )}
 
       <ProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} t={t} findings={data.findings} />
       <DiffModal open={diffOpen} onClose={() => setDiffOpen(false)} t={t} />

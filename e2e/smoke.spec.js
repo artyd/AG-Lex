@@ -33,14 +33,17 @@ test('upload contract → see real analysis with highlights and law chips', asyn
   await expect(analyzeBtn).toBeEnabled({ timeout: 10_000 });
   await analyzeBtn.click();
 
-  // Analysis screen renders the .analysis shell. Loading overlay shows
-  // first; wait for the AI panel that appears in 'ready' phase.
+  // Phase 4.x PR4: contract upload now mounts AnalysisView →
+  //   - .analysis shell + .aipanel-head right panel
+  //   - .pdf-viewer canvas (PdfViewer) for the source document
+  //   - .hl-rect overlay (pdfHighlight anchored mock finding quotes)
+  //   - .finding cards with .law-chip on the right side.
   await expect(page.locator('.analysis')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.aipanel-head')).toBeVisible({ timeout: 30_000 });
-
-  // Real findings from the mock: at least one inline <mark.hl> AND at least
-  // one FindingCard with a law chip.
-  await expect(page.locator('mark.hl').first()).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.hl-rect').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.finding').first()).toBeVisible();
   await expect(page.locator('.finding .law-chip').first()).toBeVisible();
 });
@@ -66,44 +69,15 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await runBtn.click();
   await reconcileResp;
 
-  // Reconciliation result shell. Right-side findings list lives in .cmp-find-list.
-  await expect(page.locator('.cmp-find').first()).toBeVisible({ timeout: 30_000 });
-});
-
-test('PdfViewer (?pdfview=1) renders a canvas from the uploaded display PDF', async ({ page }) => {
-  // Visit with the feature flag *before* login so it survives the SPA's
-  // localStorage-based routing. Mock-mode upload serves a stub PDF
-  // (e2e/fixtures/mock_display.pdf) so soffice never runs on CI.
-  await page.goto('/?pdfview=1');
-  await page.locator('.auth-tabs button').nth(1).click();
-  await page.locator('input[type="email"]').first().fill('test@aglex.ua');
-  const pwd = page.locator('input[type="password"]').first();
-  await pwd.fill('test1234');
-  await pwd.press('Enter');
-  await page.locator('.app').waitFor({ state: 'visible', timeout: 30_000 });
-  // Flag should still be in the URL after auth completes.
-  await expect(page).toHaveURL(/pdfview=1/);
-
-  await page.locator('.app .sidebar button.btn-primary').first().click();
-  const hubContract = page.locator('.hub-block').nth(0);
-  await hubContract.click();
-
-  const fileInput = page.locator('input[type="file"][accept*=".docx"]').first();
-  await fileInput.setInputFiles(FIXTURES.contract);
-  const analyzeBtn = page.locator('.modal .btn-primary').last();
-  await expect(analyzeBtn).toBeEnabled({ timeout: 10_000 });
-  await analyzeBtn.click();
-
-  // PdfViewer mounts on the analyze route — assert the canvas appears.
+  // Phase 4.x PR4: reconcile result uses AnalysisView too —
+  //   - PdfViewer canvas, .analysis-tabs (contract + handover),
+  //   - .finding cards on the right (cmp-find is gone).
   await expect(page.locator('.analysis')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.pdf-viewer')).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
   ).toBeVisible({ timeout: 30_000 });
-  // Phase 4.x PR3: the highlight overlay should land at least one rect
-  // for the mock findings (the stub PDF carries the Cyrillic suggest.from
-  // quotes so pdfHighlight can anchor them).
-  await expect(page.locator('.hl-rect').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.analysis-tabs')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 30_000 });
 });
 
 test('Library shows the persisted contract AND reconciliation as separate rows', async ({ page }) => {

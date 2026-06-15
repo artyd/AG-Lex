@@ -16,6 +16,9 @@ import { Icon } from '../ui/Icon';
 import { toast } from '../ui/components';
 import { api } from '../lib/api';
 import { DEMO } from '../data/demo';
+import { AnalysisView } from './analysis/AnalysisView';
+import { AiPanel } from './ContractAnalysis';
+import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 
 const RECON_HISTORY_KEY = 'lex.recon.history';
 const RECON_OPEN_KEY = 'lex.recon.open';
@@ -187,395 +190,40 @@ function AnalyzingStep({ t }) {
   );
 }
 
-/* ---------- Render a parts array ({t, cat, st} | legacy string) ----------
-   The backend schema now emits every fragment as {t, cat, st}; plain text
-   carries `cat === "plain"`. Strings are still accepted so persisted runs
-   (saved before the schema change) keep rendering. */
-function renderParts(parts, opts) {
-  const { active, onPick, refs, forceOk } = opts;
-  return (parts || []).map((seg, i) => {
-    if (typeof seg === 'string') return <span key={i}>{seg}</span>;
-    if (!seg.cat || seg.cat === 'plain') return <span key={i}>{seg.t}</span>;
-    const st = forceOk ? 'ok' : seg.st;
-    const cls = 'cmark cmark-' + st + (active === seg.cat ? ' active' : '');
-    const clickable = st === 'mismatch' || st === 'flag' || st === 'positive' || forceOk;
-    return (
-      <mark key={i}
-        ref={el => { if (el && refs) refs.current[seg.cat] = el; }}
-        className={cls}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (clickable && onPick) onPick(seg.cat);
-        }}>
-        {seg.t}
-      </mark>
-    );
-  });
-}
-
-/* ---------- Source-MD renderer ----------
-   The backend now ships back the original `contractMarkdown` /
-   `handoverMarkdown` so we can preserve the doc's look (tables, headings)
-   instead of rendering Claude's compressed summary. Mammoth (docx) and
-   pymupdf4llm (pdf) both emit standard markdown — paragraphs, pipe tables,
-   `**bold**` — and occasionally raw HTML tables (some converters do this
-   for complex layouts). We handle both. */
-const SAFE_HTML_RE = /<table[\s\S]*?<\/table>/i;
-function sanitizeBlockHtml(html) {
-  // Light defense-in-depth — the source is the user's own upload, but we
-  // still strip the obvious foot-guns before dangerouslySetInnerHTML.
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/\sjavascript:/gi, '');
-}
-
-function unescapeMd(s) {
-  // Mammoth/pandoc escape punctuation in markdown output ("1\." for "1.",
-  // "non\-returnable", etc.). Drop the backslash before non-alphanumerics
-  // so the rendered text reads naturally.
-  return String(s).replace(/\\([^A-Za-z0-9])/g, '$1');
-}
-
-function SrcInline({ text }) {
-  if (!text) return null;
-  const clean = unescapeMd(text);
-  const out = [];
-  // Match either **bold**, __bold__ (mammoth's docx output), or *italic*.
-  const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*)/g;
-  let last = 0, m, key = 0;
-  while ((m = re.exec(clean)) !== null) {
-    if (m.index > last) out.push(clean.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith('**') || tok.startsWith('__')) {
-      out.push(<strong key={'b' + key++}>{tok.slice(2, -2)}</strong>);
-    } else {
-      out.push(<em key={'i' + key++}>{tok.slice(1, -1)}</em>);
-    }
-    last = m.index + tok.length;
-  }
-  if (last < clean.length) out.push(clean.slice(last));
-  return out;
-}
-
-/* ---------- HTML source renderer with finding overlay ----------
-   Backend now ships `contractHtml` / `handoverHtml` (mammoth's HTML output
-   for docx, openpyxl-built tables for xlsx). We dangerously-set it after
-   sanitization, then in a useEffect walk the rendered DOM and wrap each
-   `row.contract` / `row.t3` value in a `<mark>` so highlights show on the
-   actual source — not on Claude's flattened summary. Click on a mark fires
-   `onPick(cat)` so the right-side findings panel focuses the same row. */
-function SourceHtmlDoc({ html, rows, side, active, onPick, refs }) {
-  const ref = useRef(null);
-
-  // Overlay highlights whenever the doc HTML or the rows change. We tear
-  // down the previous marks first so re-renders don't compound.
-  useEffect(() => {
-    const root = ref.current;
-    if (!root || !rows) return;
-    root.querySelectorAll('mark.cmark[data-overlay]').forEach(m => {
-      const parent = m.parentNode;
-      while (m.firstChild) parent.insertBefore(m.firstChild, m);
-      parent.removeChild(m);
-      parent.normalize();
-    });
-    if (refs) refs.current = {};
-    const norm = (s) => String(s || '')
-      .replace(/ /g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Walk text nodes once; for each row, wrap the FIRST occurrence so we
-    // don't carpet-bomb the doc when a value (e.g. "USD") appears 50 times.
-    const candidates = (rows || []).filter(r => {
-      if (!r) return false;
-      if (r.status === 'absent' || r.status === 'ok') return false;
-      const v = side === 'contract' ? r.contract : r.t3;
-      const trimmed = norm(v);
-      return trimmed && trimmed !== '—' && trimmed.length >= 2;
-    });
-    if (candidates.length === 0) return;
-
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        if (!node.parentNode || node.parentNode.tagName === 'SCRIPT') return NodeFilter.FILTER_REJECT;
-        if (node.parentNode.closest && node.parentNode.closest('mark.cmark')) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    const textNodes = [];
-    let n;
-    while ((n = walker.nextNode())) textNodes.push(n);
-
-    const matched = new Set();
-    for (const tn of textNodes) {
-      const text = tn.textContent;
-      if (!text) continue;
-      for (const row of candidates) {
-        if (matched.has(row.key)) continue;
-        const value = norm(side === 'contract' ? row.contract : row.t3);
-        const idx = text.indexOf(value);
-        if (idx < 0) continue;
-        const parent = tn.parentNode;
-        const before = text.slice(0, idx);
-        const after = text.slice(idx + value.length);
-        const mark = document.createElement('mark');
-        mark.className = 'cmark cmark-' + row.status;
-        mark.setAttribute('data-overlay', '1');
-        mark.setAttribute('data-cat', row.key);
-        mark.textContent = value;
-        if (before) parent.insertBefore(document.createTextNode(before), tn);
-        parent.insertBefore(mark, tn);
-        if (after) {
-          const afterNode = document.createTextNode(after);
-          parent.insertBefore(afterNode, tn);
-        }
-        parent.removeChild(tn);
-        if (refs) refs.current[row.key] = mark;
-        matched.add(row.key);
-        break;
-      }
-    }
-  }, [html, rows, side, refs]);
-
-  // Click on a mark → focus the corresponding finding in the right panel.
-  useEffect(() => {
-    const root = ref.current;
-    if (!root || !onPick) return;
-    const handle = (e) => {
-      const target = e.target.closest && e.target.closest('mark.cmark[data-cat]');
-      if (!target || !root.contains(target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const cat = target.getAttribute('data-cat');
-      if (cat) onPick(cat);
-    };
-    root.addEventListener('click', handle);
-    return () => root.removeEventListener('click', handle);
-  }, [onPick]);
-
-  // Keep the `active` cmark class in sync with the selection.
-  useEffect(() => {
-    const root = ref.current;
-    if (!root) return;
-    root.querySelectorAll('mark.cmark.active').forEach(m => m.classList.remove('active'));
-    if (active) {
-      root.querySelectorAll(`mark.cmark[data-cat="${CSS.escape(active)}"]`).forEach(m => m.classList.add('active'));
-    }
-  }, [active, html, rows]);
-
-  return (
-    <div
-      ref={ref}
-      className="cmp-paper-src cmp-paper-html"
-      dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(html) }}
-    />
-  );
-}
-
-function SourceMarkdown({ markdown }) {
-  if (!markdown) return null;
-  // 1) Carve out HTML <table>...</table> blocks first so we don't shred
-  //    them by line — they pass straight through (sanitized).
-  const segments = [];
-  let cursor = 0;
-  const tableRe = /<table[\s\S]*?<\/table>/gi;
-  let tm;
-  while ((tm = tableRe.exec(markdown)) !== null) {
-    if (tm.index > cursor) segments.push({ kind: 'md', body: markdown.slice(cursor, tm.index) });
-    segments.push({ kind: 'html', body: tm[0] });
-    cursor = tableRe.lastIndex;
-  }
-  if (cursor < markdown.length) segments.push({ kind: 'md', body: markdown.slice(cursor) });
-
-  // 2) Each 'md' segment → blocks split on blank lines. Recognize headings
-  //    (`#`/`##`/`###`), pipe tables, paragraphs.
-  const splitRow = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
-  const isDivider = (l) => /^\s*\|?[-: \|]+\|?\s*$/.test(l);
-  const renderMd = (text, baseKey) => {
-    const lines = (text || '').split(/\r?\n/);
-    const blocks = [];
-    let buf = [];
-    const flush = () => { if (buf.length) { blocks.push(buf); buf = []; } };
-    for (const ln of lines) {
-      if (ln.trim() === '') flush();
-      else buf.push(ln);
-    }
-    flush();
-    return blocks.map((b, i) => {
-      const k = `${baseKey}-${i}`;
-      // Heading?
-      const firstLine = b[0];
-      const head = firstLine && firstLine.match(/^\s*(#{1,4})\s+(.*)$/);
-      if (head && b.length === 1) {
-        const Tag = `h${head[1].length}`;
-        return <Tag key={k} className="src-h"><SrcInline text={head[2]} /></Tag>;
-      }
-      // Pipe-table?
-      const pipey = b.length >= 2 && b.every(l => l.trim().startsWith('|'));
-      if (pipey) {
-        const divIdx = b.findIndex(isDivider);
-        if (divIdx > 0) {
-          const headRow = splitRow(b[divIdx - 1]);
-          const bodyRows = b.slice(divIdx + 1).map(splitRow);
-          return (
-            <table className="src-table" key={k}>
-              <thead><tr>{headRow.map((c, j) => <th key={j}><SrcInline text={c} /></th>)}</tr></thead>
-              <tbody>{bodyRows.map((r, j) => (
-                <tr key={j}>{r.map((c, q) => <td key={q}><SrcInline text={c} /></td>)}</tr>
-              ))}</tbody>
-            </table>
-          );
-        }
-      }
-      // Plain paragraph.
-      return <p className="src-p" key={k}><SrcInline text={b.join(' ')} /></p>;
-    });
-  };
-
-  return (
-    <div className="cmp-paper-src">
-      {segments.map((seg, i) => seg.kind === 'html'
-        ? <div key={i} className="src-html" dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(seg.body) }} />
-        : <div key={i}>{renderMd(seg.body, 'm' + i)}</div>
-      )}
-    </div>
-  );
-}
-
-/* ---------- Contract paper (bilingual EN / UA) ---------- */
-function ContractPaper({ doc, active, onPick, refs, sourceMd, sourceHtml, rows }) {
-  // Source HTML wins (mammoth preserves tables/bilingual columns exactly).
-  // Source MD is the second-best (Phase 3.3 initial pass). Claude's
-  // `doc.sections` summary is the legacy fallback for runs persisted
-  // before either source-side was stored.
-  if (sourceHtml) {
-    return (
-      <div className="cmp-paper cmp-paper-contract cmp-paper-mdsrc">
-        <SourceHtmlDoc
-          html={sourceHtml}
-          rows={rows}
-          side="contract"
-          active={active}
-          onPick={onPick}
-          refs={refs}
-        />
-      </div>
-    );
-  }
-  if (sourceMd) {
-    return (
-      <div className="cmp-paper cmp-paper-contract cmp-paper-mdsrc">
-        <SourceMarkdown markdown={sourceMd} />
-      </div>
-    );
-  }
-  return (
-    <div className="cmp-paper cmp-paper-contract">
-      <div className="cmp-paper-head">
-        <div className="cmp-bi">
-          <div className="cmp-paper-title">{doc.title}</div>
-          <div className="cmp-paper-title">{doc.titleUa}</div>
-        </div>
-        {(doc.place || doc.placeUa) ? (
-          <div className="cmp-bi cmp-paper-place">
-            <div>{doc.place}</div>
-            <div>{doc.placeUa}</div>
-          </div>
-        ) : null}
-      </div>
-      {(doc.sections || []).map((s, i) => (
-        <div className="cmp-clause" key={i}>
-          <div className="cmp-bi cmp-clause-h">
-            <div>{s.n}. {s.en}</div>
-            <div>{s.n}. {s.ua}</div>
-          </div>
-          <div className="cmp-bi cmp-clause-b">
-            <p>{(s.enP || []).map((para, k) => (
-              <span key={k}>{renderParts(Array.isArray(para) ? para : [para], { active, onPick, refs })}</span>
-            ))}</p>
-            <p>{(s.uaP || []).map((para, k) => (
-              <span key={k}>{renderParts(Array.isArray(para) ? para : [para], { active, onPick, refs })}</span>
-            ))}</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ---------- Handover paper (Лист погодження / Table 3 form) ---------- */
-function HandoverPaper({ doc, active, onPick, refs, sourceMd, sourceHtml, rows }) {
-  if (sourceHtml) {
-    return (
-      <div className="cmp-paper cmp-paper-form cmp-paper-mdsrc">
-        <SourceHtmlDoc
-          html={sourceHtml}
-          rows={rows}
-          side="handover"
-          active={active}
-          onPick={onPick}
-          refs={refs}
-        />
-      </div>
-    );
-  }
-  if (sourceMd) {
-    return (
-      <div className="cmp-paper cmp-paper-form cmp-paper-mdsrc">
-        <SourceMarkdown markdown={sourceMd} />
-      </div>
-    );
-  }
-  return (
-    <div className="cmp-paper cmp-paper-form">
-      {doc.appendix ? <div className="cmp-form-appendix">{doc.appendix}</div> : null}
-      {doc.title ? <div className="cmp-form-title">{doc.title}</div> : null}
-      {doc.sub ? <div className="cmp-form-sub">{doc.sub}</div> : null}
-      {doc.section ? <div className="cmp-form-section">{doc.section}</div> : null}
-      <table className="cmp-form-table">
-        <thead>
-          <tr><th className="cmp-form-no">№</th><th>Поле</th><th>Значення</th></tr>
-        </thead>
-        <tbody>
-          {(doc.rows || []).map((r, i) => (
-            <tr key={i}>
-              <td className="cmp-form-no">{r.star ? <span className="cmp-form-star">*</span> : null}{r.n}</td>
-              <td className="cmp-form-label">{r.label}</td>
-              <td className="cmp-form-val">{renderParts(r.v, { active, onPick, refs, forceOk: true })}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {doc.footnote ? <div className="cmp-form-foot">{doc.footnote}</div> : null}
-    </div>
-  );
-}
-
-/* ---------- Result screen ---------- */
+/* ---------- Result step (Phase 4.x PR4) — unified analysis screen ----------
+   The old source-HTML + source-MD + cmark renderers are gone: AnalysisView
+   now renders the pixel-perfect PDF on the left and AiPanel (imported from
+   ContractAnalysis) on the right. reconcileToAnalysisProps adapts the
+   reconcile run shape into what AiPanel expects. */
 function ResultStep({ t, run, onBack, onRestart }) {
-  const docs = run.docs || { contract: {}, handover: { rows: [] } };
-  const rows = run.rows || [];
-  const findings = run.findings || [];
   const pair = run.pair || {};
+  const adapted = useMemo(() => reconcileToAnalysisProps(run, t), [run, t]);
 
-  const [view, setView] = useState('docs');
-  const [which, setWhich] = useState('contract');
   const [active, setActive] = useState(null);
-  const [filter, setFilter] = useState('all');
-  const [reconciled, setReconciled] = useState(new Set());
-  const docRefs = useRef({});
-  const rowRefs = useRef({});
+  const [hovered, setHovered] = useState(null);
+  const [tab, setTab] = useState('risks');
+  const [applied, setApplied] = useState({});
+
+  const data = useMemo(() => ({
+    findings: adapted.findings,
+    comparison: adapted.comparison,
+    legalBasis: adapted.legalBasis,
+    score: adapted.score,
+    warnings: adapted.warnings,
+    // Demo-only fields AiPanel still reads — pass empty equivalents so the
+    // panel doesn't crash on a tab the reconcile flow doesn't surface.
+    missing: [],
+    keyData: [],
+    summary: '',
+    tokenStats: null,
+  }), [adapted]);
 
   const counts = useMemo(() => {
     const c = { must: 0, should: 0, nice: 0, flag: 0, mismatches: 0 };
-    findings.forEach(f => { if (c[f.severity] != null) c[f.severity] += 1; });
-    rows.forEach(r => { if (r.status === 'mismatch') c.mismatches += 1; });
+    (run.findings || []).forEach((f) => { if (c[f.severity] != null) c[f.severity] += 1; });
+    (run.rows || []).forEach((r) => { if (r.status === 'mismatch') c.mismatches += 1; });
     return c;
-  }, [findings, rows]);
+  }, [run]);
 
   const verdict = counts.must > 0 || counts.mismatches > 0
     ? 'crit'
@@ -586,57 +234,17 @@ function ResultStep({ t, run, onBack, onRestart }) {
     ok:   ['cmpOverallOk',   'var(--risk-low)'],
   }[verdict];
 
-  const counters = [
-    { k: 'must',   n: counts.must },
-    { k: 'should', n: counts.should },
-    { k: 'nice',   n: counts.nice },
-    { k: 'flag',   n: counts.flag },
-  ];
-  const shownFindings = filter === 'all' ? findings : findings.filter(f => f.severity === filter);
-  const legend = [['ok', t.cmpLegendOk], ['mismatch', t.cmpLegendDiff], ['flag', t.cmpLegendFlag]];
-
-  useEffect(() => {
-    if (!active) return;
-    const tm = setTimeout(() => {
-      const target = view === 'docs' ? docRefs.current[active] : rowRefs.current[active];
-      if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 60);
-    return () => clearTimeout(tm);
-  }, [active, view, which]);
-
-  const focusFinding = (cat) => {
-    if (active === cat) { setActive(null); return; }
-    setActive(cat);
-    if (view === 'docs') {
-      const inContract = (docs.contract.sections || []).some(s =>
-        [...(s.enP || []), ...(s.uaP || [])].some(para => {
-          const arr = Array.isArray(para) ? para : [para];
-          return arr.some(p => p && typeof p === 'object' && p.cat === cat);
-        })
-      );
-      const inHandover = (docs.handover.rows || []).some(r =>
-        (r.v || []).some(p => p && typeof p === 'object' && p.cat === cat)
-      );
-      if (!inContract && inHandover) setWhich('handover');
-      else if (inContract && !inHandover) setWhich('contract');
-    }
-  };
-
-  const toggleRec = (id) => setReconciled(s => {
-    const n = new Set(s);
-    if (n.has(id)) n.delete(id); else { n.add(id); toast(t.cmpReconciled, 'check'); }
-    return n;
-  });
-
   async function addEditsToTasks() {
-    const fixable = findings.filter(f => f.severity === 'must' || f.severity === 'should');
+    const fixable = (run.findings || []).filter(
+      (f) => f.severity === 'must' || f.severity === 'should',
+    );
     if (fixable.length === 0) { toast(t.cmpTasksAdded, 'calendar'); return; }
     const due = new Date(Date.now() + 7 * 86400 * 1000).toISOString().slice(0, 10);
     let created = 0;
     for (const f of fixable) {
       try {
         await api.tasks.create({
-          title: 'Правка: ' + f.issue.slice(0, 80),
+          title: 'Правка: ' + (f.issue || '').slice(0, 80),
           matter: pair.counterparty || pair.product,
           assignee: '',
           due,
@@ -654,23 +262,20 @@ function ResultStep({ t, run, onBack, onRestart }) {
     lines.push(`# ${t.reconcileTitle} · ${pair.product || ''}`);
     lines.push(`${pair.counterparty || ''} · ${pair.contractNo || ''} · ${pair.date || ''}`);
     lines.push('');
-    rows.forEach(r => {
+    (run.rows || []).forEach((r) => {
       lines.push(`- [${r.status.toUpperCase()}] ${r.name}: ${t.cmpT3} = ${r.t3 || '—'} | ${t.cmpContract} = ${r.contract || '—'}`);
       if (r.reason) lines.push(`  ${t.cmpWhy}: ${r.reason}`);
       if (r.rec) lines.push(`  ${t.cmpRec}: ${r.rec}`);
     });
     lines.push('');
     lines.push('## ' + t.cmpFindings);
-    findings.forEach((f, i) => {
-      lines.push(`${i + 1}. [${t[SEV[f.severity].key]}] ${f.location}: ${f.issue}`);
+    (run.findings || []).forEach((f, i) => {
+      lines.push(`${i + 1}. [${(f.severity || '').toUpperCase()}] ${f.location || ''}: ${f.issue || ''}`);
       if (f.rec) lines.push(`   → ${f.rec}`);
     });
     try { navigator.clipboard.writeText(lines.join('\n')); } catch (_e) {}
     toast(t.cmpExported, 'doc');
   }
-
-  const contractFileLabel = run.contractFile || pair.contractFile || 'contract.docx';
-  const handoverFileLabel = run.handoverFile || pair.handoverFile || 'handover.xlsx';
 
   return (
     <div className="analysis">
@@ -685,10 +290,6 @@ function ResultStep({ t, run, onBack, onRestart }) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-          <div className="seg seg-sm">
-            <button className={view === 'docs' ? 'on' : ''} onClick={() => setView('docs')}><Icon name="doc" size={13} /> {t.cmpViewDocs}</button>
-            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}><Icon name="dashboard" size={13} /> {t.cmpViewTable}</button>
-          </div>
           <span className="cmp-overall" style={{ color: overallMeta[1], background: `color-mix(in oklab, ${overallMeta[1]} 13%, transparent)` }}>
             <Icon name={verdict === 'ok' ? 'checkCircle' : 'alert'} size={14} /> {t[overallMeta[0]]}
           </span>
@@ -697,137 +298,28 @@ function ResultStep({ t, run, onBack, onRestart }) {
           <button className="btn btn-primary btn-sm" onClick={onRestart}><Icon name="refresh" size={15} /> {t.cmpRun}</button>
         </div>
       </div>
-
-      <div className="analysis-body">
-        <div className="doc-scroll cmp-scroll">
-          <div className="view-enter">
-            {view === 'docs' ? (
-              <>
-                <div className="cmp-doctabs">
-                  <button className={'cmp-doctab' + (which === 'contract' ? ' on' : '')} onClick={() => setWhich('contract')}>
-                    <Icon name="doc" size={15} /> <span>{contractFileLabel}</span>
-                  </button>
-                  <button className={'cmp-doctab' + (which === 'handover' ? ' on' : '')} onClick={() => setWhich('handover')}>
-                    <Icon name="folder" size={15} /> <span>{handoverFileLabel}</span>
-                  </button>
-                  <div className="cmp-legend">
-                    {legend.map(([s, lbl]) => (
-                      <span key={s} className="cmp-leg-item"><span className={'cmp-leg-dot cdoc-' + s} />{lbl}</span>
-                    ))}
-                  </div>
-                </div>
-
-                {which === 'contract'
-                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs}
-                      sourceMd={run.contractMarkdown} sourceHtml={run.contractHtml} rows={rows} />
-                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs}
-                      sourceMd={run.handoverMarkdown} sourceHtml={run.handoverHtml} rows={rows} />}
-
-                <div className="cmp-src-note"><Icon name="sparkle" size={12} fill={true} /> {t.cmpSrcNote}</div>
-              </>
-            ) : (
-              <>
-                <div className="cmp-table-h">
-                  <span>{t.cmpCategory}</span>
-                  <span>{t.cmpT3}</span>
-                  <span>{t.cmpContract}</span>
-                </div>
-                <div className="cmp-rows">
-                  {rows.map(row => {
-                    const m = CMP_STATUS[row.status] || CMP_STATUS.absent;
-                    const isDiff = row.status === 'mismatch' || row.status === 'flag';
-                    return (
-                      <div key={row.key}
-                        ref={el => { if (el) rowRefs.current[row.key] = el; }}
-                        className={'cmp-row cmp-row-' + row.status + (active === row.key ? ' active' : '')}
-                        onClick={() => isDiff && setActive(active === row.key ? null : row.key)}>
-                        <div className="cmp-row-cat">
-                          <span className="cmp-row-name">{row.name}</span>
-                          <span className="cmp-row-loc">{row.location}</span>
-                        </div>
-                        <div className="cmp-row-val cmp-row-t3">{row.t3 || '—'}</div>
-                        <div className="cmp-row-val cmp-row-c">{row.contract || '—'}</div>
-                        <span className="cmp-badge" style={{ color: m.col, background: m.bg }}>
-                          <Icon name={m.ic} size={12} /> {t[m.key]}
-                        </span>
-                        {isDiff && active === row.key ? (
-                          <div className="cmp-row-detail">
-                            {row.reason ? (
-                              <div className="cmp-detail-why">
-                                <span className="cmp-detail-l">{t.cmpWhy}</span>{row.reason}
-                              </div>
-                            ) : null}
-                            {row.rec ? (
-                              <div className="cmp-detail-rec">
-                                <Icon name="sparkle" size={13} fill={true} />
-                                <span><span className="cmp-detail-l">{t.cmpRec}</span>{row.rec}</span>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="panel-wrap">
-          <div className="cmp-panel">
-            <div className="cmp-counters">
-              {counters.map(c => {
-                const s = SEV[c.k];
-                return (
-                  <button key={c.k}
-                    className={'cmp-counter' + (filter === c.k ? ' on' : '')}
-                    onClick={() => setFilter(filter === c.k ? 'all' : c.k)}
-                    style={filter === c.k ? { borderColor: s.col } : null}>
-                    <span className="cmp-counter-n" style={{ color: s.col }}>{c.n}</span>
-                    <span className="cmp-counter-l">{t[s.key]}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="cmp-find-list">
-              {shownFindings.length === 0 ? (
-                <div className="cmp-empty">{t.cmpEmpty}</div>
-              ) : shownFindings.map(f => {
-                const s = SEV[f.severity];
-                const isRec = reconciled.has(f.id);
-                const isActive = active === f.cat;
-                return (
-                  <div key={f.id}
-                    className={'cmp-find' + (isRec ? ' done' : '') + (isActive ? ' active' : '')}
-                    style={{ borderLeftColor: s.col }}
-                    onClick={() => focusFinding(f.cat)}>
-                    <div className="cmp-find-top">
-                      <span className="cmp-sev" style={{ color: s.col, background: s.bg }}>{t[s.key]}</span>
-                      <span className="cmp-find-loc">{f.location}</span>
-                      <span className={'cmp-vtag ' + (f.verified === 'VERIFIED' ? 'v' : 'f')}>
-                        {f.verified === 'VERIFIED' ? t.cmpVerified : t.cmpNeedsCheck}
-                      </span>
-                    </div>
-                    <div className="cmp-find-issue">{f.issue}</div>
-                    {f.rec ? (
-                      <div className="cmp-find-rec"><Icon name="sparkle" size={12} fill={true} /> {f.rec}</div>
-                    ) : null}
-                    <div className="cmp-find-foot">
-                      <span className="cmp-find-jump"><Icon name="scan" size={12} /> {f.source}</span>
-                      <button className={'cmp-find-rec-btn' + (isRec ? ' on' : '')}
-                              onClick={(e) => { e.stopPropagation(); toggleRec(f.id); }}>
-                        <Icon name={isRec ? 'check' : 'plus'} size={12} /> {isRec ? t.cmpReconciled : t.cmpReconcile}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
+      <AnalysisView
+        documents={adapted.documents}
+        findings={adapted.findings}
+        active={active}
+        setActive={setActive}
+        hovered={hovered}
+        setHovered={setHovered}
+        t={t}
+        panel={
+          <AiPanel t={t} tab={tab} setTab={setTab}
+            active={active} setActive={setActive}
+            hovered={hovered} setHovered={setHovered}
+            applied={applied}
+            onApply={(id) => setApplied((a) => ({ ...a, [id]: true }))}
+            onApplyAll={() => {}}
+            scrollToSeg={() => {}}
+            chatInject={null}
+            addedSet={new Set()}
+            onAddClause={() => {}}
+            data={data} isDemo={false} />
+        }
+      />
     </div>
   );
 }
