@@ -326,19 +326,38 @@ function ResultStep({ t, run, onBack, onRestart }) {
 
 /* ---------- Main screen ---------- */
 function Reconcile({ t, setRoute, incomingRun }) {
-  // If the launcher modal already POSTed the pair to /api/reconcile and
-  // handed us the finished run via prop, jump straight to the result. We also
-  // persist it to history on mount so the Library reflects it without a
-  // round-trip.
-  const [phase, setPhase] = useState(incomingRun ? 'result' : 'upload');
-  const [run, setRun] = useState(incomingRun || null);
+  // Three entry paths feed the screen:
+  //   - launcher modal jumps in with `{ pending: true }` so we paint the
+  //     AnalyzingStep immediately after the click, then swaps in the real
+  //     run once /api/reconcile resolves (prop update → useEffect below);
+  //   - launcher modal hands us the finished run → straight to result;
+  //   - no incomingRun → user lands on UploadStep manually.
+  const initialPhase = !incomingRun
+    ? 'upload'
+    : incomingRun.pending ? 'analyzing' : 'result';
+  const [phase, setPhase] = useState(initialPhase);
+  const [run, setRun] = useState(incomingRun && !incomingRun.pending ? incomingRun : null);
   const [warned, setWarned] = useState(false);
   useEffect(() => {
-    if (incomingRun) {
+    if (incomingRun && !incomingRun.pending) {
       try { saveHistory(incomingRun); } catch (_e) {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // React to incomingRun shifting from { pending: true } to the real run —
+  // App.jsx sets the pending marker before the network round-trip, then
+  // replaces it with the response once /api/reconcile resolves.
+  useEffect(() => {
+    if (!incomingRun) return;
+    if (incomingRun.pending) {
+      setPhase('analyzing');
+      return;
+    }
+    setRun(incomingRun);
+    setPhase('result');
+    try { saveHistory(incomingRun); } catch (_e) {}
+  }, [incomingRun]);
 
   // Open a persisted run handed off from Library / Dashboard.
   useEffect(() => {

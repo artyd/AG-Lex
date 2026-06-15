@@ -282,12 +282,19 @@ def to_display_pdf(
         )
 
     outdir = _tempfile.mkdtemp(prefix="aglex_pdf_")
+    # Per-call UserInstallation isolates the LibreOffice profile so two
+    # concurrent conversions don't trip over each other's session locks.
+    # Without this, parallel /api/reconcile uploads occasionally fail with
+    # "another instance is already running" on the host.
+    user_install = _tempfile.mkdtemp(prefix="aglex_lo_user_")
     try:
         cmd = [
             soffice_resolved,
             "--headless",
             "--nologo",
             "--nofirststartwizard",
+            "--nolockcheck",
+            f"-env:UserInstallation=file://{user_install}",
             "--convert-to", "pdf",
             "--outdir", outdir,
             str(src),
@@ -307,12 +314,14 @@ def to_display_pdf(
             ) from e
         elapsed = _time.perf_counter() - t0
 
+        # Always echo what soffice said — even on success — so the systemd
+        # journal carries enough context when a deployment regresses.
+        stdout_tail = (proc.stdout or b"")[-512:].decode("utf-8", errors="replace")
+        stderr_tail = (proc.stderr or b"")[-512:].decode("utf-8", errors="replace")
         if proc.returncode != 0:
-            # stderr tail in log only — NOT in any user-facing message.
-            stderr_tail = (proc.stderr or b"")[-1024:].decode("utf-8", errors="replace")
             print(
                 f"[to_display_pdf] soffice exit {proc.returncode} for {src.name} "
-                f"after {elapsed:.2f}s — stderr: {stderr_tail!r}",
+                f"after {elapsed:.2f}s\n  cmd: {cmd!r}\n  stdout: {stdout_tail!r}\n  stderr: {stderr_tail!r}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -323,12 +332,34 @@ def to_display_pdf(
 
         produced = Path(outdir) / (src.stem + ".pdf")
         if not produced.is_file():
+            # soffice sometimes renames the output when the stem contains
+            # a non-ASCII char — fall back to "whatever .pdf we got".
+            pdfs = list(Path(outdir).glob("*.pdf"))
+            if pdfs:
+                produced = pdfs[0]
+        if not produced.is_file():
+            print(
+                f"[to_display_pdf] soffice produced no PDF for {src.name}\n"
+                f"  outdir contents: {list(Path(outdir).iterdir())!r}\n"
+                f"  stdout: {stdout_tail!r}\n  stderr: {stderr_tail!r}",
+                file=sys.stderr,
+                flush=True,
+            )
             raise DisplayPdfError(
                 "empty",
                 f"soffice produced no output PDF for {src.name}",
             )
         data = produced.read_bytes()
-        if len(data) < 256 or not data.startswith(b"%PDF-"):
+        # 100 bytes is a generous "must at least look like a PDF" floor —
+        # a single-cell xlsx render can be remarkably small. 256 was rejecting
+        # legitimate handover files.
+        if len(data) < 100 or not data.startswith(b"%PDF-"):
+            print(
+                f"[to_display_pdf] soffice output for {src.name} looks invalid "
+                f"({len(data)} bytes, head: {data[:32]!r})",
+                file=sys.stderr,
+                flush=True,
+            )
             raise DisplayPdfError(
                 "empty",
                 f"soffice output for {src.name} is not a valid PDF ({len(data)} bytes)",
@@ -348,6 +379,7 @@ def to_display_pdf(
         return data
     finally:
         _shutil.rmtree(outdir, ignore_errors=True)
+        _shutil.rmtree(user_install, ignore_errors=True)
 
 
 def detect_type_and_convert(path: str | Path) -> str:

@@ -1111,11 +1111,14 @@ function ContractAnalysis({ t, incoming }) {
   }
 
   // Demo polish: 2.35s fake overlay only when there's no real incoming doc.
-  // With incoming.markdown the analyze() effect above drives phase → 'ready'
-  // once the real API call resolves (or errors out).
+  // When `incoming` exists (real upload or library re-open) the analyze()
+  // effect above drives phase → 'ready' once the API call resolves. While
+  // `incoming.pending` is true (modal just closed, upload still in flight)
+  // we stay on the overlay — that's the whole point of jumping into the
+  // analyze route immediately on click.
   useEffect(() => {
     if (phase !== 'loading') return;
-    if (incoming && incoming.markdown) return;
+    if (incoming) return;
     const tm = setTimeout(() => setPhase('ready'), 2350);
     return () => clearTimeout(tm);
   }, [phase, incoming]);

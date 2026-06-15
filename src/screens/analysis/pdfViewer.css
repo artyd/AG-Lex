@@ -130,6 +130,43 @@
 }
 .analysis-doc-pane { position: relative; }
 
+/* Floating zoom toolbar — bottom-right of the PdfViewer pane. */
+.pdf-zoom-bar {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
+}
+.pdf-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.pdf-zoom-btn:hover { background: var(--bg-2); color: var(--text); }
+.pdf-zoom-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.pdf-zoom-reset { min-width: 56px; color: var(--text); }
+
 .pdf-no-text-badge {
   position: absolute;
   top: 14px;

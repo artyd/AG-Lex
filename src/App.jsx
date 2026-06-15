@@ -200,26 +200,35 @@ export default function App() {
       toast(L.uploadDone, 'sparkle');
       return;
     }
+    // Close the modal and jump to the analyze route IMMEDIATELY so the
+    // AnalyzingOverlay paints right after the click — soffice + Claude take
+    // 5–15 s and the user shouldn't stare at a frozen modal. The pending
+    // marker keeps ContractAnalysis on the overlay until real data arrives.
+    const file = contractFile;
+    const filename = file.name;
+    setContractUploadOpen(false);
+    setUploadOpen(false);
+    setContractFile(null);
+    setAnalysisIncoming({ pending: true, filename });
+    setAnalyzeNonce(n => n + 1);
+    setRoute('analyze');
     try {
       setContractUploading(true);
-      const res = await api.upload(contractFile);
+      const res = await api.upload(file);
       setAnalysisIncoming({
         markdown: res.markdown,
         sections: res.sections,
-        filename: res.filename,
+        filename: res.filename || filename,
         tokenStats: res.token_stats,
         // Phase 4.x: base64 → kept as string for the back-half
         // (POST /api/contracts uses it as-is). PdfViewer decodes via atob.
         displayPdfB64: res.display_pdf_b64 || null,
       });
-      setContractUploadOpen(false);
-      setUploadOpen(false);
-      setContractFile(null);
-      setAnalyzeNonce(n => n + 1);
-      setRoute('analyze');
       toast(L.uploadDone, 'sparkle');
     } catch (err) {
       toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      setAnalysisIncoming(null);
+      setRoute('dashboard');
     } finally {
       setContractUploading(false);
     }
@@ -257,21 +266,28 @@ export default function App() {
   // direct-navigation case (Library row click, etc.).
   const submitPairUpload = async () => {
     if (!pairContractFile || !pairHandoverFile || pairUploading) return;
+    // Same as startUpload — close the modal first and show the analyzing
+    // animation while we wait on the network. Reconcile reads `pending`
+    // on the incoming prop and stays on AnalyzingStep until the real run
+    // shows up.
+    const fd = new FormData();
+    fd.append('contract_file', pairContractFile);
+    fd.append('handover_file', pairHandoverFile);
+    setPairUploadOpen(false);
+    setPairContractFile(null);
+    setPairHandoverFile(null);
+    setReconcileIncoming({ pending: true });
+    setAnalyzeNonce(n => n + 1);
+    setRoute('reconcile');
     try {
       setPairUploading(true);
-      const fd = new FormData();
-      fd.append('contract_file', pairContractFile);
-      fd.append('handover_file', pairHandoverFile);
       const run = await api.reconcile(fd);
       setReconcileIncoming(run);
-      setPairUploadOpen(false);
-      setPairContractFile(null);
-      setPairHandoverFile(null);
-      setAnalyzeNonce(n => n + 1);
-      setRoute('reconcile');
       toast(L.uploadDone, 'sparkle');
     } catch (err) {
       toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      setReconcileIncoming(null);
+      setRoute('dashboard');
     } finally {
       setPairUploading(false);
     }
