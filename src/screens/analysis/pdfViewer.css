@@ -74,6 +74,62 @@
 .pdf-viewer-loading { background: var(--bg-2); }
 .pdf-viewer-error { color: var(--risk-high); }
 
+/* Multi-document tab strip (Phase 4.x PR4) — only renders when
+   AnalysisView has > 1 document (reconcile = contract + handover). */
+.analysis-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px 0;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+.analysis-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.analysis-tab:hover { color: var(--text-2); }
+.analysis-tab.on {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* "Preview unavailable" fallback (Phase 4.x PR4) — shown when the
+   display-PDF endpoint returns 404 or never resolved. */
+.analysis-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 32px;
+  color: var(--text-3);
+  background: var(--bg-2);
+}
+.analysis-fallback .icon { color: var(--text-3); }
+.analysis-fallback-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 12px;
+}
+.analysis-fallback-sub {
+  font-size: 13.5px;
+  line-height: 1.55;
+  max-width: 360px;
+  margin-top: 8px;
+}
+.analysis-doc-pane { position: relative; }
+
 .pdf-no-text-badge {
   position: absolute;
   top: 14px;
