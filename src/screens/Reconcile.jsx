@@ -548,13 +548,24 @@ function ResultStep({ t, run, onBack, onRestart }) {
 }
 
 /* ---------- Main screen ---------- */
-function Reconcile({ t, setRoute }) {
-  const [phase, setPhase] = useState('upload');
-  const [run, setRun] = useState(null);
+function Reconcile({ t, setRoute, incomingRun }) {
+  // If the launcher modal already POSTed the pair to /api/reconcile and
+  // handed us the finished run via prop, jump straight to the result. We also
+  // persist it to history on mount so the Library reflects it without a
+  // round-trip.
+  const [phase, setPhase] = useState(incomingRun ? 'result' : 'upload');
+  const [run, setRun] = useState(incomingRun || null);
   const [warned, setWarned] = useState(false);
+  useEffect(() => {
+    if (incomingRun) {
+      try { saveHistory(incomingRun); } catch (_e) {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Open a persisted run handed off from Library / Dashboard.
   useEffect(() => {
+    if (incomingRun) return; // launcher path takes precedence
     const openId = popOpenRunId();
     if (!openId) return;
     let cancelled = false;
@@ -568,6 +579,7 @@ function Reconcile({ t, setRoute }) {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function doReconcile({ contractFile, handoverFile, demo }) {
