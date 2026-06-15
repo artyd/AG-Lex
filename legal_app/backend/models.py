@@ -201,6 +201,25 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliations_created ON reconciliations(created_at);
 
+-- Phase 3.2: single-contract analyses. One row per `/api/analyze/contract`
+-- result the frontend chooses to persist. Mirrors reconciliations' shape:
+-- the heavy analyzer output lives in JSON columns; small derived fields
+-- (risk, score, findings_count) get their own columns for cheap list views.
+CREATE TABLE IF NOT EXISTS contracts (
+    id             TEXT PRIMARY KEY,
+    user_id        INTEGER REFERENCES users(id),
+    filename       TEXT,
+    title          TEXT,
+    counterparty   TEXT,
+    risk           TEXT,           -- high | med | low
+    score          INTEGER NOT NULL DEFAULT 0,
+    findings_count INTEGER NOT NULL DEFAULT 0,
+    analysis_json  TEXT,           -- findings/comparison/legal_basis/score/warnings
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contracts_user ON contracts(user_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_created ON contracts(created_at);
+
 -- Phase 2.4: realtime collaboration. Six new tables turn `matters` into a
 -- shared workspace with row-level access (case_members), richer child data
 -- (case_hearings, case_parties, case_notes), an append-only edit trail

@@ -378,6 +378,28 @@ RECONCILIATIONS = Entity(
     id_prefix="rec-",
 )
 
+# Phase 3.2: persisted single-contract analyses. The heavy `analysis` payload
+# (findings/comparison/legal_basis/score/warnings — exactly what
+# /api/analyze/contract returns) rides in a JSON column; the small derived
+# fields are kept top-level so list views don't have to JSON-parse 13 rows
+# just to render a table.
+CONTRACTS = Entity(
+    table="contracts",
+    columns=(
+        "user_id", "filename", "title", "counterparty",
+        "risk", "score", "findings_count",
+        "analysis_json", "created_at",
+    ),
+    json_columns=frozenset({"analysis_json"}),
+    column_aliases={
+        "userId": "user_id",
+        "findingsCount": "findings_count",
+        "analysis": "analysis_json",
+        "createdAt": "created_at",
+    },
+    id_prefix="c-",
+)
+
 # Fix 1: drafts moved to a dedicated router (backend/drafts.py) because they
 # need per-row authorization (author vs team-shared). The generic CRUD here
 # has no row-level auth knobs; rather than complicate it for every other
@@ -387,5 +409,5 @@ RECONCILIATIONS = Entity(
 ALL_ENTITIES: tuple[Entity, ...] = (
     MATTERS, TASKS, CLIENTS, TEMPLATES, INVOICES, TIME_ENTRIES,
     CLAUSE_LIB, LAWS, COMMENTS, APPROVAL, DEADLINES, OBLIGATIONS, VERSIONS,
-    RECONCILIATIONS,
+    RECONCILIATIONS, CONTRACTS,
 )
