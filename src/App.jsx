@@ -208,6 +208,9 @@ export default function App() {
         sections: res.sections,
         filename: res.filename,
         tokenStats: res.token_stats,
+        // Phase 4.x: base64 → kept as string for the back-half
+        // (POST /api/contracts uses it as-is). PdfViewer decodes via atob.
+        displayPdfB64: res.display_pdf_b64 || null,
       });
       setContractUploadOpen(false);
       setUploadOpen(false);

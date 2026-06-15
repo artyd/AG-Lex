@@ -23,6 +23,26 @@ def is_mock_ai() -> bool:
     return os.environ.get("AGLEX_MOCK_AI", "").strip() in {"1", "true", "yes"}
 
 
+# When mock mode is on the e2e suite uses this stub PDF instead of running
+# soffice — keeps CI hermetic and Windows-friendly. Generated once via
+# `e2e/fixtures/generate.py` and checked in. Returns None if the fixture
+# isn't available so prod code paths never depend on this.
+def mock_display_pdf_bytes() -> bytes | None:
+    if not is_mock_ai():
+        return None
+    from pathlib import Path
+    candidate = (
+        Path(__file__).resolve().parent.parent.parent
+        / "e2e" / "fixtures" / "mock_display.pdf"
+    )
+    try:
+        if candidate.is_file():
+            return candidate.read_bytes()
+    except OSError:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # /api/analyze/contract
 # ---------------------------------------------------------------------------

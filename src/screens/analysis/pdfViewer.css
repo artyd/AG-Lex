@@ -1,0 +1,92 @@
+/* AG Lex PDF viewer (Phase 4.x PR2). Pixel-perfect PDF.js render with a
+   transparent highlight overlay. PR3 paints rects into .pdf-highlight-layer. */
+
+.pdf-viewer {
+  position: relative;
+  height: 100%;
+  overflow: auto;
+  background: var(--bg-2);
+  padding: clamp(16px, 3vw, 32px) 0;
+}
+
+.pdf-viewer-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.pdf-page-slot {
+  position: relative;
+  /* width/height set imperatively by PdfViewer.renderPage so canvas + overlay
+     line up exactly. The slot has its own pixels — we never restyle the
+     canvas itself except to position it. */
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(20,18,30,0.06), 0 8px 24px rgba(20,18,30,0.10);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.pdf-page-slot canvas[data-pdf-canvas] {
+  display: block;
+  /* width/height set in JS — the canvas pixels are DPR-scaled, CSS size is not. */
+}
+
+.pdf-highlight-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* parent gets click handlers; rects re-enable below */
+}
+
+/* Highlight rectangle painted over a finding's anchored text span.
+   `mix-blend-mode: multiply` keeps the document's text readable through
+   the color — the pixels of the doc never change, only the overlay tint. */
+.hl-rect {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: auto;
+  cursor: pointer;
+  mix-blend-mode: multiply;
+  transition: filter 0.12s, box-shadow 0.12s;
+}
+.hl-rect.hl-level-high { background: color-mix(in oklab, var(--risk-high) 38%, transparent); }
+.hl-rect.hl-level-med  { background: color-mix(in oklab, var(--risk-med)  32%, transparent); }
+.hl-rect.hl-level-low  { background: color-mix(in oklab, var(--risk-low)  30%, transparent); }
+.hl-rect.hl-level-info { background: color-mix(in oklab, var(--info)      32%, transparent); }
+.hl-rect.hl-hover {
+  filter: brightness(1.06);
+  box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 24%, transparent);
+}
+.hl-rect.hl-active {
+  outline: 2px solid color-mix(in oklab, var(--risk-high) 70%, transparent);
+  outline-offset: 1px;
+  filter: brightness(1.1);
+}
+
+.pdf-viewer-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 14px;
+}
+.pdf-viewer-loading { background: var(--bg-2); }
+.pdf-viewer-error { color: var(--risk-high); }
+
+.pdf-no-text-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--risk-med-soft);
+  color: var(--risk-med);
+  box-shadow: var(--shadow-sm);
+}

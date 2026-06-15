@@ -70,6 +70,38 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await expect(page.locator('.cmp-find').first()).toBeVisible({ timeout: 30_000 });
 });
 
+test('PdfViewer (?pdfview=1) renders a canvas from the uploaded display PDF', async ({ page }) => {
+  // Visit with the feature flag *before* login so it survives the SPA's
+  // localStorage-based routing. Mock-mode upload serves a stub PDF
+  // (e2e/fixtures/mock_display.pdf) so soffice never runs on CI.
+  await page.goto('/?pdfview=1');
+  await page.locator('.auth-tabs button').nth(1).click();
+  await page.locator('input[type="email"]').first().fill('test@aglex.ua');
+  const pwd = page.locator('input[type="password"]').first();
+  await pwd.fill('test1234');
+  await pwd.press('Enter');
+  await page.locator('.app').waitFor({ state: 'visible', timeout: 30_000 });
+  // Flag should still be in the URL after auth completes.
+  await expect(page).toHaveURL(/pdfview=1/);
+
+  await page.locator('.app .sidebar button.btn-primary').first().click();
+  const hubContract = page.locator('.hub-block').nth(0);
+  await hubContract.click();
+
+  const fileInput = page.locator('input[type="file"][accept*=".docx"]').first();
+  await fileInput.setInputFiles(FIXTURES.contract);
+  const analyzeBtn = page.locator('.modal .btn-primary').last();
+  await expect(analyzeBtn).toBeEnabled({ timeout: 10_000 });
+  await analyzeBtn.click();
+
+  // PdfViewer mounts on the analyze route — assert the canvas appears.
+  await expect(page.locator('.analysis')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.pdf-viewer')).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
+  ).toBeVisible({ timeout: 30_000 });
+});
+
 test('Library shows the persisted contract AND reconciliation as separate rows', async ({ page }) => {
   await login(page);
   // The Library nav item label is the only stable hook; the icon button
@@ -80,12 +112,15 @@ test('Library shows the persisted contract AND reconciliation as separate rows',
   await page.evaluate(() => { localStorage.setItem('lx_route', 'library'); });
   await page.reload();
 
-  // Library table: contract row has the doc icon, recon row has the scan icon.
-  const rows = page.locator('.lib-table tbody tr');
-  await expect(rows.first()).toBeVisible({ timeout: 15_000 });
-  // Real persistence is in play: both categories should appear.
-  await expect(page.locator('.lib-table tbody tr')).toHaveCount(2, { timeout: 15_000 });
+  // Library table renders after both useContractRows + useReconciliationRows
+  // populate state. Use waitForFunction so we poll the live DOM in one place.
+  await page.waitForFunction(
+    () => document.querySelectorAll('.lib-table tbody tr').length >= 2,
+    null,
+    { timeout: 20_000 },
+  );
   // Type chips: "Договір" and "Звірка з ПД" come from i18n; assert by chip text.
-  await expect(page.locator('.lib-table .chip', { hasText: /договір/i })).toBeVisible();
-  await expect(page.locator('.lib-table .chip', { hasText: /звірка/i })).toBeVisible();
+  // Multiple contracts can be saved across the serial run, so use .first().
+  await expect(page.locator('.lib-table .chip', { hasText: /договір/i }).first()).toBeVisible();
+  await expect(page.locator('.lib-table .chip', { hasText: /звірка/i }).first()).toBeVisible();
 });

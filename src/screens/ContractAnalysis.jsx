@@ -11,6 +11,27 @@ import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
 import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
+import { PdfViewer } from './analysis/PdfViewer';
+
+// Phase 4.x PR2: opt into the pixel-perfect PDF viewer behind ?pdfview=1
+// so QA can exercise it in isolation before PR4 unifies the screens.
+function isPdfViewEnabled() {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).has('pdfview');
+}
+
+// Decode the upload's base64 PDF to a Uint8Array PDF.js can consume directly.
+function decodePdfB64(b64) {
+  if (!b64 || typeof b64 !== 'string') return null;
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  } catch (_e) {
+    return null;
+  }
+}
 
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
@@ -902,6 +923,16 @@ function ContractAnalysis({ t, incoming }) {
   const [loadedDoc, setLoadedDoc] = useState(null);
   const effectiveDoc = incoming || loadedDoc;
 
+  // Phase 4.x PR2: behind ?pdfview=1, mount the pixel-perfect PdfViewer
+  // instead of the markdown-based ContractDocReal. PR4 lifts this into
+  // AnalysisView and the flag goes away. Only the fresh-upload path is
+  // wired here — the library-reopen path still uses ContractDocReal.
+  const pdfViewBytes = useMemo(() => {
+    if (!isPdfViewEnabled()) return null;
+    if (!incoming || !incoming.displayPdfB64) return null;
+    return decodePdfB64(incoming.displayPdfB64);
+  }, [incoming]);
+
   // Merged data source: real fields override DEMO when available. `missing` /
   // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
   // stay on DEMO until the backend learns them.
@@ -975,6 +1006,9 @@ function ContractAnalysis({ t, incoming }) {
               tokenStats: incoming.tokenStats || null,
               _doc: { filename: incoming.filename, sections: incoming.sections || [] },
             },
+            // Phase 4.x: round-trip the display PDF back to the backend so the
+            // BLOB lands on the persisted contract row.
+            displayPdfB64: incoming.displayPdfB64 || null,
             createdAt: new Date().toISOString(),
           });
         } catch (_e) { /* persistence is best-effort */ }
@@ -1203,7 +1237,9 @@ function ContractAnalysis({ t, incoming }) {
           {phase === 'loading'
             ? <AnalyzingOverlay t={t} />
             : <div className="view-enter">
-                {effectiveDoc && Array.isArray(effectiveDoc.sections) && effectiveDoc.sections.length > 0
+                {pdfViewBytes
+                  ? <PdfViewer data={pdfViewBytes} highlights={[]} />
+                  : effectiveDoc && Array.isArray(effectiveDoc.sections) && effectiveDoc.sections.length > 0
                   ? <ContractDocReal filename={effectiveDoc.filename} sections={effectiveDoc.sections}
                       findings={data.findings}
                       hl={{ segRefs, active, hovered, setHovered, onHover, onPick, onAsk }} />
