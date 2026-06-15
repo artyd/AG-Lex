@@ -567,6 +567,7 @@ async def reconcile_endpoint(
     # Phase 4.x: write the display PDFs with a direct UPDATE since the
     # BLOB columns are intentionally kept out of RECONCILIATIONS.columns
     # so the generic CRUD list/get never serializes binary garbage.
+    import sys as _sys
     if contract_pdf is not None or handover_pdf is not None:
         conn.execute(
             "UPDATE reconciliations "
@@ -575,6 +576,19 @@ async def reconcile_endpoint(
             (contract_pdf, handover_pdf, inserted["id"]),
         )
         conn.commit()
+        print(
+            f"[/api/reconcile] {inserted['id']}: BLOB saved — "
+            f"contract={len(contract_pdf) if contract_pdf else 0} bytes, "
+            f"handover={len(handover_pdf) if handover_pdf else 0} bytes",
+            file=_sys.stderr, flush=True,
+        )
+    else:
+        print(
+            f"[/api/reconcile] {inserted['id']}: NO display PDFs to save — "
+            f"both soffice conversions failed. "
+            f"Check `journalctl -u aglex | grep to_display_pdf` for the cause.",
+            file=_sys.stderr, flush=True,
+        )
     # Stable URLs the FE can fetch with `authHeaders()`. We return them
     # regardless of whether the BLOB landed — a 404 from the endpoint is
     # what the FE uses to swap to the "preview unavailable" banner.
