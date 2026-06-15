@@ -156,6 +156,7 @@ export const api = {
   obligations: entity('obligations'),
   versions: entity('versions'),
   reconciliations: entity('reconciliations'),
+  contracts: entity('contracts'),
   reconcile: (formData) => multipart('/api/reconcile', formData),
   upload,
   analyzeContract,

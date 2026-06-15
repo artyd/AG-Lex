@@ -10,6 +10,47 @@ import { api } from '../lib/api';
 import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from './Reconcile';
 import { WidgetGrid } from './WidgetGrid';
 
+/* ---------- Persisted contract analyses → library rows ----------
+   Phase 3.2: `/api/contracts` is the source of truth for single-contract
+   analyses saved by ContractAnalysis after a successful upload+analyze. */
+const CONTRACT_OPEN_KEY = 'lex.contract.open';
+
+function useContractRows(t) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let backend = [];
+      try { backend = await api.contracts.list(); } catch (_e) {}
+      const out = (backend || []).map(c => {
+        const created = c.createdAt ? new Date(c.createdAt) : null;
+        const dateStr = created && !isNaN(created.getTime())
+          ? created.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          : '—';
+        return {
+          id: c.id,
+          name: c.title || c.filename || (t.analyze || 'Договір'),
+          client: c.counterparty || '—',
+          type: t.contractType || 'Договір',
+          status: 'done',
+          risk: c.risk || 'low',
+          date: dateStr,
+          score: Math.round(c.score || 0),
+          isContract: true,
+        };
+      });
+      if (!cancelled) setRows(out);
+    })();
+    return () => { cancelled = true; };
+  }, [t.contractType, t.analyze]);
+  return rows;
+}
+
+function openContract(id, setRoute) {
+  try { localStorage.setItem(CONTRACT_OPEN_KEY, id); } catch (_e) {}
+  setRoute('analyze');
+}
+
 /* ---------- Reconciliations → library rows ----------
    Merges backend `/api/reconciliations` with the localStorage fallback
    (`lex.recon.history`). Backend wins on id-collision. Maps each run to the
@@ -78,12 +119,15 @@ function Dashboard({ t, setRoute, user }) {
 
 /* ---------- Library ---------- */
 function Library({ t, setRoute, query }) {
-  const D = DEMO;
+  const contractRows = useContractRows(t);
   const reconRows = useReconciliationRows(t);
   const [filter, setFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [typeOpen, setTypeOpen] = useState(false);
-  const allItems = [...reconRows, ...D.library];
+  // Real data only — saved contracts (POST /api/analyze/contract result)
+  // and reconciliations (POST /api/reconcile result). DEMO.library was a
+  // placeholder for the pre-persistence UI and is no longer mixed in.
+  const allItems = [...contractRows, ...reconRows];
   const types = ['all', ...Array.from(new Set(allItems.map(c => c.type)))];
   const filters = [
     { id: 'all', label: t.filterAll },
@@ -101,7 +145,7 @@ function Library({ t, setRoute, query }) {
   );
   const openRow = (c) => {
     if (c.isRecon) openReconciliation(c.id, setRoute);
-    else if (c.isHandover) setRoute('reconcile');
+    else if (c.isContract) openContract(c.id, setRoute);
     else setRoute('analyze');
   };
 

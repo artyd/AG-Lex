@@ -95,10 +95,11 @@ def seeded_auth_headers(seeded_client):
 # Seed sanity — every Phase 2.2 table gets non-empty rows.
 # ---------------------------------------------------------------------------
 
-# `drafts` (Phase 3.3) and `reconciliations` (handover feature) are intentionally
-# user-created at runtime, not seeded with demo data.
+# `drafts` (Phase 3.3), `reconciliations` (handover feature), and `contracts`
+# (Phase 3.2 single-contract analyses) are intentionally user-created at
+# runtime, not seeded with demo data.
 _SEEDED_ENTITIES = tuple(
-    e for e in ALL_ENTITIES if e.table not in {"drafts", "reconciliations"}
+    e for e in ALL_ENTITIES if e.table not in {"drafts", "reconciliations", "contracts"}
 )
 
 
@@ -134,9 +135,9 @@ def test_list_returns_json_array_with_auth(seeded_client, seeded_auth_headers, e
     assert r.status_code == 200, f"{path}: {r.text}"
     body = r.json()
     assert isinstance(body, list)
-    # drafts (Phase 3.3) and reconciliations (handover feature) start empty by
-    # design — user-created at runtime, not seeded with demo data.
-    if entity.table not in {"drafts", "reconciliations"}:
+    # drafts (Phase 3.3), reconciliations (handover) and contracts
+    # (Phase 3.2 analyses) start empty by design — user-created at runtime.
+    if entity.table not in {"drafts", "reconciliations", "contracts"}:
         assert body, f"{path} returned empty list despite seed"
 
 
@@ -194,3 +195,60 @@ def test_tasks_seed_has_expected_columns(seeded_client, seeded_auth_headers):
     assert sample["matter"] == "SEV-2026-04"
     assert sample["col"] == "progress"
     assert sample["priority"] == "high"
+
+
+# ---------------------------------------------------------------------------
+# contracts — Phase 3.2 single-contract analysis persistence.
+# ---------------------------------------------------------------------------
+
+def test_contracts_round_trip(client, auth_headers):
+    # Mirrors what ContractAnalysis posts after a successful /api/analyze/contract.
+    payload = {
+        "filename": "sample.docx",
+        "title": "sample.docx",
+        "counterparty": "ТОВ Тест",
+        "risk": "med",
+        "score": 64,
+        "findingsCount": 3,
+        "analysis": {
+            "findings": [
+                {"id": "f1", "level": "med", "clause": "п. 4.1", "title": "Penalty"},
+            ],
+            "comparison": [],
+            "legal_basis": [{"code": "ЦКУ", "ref": "ст. 549", "scope": "UA"}],
+            "score": {"value": 64, "label": "Помірний ризик", "risks": {"high": 0, "med": 1, "low": 0}},
+            "warnings": [],
+            "_doc": {"filename": "sample.docx", "sections": [{"number": "1", "title": "Предмет", "text": "..."}]},
+        },
+        "createdAt": "2026-06-15T09:00:00Z",
+    }
+    r = client.post("/api/contracts", json=payload, headers=auth_headers)
+    assert r.status_code == 201, r.text
+    created = r.json()
+    # camelCase ↔ snake_case alias on findingsCount + createdAt + analysis.
+    assert created["findingsCount"] == 3
+    assert created["createdAt"] == "2026-06-15T09:00:00Z"
+    assert isinstance(created["analysis"], dict)
+    assert created["analysis"]["legal_basis"][0]["code"] == "ЦКУ"
+    assert created["id"].startswith("c-")
+
+    # Listing returns at least the new row.
+    rl = client.get("/api/contracts", headers=auth_headers)
+    assert rl.status_code == 200
+    rows = rl.json()
+    assert any(c["id"] == created["id"] for c in rows)
+
+    # GET-by-id hydrates the same JSON-decoded analysis blob the FE expects.
+    rg = client.get(f"/api/contracts/{created['id']}", headers=auth_headers)
+    assert rg.status_code == 200
+    got = rg.json()
+    assert got["analysis"]["_doc"]["sections"][0]["number"] == "1"
+    assert got["risk"] == "med"
+    assert got["score"] == 64
+
+
+def test_contracts_requires_auth(client):
+    r = client.get("/api/contracts")
+    assert r.status_code == 401
+    r2 = client.post("/api/contracts", json={"filename": "x.docx"})
+    assert r2.status_code == 401

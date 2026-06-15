@@ -767,6 +767,25 @@ function AnalyzingOverlay({ t }) {
 
 /* ---------- Pending document handoff (Fix 2) ---------- */
 const PENDING_ANALYSIS_KEY = 'aglex_pending_analysis';
+// Phase 3.2: opening a persisted contract from Library → ContractAnalysis.
+// Mirrors RECON_OPEN_KEY on the reconciliation side.
+const CONTRACT_OPEN_KEY = 'lex.contract.open';
+
+function popContractOpenId() {
+  if (typeof localStorage === 'undefined') return null;
+  const id = localStorage.getItem(CONTRACT_OPEN_KEY);
+  if (!id) return null;
+  try { localStorage.removeItem(CONTRACT_OPEN_KEY); } catch (_e) {}
+  return id;
+}
+
+// Library convention: high score ⇒ low risk. Mirrors useReconciliationRows.
+function scoreToRisk(v) {
+  if (v == null) return 'low';
+  if (v >= 75) return 'low';
+  if (v >= 55) return 'med';
+  return 'high';
+}
 
 // Pop the pending document once. Returns null if nothing is queued or the
 // payload is malformed. Always clears the key so re-opening the screen is a
@@ -876,20 +895,27 @@ function ContractAnalysis({ t, incoming }) {
   // 'error'   — API failed, degraded to DEMO with badge
   const [analysisStatus, setAnalysisStatus] = useState(incoming ? 'loading' : 'demo');
 
+  // Library-handoff doc: when the user clicks a saved contract in Library,
+  // we hydrate the doc + analysis from /api/contracts/:id instead of running
+  // a fresh upload+analyze round-trip. `loadedDoc` is then used in place of
+  // `incoming` for rendering.
+  const [loadedDoc, setLoadedDoc] = useState(null);
+  const effectiveDoc = incoming || loadedDoc;
+
   // Merged data source: real fields override DEMO when available. `missing` /
   // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
-  // stay on DEMO until Task 5/future extends the backend.
+  // stay on DEMO until the backend learns them.
   const data = useMemo(() => ({
     findings: analysis?.findings ?? D.findings,
     comparison: analysis?.comparison ?? D.comparison,
     legalBasis: analysis?.legal_basis ?? D.legalBasis,
     score: analysis?.score ?? D.score,
     warnings: analysis?.warnings ?? [],
-    tokenStats: incoming?.tokenStats || null,
+    tokenStats: effectiveDoc?.tokenStats || null,
     missing: D.missing,
     keyData: D.keyData,
     summary: D.summary,
-  }), [analysis, D, incoming]);
+  }), [analysis, D, effectiveDoc]);
   const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
 
   const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
@@ -932,6 +958,26 @@ function ContractAnalysis({ t, incoming }) {
         setAnalysis(res);
         setAnalysisStatus('ready');
         setPhase('ready');
+        // Fire-and-forget persistence: failures don't disrupt the open
+        // session — the analysis is still visible. The saved row carries
+        // the original doc (filename + sections) inside `analysis._doc` so
+        // Library → reopen can render the contract without re-uploading.
+        try {
+          await api.contracts.create({
+            filename: incoming.filename,
+            title: incoming.filename,
+            counterparty: '',
+            risk: scoreToRisk(res?.score?.value),
+            score: Math.round(res?.score?.value || 0),
+            findingsCount: (res?.findings || []).length,
+            analysis: {
+              ...res,
+              tokenStats: incoming.tokenStats || null,
+              _doc: { filename: incoming.filename, sections: incoming.sections || [] },
+            },
+            createdAt: new Date().toISOString(),
+          });
+        } catch (_e) { /* persistence is best-effort */ }
       } catch (_e) {
         if (cancelled || !liveRef.current) return;
         // Backend down or 502 — surface as demo fallback so the screen stays
@@ -945,6 +991,38 @@ function ContractAnalysis({ t, incoming }) {
     return () => { cancelled = true; liveRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming]);
+
+  // Library-handoff: pop `lex.contract.open` and hydrate doc + analysis
+  // directly from /api/contracts/:id without re-running the analyzer.
+  useEffect(() => {
+    if (incoming) return; // upload path already handles its own analysis
+    const id = popContractOpenId();
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = await api.contracts.get(id);
+        if (cancelled) return;
+        const a = (c && c.analysis) || {};
+        setAnalysis({
+          findings: a.findings || [],
+          comparison: a.comparison || [],
+          legal_basis: a.legal_basis || [],
+          score: a.score || null,
+          warnings: a.warnings || [],
+        });
+        setLoadedDoc({
+          filename: c.filename || (a._doc && a._doc.filename) || 'Договір',
+          sections: (a._doc && a._doc.sections) || [],
+          tokenStats: a.tokenStats || null,
+        });
+        setAnalysisStatus('ready');
+        setPhase('ready');
+      } catch (_e) { /* fall through to demo */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Fix 2: state for the document handoff from DocBuilder ("Відкрити в аналізі").
   // `pendingDoc.markdown` is the freshly-generated contract; `pendingStatus`
   // tracks the auto-triggered /api/analyze/contract round-trip.
@@ -1125,8 +1203,8 @@ function ContractAnalysis({ t, incoming }) {
           {phase === 'loading'
             ? <AnalyzingOverlay t={t} />
             : <div className="view-enter">
-                {incoming && Array.isArray(incoming.sections) && incoming.sections.length > 0
-                  ? <ContractDocReal filename={incoming.filename} sections={incoming.sections}
+                {effectiveDoc && Array.isArray(effectiveDoc.sections) && effectiveDoc.sections.length > 0
+                  ? <ContractDocReal filename={effectiveDoc.filename} sections={effectiveDoc.sections}
                       findings={data.findings}
                       hl={{ segRefs, active, hovered, setHovered, onHover, onPick, onAsk }} />
                   : <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
