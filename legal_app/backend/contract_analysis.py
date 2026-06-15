@@ -348,6 +348,10 @@ def analyze_contract(
 ) -> dict:
     """Full Phase 3.1 analysis: Claude → score → legal_basis → citation check."""
     from .database import get_connection
+    from .mock_ai import is_mock_ai, mock_contract_analysis
+
+    if is_mock_ai():
+        return mock_contract_analysis()
 
     own_conn = conn is None
     db = conn or get_connection()

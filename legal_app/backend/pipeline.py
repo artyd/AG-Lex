@@ -120,6 +120,10 @@ def analyze(
         small — the full article texts live in the request to Claude, not the
         response to the lawyer.
     """
+    from .mock_ai import is_mock_ai, mock_analyze_answer
+    if is_mock_ai():
+        return mock_analyze_answer(question)
+
     query = _build_search_query(question, contract_section)
     hits = hybrid_search(query, source=sources, limit=limit, conn=conn, embedder=embedder)
 
