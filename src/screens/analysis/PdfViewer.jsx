@@ -143,12 +143,14 @@ export function PdfViewer({
       entry.cssViewport = page.getViewport({ scale: cssScale });
       entry.renderedAtZoom = zoom * dpr;
       entry.rendered = true;
-      // Notify the parent (PR3 uses this to build highlight rects).
+      // Notify the parent — AnalysisView feeds these into
+      // findingsToHighlights() to compute overlay rects. The viewport here
+      // is CSS-pixel-scaled (matches the highlight layer's coord space).
       if (onPagesReady) {
         onPagesReady([{
           pageNumber,
           viewport: entry.cssViewport,
-          textItems: entry.textItems,
+          textContent: { items: entry.textItems },
         }]);
       }
     } catch (err) {
