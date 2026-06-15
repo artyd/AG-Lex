@@ -187,11 +187,15 @@ function AnalyzingStep({ t }) {
   );
 }
 
-/* ---------- Render a parts array (string | {t, cat, st}) ---------- */
+/* ---------- Render a parts array ({t, cat, st} | legacy string) ----------
+   The backend schema now emits every fragment as {t, cat, st}; plain text
+   carries `cat === "plain"`. Strings are still accepted so persisted runs
+   (saved before the schema change) keep rendering. */
 function renderParts(parts, opts) {
   const { active, onPick, refs, forceOk } = opts;
   return (parts || []).map((seg, i) => {
     if (typeof seg === 'string') return <span key={i}>{seg}</span>;
+    if (!seg.cat || seg.cat === 'plain') return <span key={i}>{seg.t}</span>;
     const st = forceOk ? 'ok' : seg.st;
     const cls = 'cmark cmark-' + st + (active === seg.cat ? ' active' : '');
     const clickable = st === 'mismatch' || st === 'flag' || st === 'positive' || forceOk;
