@@ -307,18 +307,26 @@ async def upload_document(file: UploadFile = File(...)):
         # /api/contracts when persisting so the BLOB lands without another
         # upload. Best-effort: missing soffice doesn't block analysis.
         import base64 as _b64
-        try:
-            display_pdf_bytes = to_display_pdf(tmp_path)
+        from .mock_ai import mock_display_pdf_bytes as _mock_pdf
+        display_pdf_b64: str | None = None
+        display_pdf_bytes: bytes | None = None
+        mock_bytes = _mock_pdf()
+        if mock_bytes is not None:
+            display_pdf_bytes = mock_bytes
+        else:
+            try:
+                display_pdf_bytes = to_display_pdf(tmp_path)
+            except (DisplayPdfError, ValueError) as e:
+                import sys as _sys
+                print(
+                    f"[upload] display-PDF failed for {file.filename!r}: "
+                    f"{getattr(e, 'kind', 'error')} — {e}",
+                    file=_sys.stderr,
+                    flush=True,
+                )
+                display_pdf_bytes = None
+        if display_pdf_bytes is not None:
             display_pdf_b64 = _b64.b64encode(display_pdf_bytes).decode("ascii")
-        except (DisplayPdfError, ValueError) as e:
-            import sys as _sys
-            print(
-                f"[upload] display-PDF failed for {file.filename!r}: "
-                f"{getattr(e, 'kind', 'error')} — {e}",
-                file=_sys.stderr,
-                flush=True,
-            )
-            display_pdf_b64 = None
 
         return {
             "filename": file.filename,
@@ -476,18 +484,25 @@ async def _ingest_upload(
             html = ""
         # Display PDF is also best-effort: missing soffice or a crash
         # should not block analysis — the FE just shows a banner.
-        display_pdf: bytes | None
-        try:
-            display_pdf = to_display_pdf(tmp_path)
-        except (DisplayPdfError, ValueError) as e:
-            import sys as _sys
-            print(
-                f"[_ingest_upload] display-PDF failed for {role} {file.filename!r}: "
-                f"{getattr(e, 'kind', 'error')} — {e}",
-                file=_sys.stderr,
-                flush=True,
-            )
-            display_pdf = None
+        display_pdf: bytes | None = None
+        # Mock-mode short-circuit so e2e never reaches soffice — keeps the
+        # test hermetic on hosts where LibreOffice isn't installed.
+        from .mock_ai import mock_display_pdf_bytes as _mock_pdf
+        mock_bytes = _mock_pdf()
+        if mock_bytes is not None:
+            display_pdf = mock_bytes
+        else:
+            try:
+                display_pdf = to_display_pdf(tmp_path)
+            except (DisplayPdfError, ValueError) as e:
+                import sys as _sys
+                print(
+                    f"[_ingest_upload] display-PDF failed for {role} {file.filename!r}: "
+                    f"{getattr(e, 'kind', 'error')} — {e}",
+                    file=_sys.stderr,
+                    flush=True,
+                )
+                display_pdf = None
         return markdown, html, display_pdf, file.filename or ""
     finally:
         tmp_path.unlink(missing_ok=True)
