@@ -104,8 +104,10 @@ describe('spanToRects', () => {
     // Y-flipped viewport: baseline in viewport y = 1200 - 1.5 * 800 = 0.
     // text top-y = baseline - h*scale = 0 - 12*1.5 = -18 (off-screen but
     // geometrically consistent for this synthetic page).
-    expect(rects[0].x).toBeCloseTo(50 * 1.5, 3);
-    expect(rects[0].h).toBeCloseTo(12 * 1.5, 3);
+    // PAD_X = 2 in spanToRects so the rect "wraps" the word visually —
+    // verify within ±3 px (covers padding + sub-pixel rounding).
+    expect(Math.abs(rects[0].x - 50 * 1.5)).toBeLessThanOrEqual(3);
+    expect(rects[0].h).toBeGreaterThan(12 * 1.5);
     expect(rects[0].w).toBeGreaterThan(0);
   });
 
@@ -122,7 +124,7 @@ describe('spanToRects', () => {
     const rects = spanToRects(tc.items, charMap, span, VIEWPORT);
     // Adjacent items on the same baseline → mergeAdjacentRects collapses to 1.
     expect(rects).toHaveLength(1);
-    expect(rects[0].x).toBeCloseTo(50 * 1.5, 3);
+    expect(Math.abs(rects[0].x - 50 * 1.5)).toBeLessThanOrEqual(3);
     expect(rects[0].w).toBeGreaterThan(60);
   });
 

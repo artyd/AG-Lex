@@ -22,6 +22,9 @@ import { PdfViewer } from './PdfViewer';
 
 const LOAD = { idle: 'idle', loading: 'loading', ready: 'ready', missing: 'missing', error: 'error' };
 
+const ZOOM_LEVELS = [0.75, 0.9, 1.0, 1.15, 1.3, 1.5, 1.75, 2.0, 2.5];
+const ZOOM_DEFAULT = 1.3;
+
 export function AnalysisView({
   documents,            // [{ label, displayPdfUrl, displayPdfBytes? }]
   findings,             // unified analyze shape
@@ -30,6 +33,18 @@ export function AnalysisView({
   hovered, setHovered,  // hover state (mark ↔ card)
   t,
 }) {
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT);
+  const zoomStep = (delta) => {
+    setZoom((z) => {
+      const idx = ZOOM_LEVELS.findIndex((v) => Math.abs(v - z) < 1e-3);
+      const next = idx < 0
+        ? (delta > 0
+            ? ZOOM_LEVELS.find((v) => v > z) ?? ZOOM_LEVELS[ZOOM_LEVELS.length - 1]
+            : [...ZOOM_LEVELS].reverse().find((v) => v < z) ?? ZOOM_LEVELS[0])
+        : ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, idx + delta))];
+      return next;
+    });
+  };
   const docs = Array.isArray(documents) && documents.length > 0
     ? documents
     : [{ label: t?.docTab || 'Документ', displayPdfUrl: null }];
@@ -148,7 +163,39 @@ export function AnalysisView({
             onPagesReady={onPagesReady}
             onHighlightClick={(fid) => { if (setActive) setActive(fid); }}
             onHighlightHover={(fid) => { if (setHovered) setHovered(fid); }}
+            zoom={zoom}
           />
+        ) : null}
+
+        {docState === LOAD.ready && docBytes ? (
+          <div className="pdf-zoom-bar" role="group" aria-label="zoom">
+            <button
+              type="button"
+              className="pdf-zoom-btn"
+              onClick={() => zoomStep(-1)}
+              disabled={zoom <= ZOOM_LEVELS[0] + 1e-3}
+              aria-label="zoom out"
+            >
+              <Icon name="x" size={14} />
+            </button>
+            <button
+              type="button"
+              className="pdf-zoom-btn pdf-zoom-reset"
+              onClick={() => setZoom(ZOOM_DEFAULT)}
+              aria-label="reset zoom"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              className="pdf-zoom-btn"
+              onClick={() => zoomStep(1)}
+              disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1] - 1e-3}
+              aria-label="zoom in"
+            >
+              <Icon name="plus" size={14} />
+            </button>
+          </div>
         ) : null}
       </div>
 

@@ -197,13 +197,20 @@ export function spanToRects(items, charMap, span, viewport) {
     const rotated = Math.abs(m[1]) > 1e-3 || Math.abs(m[2]) > 1e-3;
 
     if (!rotated) {
-      // Upright text: the y of the baseline is m[5]; top-y is m[5] - itemH * scale.
+      // Upright text: y of the baseline = m[5]; top-y = m[5] - itemH * scale.
+      // We tack on a small padding so the highlight visually "wraps" the
+      // whole word rather than leaving a hairline edge — proportional-width
+      // approximations can underestimate the right edge of glyphs with
+      // wide bearings (italic f, …). 2 px of horizontal slack + 1 px
+      // vertical reads as "covers the word" to the eye.
       const baselineY = m[5];
       const baselineX = m[4];
-      const x = baselineX + itemW * fracL * scale;
-      const w = itemW * (fracR - fracL) * scale;
-      const h = itemH * scale;
-      out.push({ x, y: baselineY - h, w, h });
+      const PAD_X = 2;
+      const PAD_Y = 1;
+      const x = baselineX + itemW * fracL * scale - PAD_X;
+      const w = itemW * (fracR - fracL) * scale + PAD_X * 2;
+      const h = itemH * scale + PAD_Y * 2;
+      out.push({ x, y: baselineY - h + PAD_Y, w, h });
     } else {
       // Rotated/sheared: return the AABB of the four projected corners.
       const xLocalL = itemW * fracL;
@@ -230,17 +237,19 @@ export function spanToRects(items, charMap, span, viewport) {
 function clamp01(n) { return n < 0 ? 0 : n > 1 ? 1 : n; }
 
 /** Merge rects with the same baseline (within 2 px) whose horizontal extents
- *  are within roughly one space-character of each other. The gap tolerance
- *  is `last.h * 0.6` — that's enough to absorb the inter-item space gap
- *  PDF.js carves between adjacent text runs on the same line, but tight
- *  enough to keep clearly separate phrases apart. */
+ *  are within roughly a wide space-character of each other. The gap
+ *  tolerance is `last.h * 1.1` — wide enough to absorb the inter-item
+ *  space gap PDF.js carves between text runs on the same line, plus the
+ *  occasional double-space, but tight enough to keep clearly separate
+ *  phrases apart. Eliminates visible seams inside the same highlighted
+ *  word/phrase. */
 export function mergeAdjacentRects(rects) {
   if (!rects || rects.length < 2) return rects || [];
-  const Y_TOL = 2;
+  const Y_TOL = 3;
   const out = [];
   for (const r of rects) {
     const last = out[out.length - 1];
-    const xTol = last ? Math.max(2, last.h * 0.6) : 2;
+    const xTol = last ? Math.max(4, last.h * 1.1) : 4;
     if (
       last &&
       Math.abs(last.y - r.y) < Y_TOL &&
