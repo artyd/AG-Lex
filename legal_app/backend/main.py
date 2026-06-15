@@ -680,13 +680,55 @@ if FRONTEND_DIR.is_dir():
 
     index_html = FRONTEND_DIR / "index.html"
 
+    # Pre-resolved FRONTEND_DIR for the path-traversal guard below.
+    _FRONTEND_DIR_RESOLVED = FRONTEND_DIR.resolve()
+
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
-        # API routes are declared above this handler, so they win the match.
-        # Anything else returns index.html — the React app handles client-side routing.
-        candidate = FRONTEND_DIR / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
+        """SPA fallback with path-traversal protection.
+
+        SECURITY (CVE-class issue fixed June 2026): the prior version did
+        `FRONTEND_DIR / full_path` and `is_file()` straight away. Both
+        `os.path.join` and `Path / str` resolve `..` via the filesystem on
+        check — meaning a request like
+            GET /../../../../../../root/.claude/.credentials.json
+        could be served as a 200 if the file existed. Caddy in front does
+        NOT strip `..` segments by default, so the traversal reached
+        Python verbatim.
+
+        Defense in depth:
+          1. Reject paths containing a literal `..` segment outright.
+          2. Resolve the candidate and ensure it stays under FRONTEND_DIR
+             before calling `is_file()`.
+          3. Log every attempted traversal with the source IP so abuse is
+             visible in journalctl.
+        """
+        if full_path:
+            # 1) bail on obvious traversal
+            parts = full_path.replace("\\", "/").split("/")
+            if any(p in ("..", "...") for p in parts):
+                import sys as _sys
+                print(
+                    f"[spa_fallback] blocked path-traversal attempt: {full_path!r}",
+                    file=_sys.stderr, flush=True,
+                )
+                return FileResponse(index_html)
+            try:
+                candidate = (FRONTEND_DIR / full_path).resolve()
+            except (OSError, RuntimeError):
+                return FileResponse(index_html)
+            # 2) ensure the resolved path is still inside dist/
+            try:
+                candidate.relative_to(_FRONTEND_DIR_RESOLVED)
+            except ValueError:
+                import sys as _sys
+                print(
+                    f"[spa_fallback] blocked out-of-tree request: {full_path!r} → {candidate}",
+                    file=_sys.stderr, flush=True,
+                )
+                return FileResponse(index_html)
+            if candidate.is_file():
+                return FileResponse(candidate)
         return FileResponse(index_html)
 else:
     @app.get("/", include_in_schema=False)
