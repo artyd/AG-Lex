@@ -10,6 +10,7 @@ import { api } from '../lib/api';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
+import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
 
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
@@ -38,7 +39,41 @@ function MdInline({ text }) {
   return out;
 }
 
-function MdBlock({ text }) {
+/* Paragraph with inline finding highlights. Findings whose suggest.from
+   matches this paragraph get wrapped in <mark>; the rest get returned via
+   the consumed Set so the caller can render heading fallback chips. */
+function HighlightedParagraph({ text, findings, hl, consumed }) {
+  const { parts, matched } = useMemo(() => buildHighlightParts(text, findings), [text, findings]);
+  if (consumed && matched && matched.size) {
+    for (const id of matched) consumed.add(id);
+  }
+  return (
+    <p className="doc-p">
+      {parts.map((p, i) => {
+        if (typeof p === 'string') return <span key={i}><MdInline text={p} /></span>;
+        const f = p.f;
+        const isActive = hl && hl.active === f.id;
+        const isHovered = hl && hl.hovered === f.id;
+        return (
+          <mark key={i}
+            ref={el => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
+            className={'hl hl-' + f.level
+              + (isActive ? ' hl-active' : '')
+              + (isHovered ? ' hl-hover' : '')}
+            onMouseEnter={(e) => { hl && hl.onHover && hl.onHover(f, e); hl && hl.setHovered && hl.setHovered(f.id); }}
+            onMouseMove={(e) => hl && hl.onHover && hl.onHover(f, e)}
+            onMouseLeave={() => { hl && hl.onHover && hl.onHover(null); hl && hl.setHovered && hl.setHovered(null); }}
+            onClick={() => hl && hl.onPick && hl.onPick(f.id)}
+            onDoubleClick={() => hl && hl.onAsk && hl.onAsk(f.id)}>
+            {p.matched}
+          </mark>
+        );
+      })}
+    </p>
+  );
+}
+
+function MdBlock({ text, findings, hl, consumed }) {
   if (!text) return null;
   const lines = text.split(/\r?\n/);
   const blocks = [];
@@ -71,8 +106,12 @@ function MdBlock({ text }) {
         );
       }
     }
-    // Otherwise treat the block as a paragraph (markdown soft-wrap → single line).
-    return <p className="doc-p" key={idx}><MdInline text={b.join(' ')} /></p>;
+    // Paragraph (markdown soft-wrap → single line).
+    const paraText = b.join(' ');
+    if (findings && findings.length) {
+      return <HighlightedParagraph key={idx} text={paraText} findings={findings} hl={hl} consumed={consumed} />;
+    }
+    return <p className="doc-p" key={idx}><MdInline text={paraText} /></p>;
   });
 }
 
@@ -80,7 +119,11 @@ function MdBlock({ text }) {
    Mirrors the visual shape of <ContractDoc> (doc-head / doc-clause /
    doc-clause-title / doc-p) so styling stays consistent, but reads
    from /api/upload's `sections` shape: {number, title, text}. */
-function ContractDocReal({ filename, sections }) {
+function ContractDocReal({ filename, sections, findings, hl }) {
+  // Group findings by the clause number they refer to so each section only
+  // receives the findings it owns. Findings without a recognizable number go
+  // into "" and we surface them as preamble-level chips.
+  const groups = useMemo(() => groupFindingsByClause(findings || []), [findings]);
   return (
     <div className="doc">
       <div className="doc-head">
@@ -88,11 +131,37 @@ function ContractDocReal({ filename, sections }) {
       </div>
       {(sections || []).map((s, i) => {
         const head = [s.number, s.title].filter(Boolean).join(' ');
+        const numKey = s.number ? String(s.number).match(/\d+(?:\.\d+)*/)?.[0] || '' : '';
+        const sectionFindings = groups.get(numKey) || [];
         const anchor = s.number ? `clause-${String(s.number).replace(/\s+/g, '')}` : `clause-i-${i}`;
+        // Track which findings actually matched in the body — anything left
+        // gets rendered as a heading chip so the panel ↔ document link still
+        // holds even when the model's quote couldn't be located verbatim.
+        const consumed = new Set();
+        const body = <MdBlock text={s.text} findings={sectionFindings} hl={hl} consumed={consumed} />;
+        const fallback = sectionFindings.filter(f => !consumed.has(f.id));
         return (
           <section className="doc-clause" id={anchor} key={i}>
-            {head ? <h3 className="doc-clause-title">{head}</h3> : null}
-            <MdBlock text={s.text} />
+            {head ? (
+              <h3 className="doc-clause-title">
+                {head}
+                {fallback.map((f, k) => {
+                  const isActive = hl && hl.active === f.id;
+                  return (
+                    <mark key={k}
+                      ref={el => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
+                      className={'hl hl-fallback hl-' + f.level + (isActive ? ' hl-active' : '')}
+                      title={f.title}
+                      onMouseEnter={(e) => { hl && hl.onHover && hl.onHover(f, e); hl && hl.setHovered && hl.setHovered(f.id); }}
+                      onMouseLeave={() => { hl && hl.onHover && hl.onHover(null); hl && hl.setHovered && hl.setHovered(null); }}
+                      onClick={() => hl && hl.onPick && hl.onPick(f.id)}>
+                      <Icon name="alert" size={11} /> {f.clause}
+                    </mark>
+                  );
+                })}
+              </h3>
+            ) : null}
+            {body}
           </section>
         );
       })}
@@ -170,11 +239,18 @@ function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, 
 }
 
 /* ---------- Finding card ---------- */
-function FindingCard({ f, active, onClick, applied, onApply, t }) {
+function FindingCard({ f, active, hovered, onHover, onClick, applied, onApply, t }) {
   const lvLabel = { high: 'badge-high', med: 'badge-med', low: 'badge-low' }[f.level];
   const isApplied = applied[f.id];
   return (
-    <div id={'finding-' + f.id} className={'finding' + (active ? ' finding-active' : '') + (isApplied ? ' finding-done' : '')} onClick={onClick}
+    <div id={'finding-' + f.id}
+      className={'finding'
+        + (active ? ' finding-active' : '')
+        + (hovered ? ' finding-hover' : '')
+        + (isApplied ? ' finding-done' : '')}
+      onClick={onClick}
+      onMouseEnter={() => onHover && onHover(f.id)}
+      onMouseLeave={() => onHover && onHover(null)}
       style={{ borderLeftColor: isApplied ? 'var(--risk-low)' : LEVEL_COLOR[f.level] }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <span className={'badge-risk ' + (isApplied ? 'badge-low' : lvLabel)}>{f.clause}</span>
@@ -412,7 +488,7 @@ function Chat({ t, inject }) {
 }
 
 /* ---------- AI panel ---------- */
-function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
+function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
   // `data` (always defined) is the merged real-or-demo bundle from
   // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
   // from DEMO until the backend learns to return them (Task 5/future).
@@ -521,6 +597,8 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
               {filtered.map(f => (
                 <FindingCard key={f.id} f={f} t={t} applied={applied}
                   active={active === f.id}
+                  hovered={hovered === f.id}
+                  onHover={setHovered}
                   onApply={onApply}
                   onClick={() => { setActive(active === f.id ? null : f.id); scrollToSeg(f.id); }} />
               ))}
@@ -818,6 +896,7 @@ function ContractAnalysis({ t, incoming }) {
   const [phase, setPhase] = useState('loading');
   const [tab, setTab] = useState('risks');
   const [active, setActive] = useState(null);
+  const [hovered, setHovered] = useState(null);     // bidirectional hover (mark ↔ card)
   const [applied, setApplied] = useState({});
   const [highlightsOn, setHighlightsOn] = useState(true);
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
@@ -1047,7 +1126,9 @@ function ContractAnalysis({ t, incoming }) {
             ? <AnalyzingOverlay t={t} />
             : <div className="view-enter">
                 {incoming && Array.isArray(incoming.sections) && incoming.sections.length > 0
-                  ? <ContractDocReal filename={incoming.filename} sections={incoming.sections} />
+                  ? <ContractDocReal filename={incoming.filename} sections={incoming.sections}
+                      findings={data.findings}
+                      hl={{ segRefs, active, hovered, setHovered, onHover, onPick, onAsk }} />
                   : <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
                       highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
                       onHover={onHover} onPick={onPick} onAsk={onAsk} />}
@@ -1067,6 +1148,7 @@ function ContractAnalysis({ t, incoming }) {
         <div className={'panel-wrap' + (phase === 'loading' ? ' panel-loading' : '')}>
           {phase === 'ready'
             ? <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
+                hovered={hovered} setHovered={setHovered}
                 applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
                 chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
                 data={data} isDemo={isDemo} />
