@@ -213,8 +213,125 @@ function renderParts(parts, opts) {
   });
 }
 
+/* ---------- Source-MD renderer ----------
+   The backend now ships back the original `contractMarkdown` /
+   `handoverMarkdown` so we can preserve the doc's look (tables, headings)
+   instead of rendering Claude's compressed summary. Mammoth (docx) and
+   pymupdf4llm (pdf) both emit standard markdown — paragraphs, pipe tables,
+   `**bold**` — and occasionally raw HTML tables (some converters do this
+   for complex layouts). We handle both. */
+const SAFE_HTML_RE = /<table[\s\S]*?<\/table>/i;
+function sanitizeBlockHtml(html) {
+  // Light defense-in-depth — the source is the user's own upload, but we
+  // still strip the obvious foot-guns before dangerouslySetInnerHTML.
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\sjavascript:/gi, '');
+}
+
+function SrcInline({ text }) {
+  if (!text) return null;
+  const out = [];
+  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
+  let last = 0, m, key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    out.push(tok.startsWith('**')
+      ? <strong key={'b' + key++}>{tok.slice(2, -2)}</strong>
+      : <em key={'i' + key++}>{tok.slice(1, -1)}</em>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function SourceMarkdown({ markdown }) {
+  if (!markdown) return null;
+  // 1) Carve out HTML <table>...</table> blocks first so we don't shred
+  //    them by line — they pass straight through (sanitized).
+  const segments = [];
+  let cursor = 0;
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  let tm;
+  while ((tm = tableRe.exec(markdown)) !== null) {
+    if (tm.index > cursor) segments.push({ kind: 'md', body: markdown.slice(cursor, tm.index) });
+    segments.push({ kind: 'html', body: tm[0] });
+    cursor = tableRe.lastIndex;
+  }
+  if (cursor < markdown.length) segments.push({ kind: 'md', body: markdown.slice(cursor) });
+
+  // 2) Each 'md' segment → blocks split on blank lines. Recognize headings
+  //    (`#`/`##`/`###`), pipe tables, paragraphs.
+  const splitRow = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+  const isDivider = (l) => /^\s*\|?[-: \|]+\|?\s*$/.test(l);
+  const renderMd = (text, baseKey) => {
+    const lines = (text || '').split(/\r?\n/);
+    const blocks = [];
+    let buf = [];
+    const flush = () => { if (buf.length) { blocks.push(buf); buf = []; } };
+    for (const ln of lines) {
+      if (ln.trim() === '') flush();
+      else buf.push(ln);
+    }
+    flush();
+    return blocks.map((b, i) => {
+      const k = `${baseKey}-${i}`;
+      // Heading?
+      const firstLine = b[0];
+      const head = firstLine && firstLine.match(/^\s*(#{1,4})\s+(.*)$/);
+      if (head && b.length === 1) {
+        const Tag = `h${head[1].length}`;
+        return <Tag key={k} className="src-h"><SrcInline text={head[2]} /></Tag>;
+      }
+      // Pipe-table?
+      const pipey = b.length >= 2 && b.every(l => l.trim().startsWith('|'));
+      if (pipey) {
+        const divIdx = b.findIndex(isDivider);
+        if (divIdx > 0) {
+          const headRow = splitRow(b[divIdx - 1]);
+          const bodyRows = b.slice(divIdx + 1).map(splitRow);
+          return (
+            <table className="src-table" key={k}>
+              <thead><tr>{headRow.map((c, j) => <th key={j}><SrcInline text={c} /></th>)}</tr></thead>
+              <tbody>{bodyRows.map((r, j) => (
+                <tr key={j}>{r.map((c, q) => <td key={q}><SrcInline text={c} /></td>)}</tr>
+              ))}</tbody>
+            </table>
+          );
+        }
+      }
+      // Plain paragraph.
+      return <p className="src-p" key={k}><SrcInline text={b.join(' ')} /></p>;
+    });
+  };
+
+  return (
+    <div className="cmp-paper-src">
+      {segments.map((seg, i) => seg.kind === 'html'
+        ? <div key={i} className="src-html" dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(seg.body) }} />
+        : <div key={i}>{renderMd(seg.body, 'm' + i)}</div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Contract paper (bilingual EN / UA) ---------- */
-function ContractPaper({ doc, active, onPick, refs }) {
+function ContractPaper({ doc, active, onPick, refs, sourceMd }) {
+  // New path: render the original source markdown (preserves tables / layout
+  // / headings exactly as the converter produced them). Falls back to the
+  // Claude-summary `doc.sections` shape for runs persisted before Phase 3.3.
+  if (sourceMd) {
+    return (
+      <div className="cmp-paper cmp-paper-contract cmp-paper-mdsrc">
+        <SourceMarkdown markdown={sourceMd} />
+      </div>
+    );
+  }
   return (
     <div className="cmp-paper cmp-paper-contract">
       <div className="cmp-paper-head">
@@ -250,7 +367,14 @@ function ContractPaper({ doc, active, onPick, refs }) {
 }
 
 /* ---------- Handover paper (Лист погодження / Table 3 form) ---------- */
-function HandoverPaper({ doc, active, onPick, refs }) {
+function HandoverPaper({ doc, active, onPick, refs, sourceMd }) {
+  if (sourceMd) {
+    return (
+      <div className="cmp-paper cmp-paper-form cmp-paper-mdsrc">
+        <SourceMarkdown markdown={sourceMd} />
+      </div>
+    );
+  }
   return (
     <div className="cmp-paper cmp-paper-form">
       {doc.appendix ? <div className="cmp-form-appendix">{doc.appendix}</div> : null}
@@ -439,8 +563,8 @@ function ResultStep({ t, run, onBack, onRestart }) {
                 </div>
 
                 {which === 'contract'
-                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs} />
-                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs} />}
+                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs} sourceMd={run.contractMarkdown} />
+                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs} sourceMd={run.handoverMarkdown} />}
 
                 <div className="cmp-src-note"><Icon name="sparkle" size={12} fill={true} /> {t.cmpSrcNote}</div>
               </>

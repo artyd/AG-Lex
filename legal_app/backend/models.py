@@ -183,20 +183,22 @@ CREATE INDEX IF NOT EXISTS idx_drafts_created ON drafts(created_at);
 
 -- Contract ↔ Handover (Table 3) reconciliations. One row per run.
 CREATE TABLE IF NOT EXISTS reconciliations (
-    id             TEXT PRIMARY KEY,
-    user_id        INTEGER REFERENCES users(id),
-    contract_file  TEXT,
-    handover_file  TEXT,
-    product        TEXT,
-    counterparty   TEXT,
-    verdict        TEXT,           -- critical | minor | clean
-    must_count     INTEGER NOT NULL DEFAULT 0,
-    should_count   INTEGER NOT NULL DEFAULT 0,
-    pair_json      TEXT NOT NULL,
-    rows_json      TEXT NOT NULL,
-    findings_json  TEXT NOT NULL,
-    docs_json      TEXT NOT NULL,
-    created_at     TEXT NOT NULL
+    id                  TEXT PRIMARY KEY,
+    user_id             INTEGER REFERENCES users(id),
+    contract_file       TEXT,
+    handover_file       TEXT,
+    product             TEXT,
+    counterparty        TEXT,
+    verdict             TEXT,           -- critical | minor | clean
+    must_count          INTEGER NOT NULL DEFAULT 0,
+    should_count        INTEGER NOT NULL DEFAULT 0,
+    pair_json           TEXT NOT NULL,
+    rows_json           TEXT NOT NULL,
+    findings_json       TEXT NOT NULL,
+    docs_json           TEXT NOT NULL,
+    contract_markdown   TEXT,           -- raw source MD (Phase 3.3)
+    handover_markdown   TEXT,           -- raw source MD (Phase 3.3)
+    created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliations_created ON reconciliations(created_at);
@@ -383,6 +385,22 @@ def migrate_matters(conn) -> None:
     conn.execute(
         "UPDATE matters SET started_at = date('now') WHERE started_at IS NULL"
     )
+    conn.commit()
+
+
+def migrate_reconciliations(conn) -> None:
+    """Phase 3.3: store the raw source markdown alongside the analysis.
+
+    The Reconcile screen now renders the original document (preserving
+    tables and layout) instead of Claude's compressed `docs` summary.
+    Old rows stay readable — the FE falls back to `docs_json` when these
+    columns are NULL. No-op when columns already exist.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
+    if "contract_markdown" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_markdown TEXT")
+    if "handover_markdown" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_markdown TEXT")
     conn.commit()
 
 

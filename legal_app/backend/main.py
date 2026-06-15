@@ -40,6 +40,7 @@ from .models import (
     init_entity_schema,
     migrate_drafts,
     migrate_matters,
+    migrate_reconciliations,
     migrate_users,
 )
 from .pipeline import analyze
@@ -83,6 +84,7 @@ async def lifespan(app: FastAPI):
         migrate_drafts(conn)
         migrate_users(conn)
         migrate_matters(conn)
+        migrate_reconciliations(conn)
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
@@ -425,6 +427,10 @@ async def reconcile_endpoint(
         "rows": rows,
         "findings": findings,
         "docs": docs,
+        # Phase 3.3: ship the raw source MD back so the FE can render the
+        # original look (tables, layout) instead of Claude's compressed docs.
+        "contractMarkdown": contract_md,
+        "handoverMarkdown": handover_md,
         "createdAt": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     return insert_row(conn, RECONCILIATIONS, payload)
