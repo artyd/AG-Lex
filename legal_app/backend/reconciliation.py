@@ -41,27 +41,29 @@ CATEGORY_KEYS: tuple[str, ...] = (
     "consignee", "regnumber", "additional",
 )
 
+# Sentinel category for plain (non-highlight) paragraph fragments. Lives in
+# _PART_SCHEMA's enum so every part can be a single object shape — Anthropic's
+# structured-output schema rejects `oneOf` at non-root nodes.
+PART_PLAIN = "plain"
+
 ROW_STATUSES = ["ok", "mismatch", "flag", "absent", "positive"]
 SEVERITIES = ["must", "should", "nice", "flag"]
 VERIFIED_STATES = ["VERIFIED", "FLAG"]
 
 
-# Part of a paragraph in the rendered contract/handover. Either plain text or
-# an inline highlight tagged with the category + comparison status.
+# Part of a paragraph in the rendered contract/handover. ALWAYS an object so
+# the schema doesn't need `oneOf` (Anthropic strict mode rejects it). For
+# plain text use {t: "...", cat: "plain", st: "ok"}; the FE renderer treats
+# `cat == "plain"` as a non-highlighted span.
 _PART_SCHEMA: dict[str, Any] = {
-    "oneOf": [
-        {"type": "string"},
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["t", "cat", "st"],
-            "properties": {
-                "t": {"type": "string"},
-                "cat": {"type": "string", "enum": list(CATEGORY_KEYS)},
-                "st": {"type": "string", "enum": ROW_STATUSES},
-            },
-        },
-    ],
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["t", "cat", "st"],
+    "properties": {
+        "t": {"type": "string"},
+        "cat": {"type": "string", "enum": list(CATEGORY_KEYS) + [PART_PLAIN]},
+        "st": {"type": "string", "enum": ROW_STATUSES},
+    },
 }
 
 
@@ -125,7 +127,9 @@ RECONCILIATION_JSON_SCHEMA: dict[str, Any] = {
                 "contract": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["kind", "title", "titleUa", "sections"],
+                    # Strict mode requires every property in `required`; empty
+                    # strings are fine (`_normalise_docs` passes them through).
+                    "required": ["kind", "title", "titleUa", "place", "placeUa", "sections"],
                     "properties": {
                         "kind": {"type": "string"},
                         "title": {"type": "string"},
@@ -152,7 +156,7 @@ RECONCILIATION_JSON_SCHEMA: dict[str, Any] = {
                 "handover": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["kind", "title", "rows"],
+                    "required": ["kind", "appendix", "title", "sub", "section", "footnote", "rows"],
                     "properties": {
                         "kind": {"type": "string"},
                         "appendix": {"type": "string"},
@@ -165,7 +169,7 @@ RECONCILIATION_JSON_SCHEMA: dict[str, Any] = {
                             "items": {
                                 "type": "object",
                                 "additionalProperties": False,
-                                "required": ["n", "label", "v"],
+                                "required": ["n", "star", "label", "v"],
                                 "properties": {
                                     "n": {"type": "string"},
                                     "star": {"type": "boolean"},
@@ -215,14 +219,17 @@ RECONCILIATION_PROMPT = """Ти — старший юрист, який звір
    Не вигадуй знахідок без підстав; для status=ok знахідок бути не повинно.
 5. Заповни `pair`: product (назва товару), counterparty (постачальник), contractNo, date.
 6. У `docs.contract` сформуй стислу EN/UA презентацію договору: 3–6 коротких секцій (SUBJECT/ПРЕДМЕТ,
-   PRICE/ЦІНА, QUANTITY/КІЛЬКІСТЬ, DELIVERY/ПОСТАВКА тощо). `enP` і `uaP` — масиви фрагментів абзацу:
-   рядки залишай рядками, але ключові значення (ціна, обсяг, Incoterms, строки, реквізити) оформ як
-   обʼєкти {t, cat, st}, де cat — один із 15 ключів, а st — статус відповідного рядка `rows[]`.
+   PRICE/ЦІНА, QUANTITY/КІЛЬКІСТЬ, DELIVERY/ПОСТАВКА тощо). `enP` і `uaP` — масиви фрагментів абзацу.
+   КОЖЕН фрагмент — обʼєкт `{t, cat, st}`:
+   • для звичайного тексту вказуй `cat: "plain"`, `st: "ok"` — це фрагмент без підсвітки;
+   • для ключових значень (ціна, обсяг, Incoterms, строки, реквізити, реєстраційний номер тощо)
+     `cat` — один із 15 категорійних ключів, `st` — статус відповідного рядка `rows[]`.
    Це і є інлайн-підсвітка, по якій юрист клікатиме.
 7. У `docs.handover` дай форму «Лист погодження вопросів по поставці субстанцій»: appendix (наприклад
-   «Додаток №3»), title, sub, section, та `rows` — нумеровані поля з label і `v` (значення-фрагменти
-   аналогічно contract). Зазнач `star: true` для обовʼязкових полів. footnote — короткий примітковий
-   рядок.
+   «Додаток №3»), title, sub, section, footnote (короткий примітковий рядок), та `rows` — нумеровані
+   поля з label і `v` (масив фрагментів за тим же правилом: звичайний текст → `cat: "plain", st: "ok"`,
+   ключові значення → конкретні `cat` і `st`). Заповнюй усі поля; якщо у документі чогось немає —
+   ставь порожній рядок або `star: false`.
 
 ВИМОГИ ДО ТОНУ:
 - Українською, без канцеляризму, як старший практик.
