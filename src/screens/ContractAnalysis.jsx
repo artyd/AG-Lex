@@ -11,6 +11,7 @@ import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
 import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
+import { findingsToHighlights } from '../lib/pdfHighlight';
 import { PdfViewer } from './analysis/PdfViewer';
 
 // Phase 4.x PR2: opt into the pixel-perfect PDF viewer behind ?pdfview=1
@@ -932,6 +933,18 @@ function ContractAnalysis({ t, incoming }) {
     if (!incoming || !incoming.displayPdfB64) return null;
     return decodePdfB64(incoming.displayPdfB64);
   }, [incoming]);
+  // Phase 4.x PR3 state: rendered-page accumulator + memo'd highlight rects.
+  // The actual `active`/`hovered`-dependent useMemo lives further down once
+  // those state hooks are declared (JS temporal-dead-zone otherwise).
+  const [pdfPages, setPdfPages] = useState({});
+  const onPdfPagesReady = useMemo(() => (added) => {
+    if (!added || !added.length) return;
+    setPdfPages((prev) => {
+      const next = { ...prev };
+      for (const p of added) next[p.pageNumber] = p;
+      return next;
+    });
+  }, []);
 
   // Merged data source: real fields override DEMO when available. `missing` /
   // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
@@ -957,6 +970,19 @@ function ContractAnalysis({ t, incoming }) {
   const [applied, setApplied] = useState({});
   const [highlightsOn, setHighlightsOn] = useState(true);
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
+
+  // Phase 4.x PR3: now that `active`/`hovered` are declared, compute the
+  // PdfViewer overlay rects from accumulated pages + current findings.
+  const pdfHighlights = useMemo(() => {
+    if (!pdfViewBytes) return [];
+    const pages = Object.values(pdfPages).sort((a, b) => a.pageNumber - b.pageNumber);
+    if (pages.length === 0) return [];
+    return findingsToHighlights(pages, data.findings).map((h) => ({
+      ...h,
+      active: h.findingId === active,
+      hovered: h.findingId === hovered,
+    }));
+  }, [pdfViewBytes, pdfPages, data.findings, active, hovered]);
   const [protocolOpen, setProtocolOpen] = useState(false);
   const [addedSet, setAddedSet] = useState(new Set());
   const [chatInject, setChatInject] = useState(null);
@@ -1238,7 +1264,13 @@ function ContractAnalysis({ t, incoming }) {
             ? <AnalyzingOverlay t={t} />
             : <div className="view-enter">
                 {pdfViewBytes
-                  ? <PdfViewer data={pdfViewBytes} highlights={[]} />
+                  ? <PdfViewer
+                      data={pdfViewBytes}
+                      highlights={pdfHighlights}
+                      onPagesReady={onPdfPagesReady}
+                      onHighlightClick={(fid) => { setActive(fid); scrollFindingCard(fid); }}
+                      onHighlightHover={(fid) => setHovered(fid)}
+                    />
                   : effectiveDoc && Array.isArray(effectiveDoc.sections) && effectiveDoc.sections.length > 0
                   ? <ContractDocReal filename={effectiveDoc.filename} sections={effectiveDoc.sections}
                       findings={data.findings}

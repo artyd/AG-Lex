@@ -100,6 +100,10 @@ test('PdfViewer (?pdfview=1) renders a canvas from the uploaded display PDF', as
   await expect(
     page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
   ).toBeVisible({ timeout: 30_000 });
+  // Phase 4.x PR3: the highlight overlay should land at least one rect
+  // for the mock findings (the stub PDF carries the Cyrillic suggest.from
+  // quotes so pdfHighlight can anchor them).
+  await expect(page.locator('.hl-rect').first()).toBeVisible({ timeout: 30_000 });
 });
 
 test('Library shows the persisted contract AND reconciliation as separate rows', async ({ page }) => {
