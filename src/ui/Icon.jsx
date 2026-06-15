@@ -1,99 +1,155 @@
 /* ============================================================
-   AG Lex — line icon set. <Icon name size /> simple stroke icons.
+   AG Lex — icon set. <Icon name size /> renders Font Awesome
+   Free 7.x Solid glyphs (brands for OS logos). Same call-site
+   API as before — `stroke` / `fill` props are accepted and
+   ignored so older usages keep working.
+
+   The "3D" feel comes from the tile wrapper (.hub-ic /
+   .dropzone-ic / .file-chip-ic / .icon-3d) — see CSS. The icon
+   itself is a single-color FA Solid path that picks up
+   currentColor from its container, so it follows accent/theme.
    ============================================================ */
-const ICON_PATHS = {
-  dashboard: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
-  scan: 'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10',
-  library: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z',
-  clients: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
-  templates: 'M9 2h6l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM14 2v5h5M8 13h8M8 17h6',
-  calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
-  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
-  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35',
-  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
-  moon: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
-  bell: 'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0',
-  upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
-  plus: 'M12 5v14M5 12h14',
-  chevR: 'M9 18l6-6-6-6',
-  chevD: 'M6 9l6 6 6-6',
-  arrowR: 'M5 12h14M12 5l7 7-7 7',
-  alert: 'M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01',
-  check: 'M20 6 9 17l-5-5',
-  checkCircle: 'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3',
-  x: 'M18 6 6 18M6 6l12 12',
-  building: 'M3 21h18M5 21V7l8-4v18M19 21V11l-6-3M9 9v.01M9 12v.01M9 15v.01M9 18v.01',
-  coins: 'M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM18.09 10.37A6 6 0 1 1 10.34 18M7 6h1v4M16.71 13.88l.7.71-2.82 2.82',
-  doc: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
-  pay: 'M3 10h18M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zM7 15h2',
-  sparkle: 'M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z',
-  wand: 'M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h.01M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5',
-  filter: 'M22 3H2l8 9.46V19l4 2v-8.54L22 3z',
-  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
-  flag: 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7',
-  folder: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z',
-  download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
-  menu: 'M3 12h18M3 6h18M3 18h18',
-  globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z',
-  refresh: 'M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5',
-  scales: 'M12 3v18M7 21h10M12 6l-7 2 3 6a3 3 0 0 1-6 0l3-6M12 6l7 2-3 6a3 3 0 0 0 6 0l-3-6M9 4l3-1 3 1',
-  book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z',
-  euro: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM15 8.5a4 4 0 0 0-6.9 2M8 12h6M7.5 14.5a4 4 0 0 0 6.9 1.5',
-  chat: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z',
-  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
-  pen: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
-  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
-  monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
-  // Phase 2.4 — status icons used by the Matters module. Pure stroke glyphs
-  // to match the rest of the line set; colors come from the consumer.
-  circle: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
-  play: 'M7 5l12 7-12 7V5z',
-  hourglass: 'M7 3h10M7 21h10M7 3v4l5 5-5 5v4M17 3v4l-5 5 5 5v4',
-  pause: 'M8 5h3v14H8zM13 5h3v14h-3z',
-  gavel: 'M14 3l7 7-3 3-7-7zM10 7l-7 7 3 3 7-7M4 21h12',
+import alertSvg from '@fortawesome/fontawesome-free/svgs/solid/triangle-exclamation.svg?raw';
+import arrowRSvg from '@fortawesome/fontawesome-free/svgs/solid/arrow-right.svg?raw';
+import bellSvg from '@fortawesome/fontawesome-free/svgs/solid/bell.svg?raw';
+import bookSvg from '@fortawesome/fontawesome-free/svgs/solid/book-open.svg?raw';
+import buildingSvg from '@fortawesome/fontawesome-free/svgs/solid/building.svg?raw';
+import calendarSvg from '@fortawesome/fontawesome-free/svgs/solid/calendar-days.svg?raw';
+import chatSvg from '@fortawesome/fontawesome-free/svgs/solid/comment-dots.svg?raw';
+import checkSvg from '@fortawesome/fontawesome-free/svgs/solid/check.svg?raw';
+import checkCircleSvg from '@fortawesome/fontawesome-free/svgs/solid/circle-check.svg?raw';
+import chevDSvg from '@fortawesome/fontawesome-free/svgs/solid/chevron-down.svg?raw';
+import chevRSvg from '@fortawesome/fontawesome-free/svgs/solid/chevron-right.svg?raw';
+import circleSvg from '@fortawesome/fontawesome-free/svgs/solid/circle.svg?raw';
+import clientsSvg from '@fortawesome/fontawesome-free/svgs/solid/users.svg?raw';
+import clockSvg from '@fortawesome/fontawesome-free/svgs/solid/clock.svg?raw';
+import coinsSvg from '@fortawesome/fontawesome-free/svgs/solid/coins.svg?raw';
+import dashboardSvg from '@fortawesome/fontawesome-free/svgs/solid/gauge-high.svg?raw';
+import docSvg from '@fortawesome/fontawesome-free/svgs/solid/file-lines.svg?raw';
+import downloadSvg from '@fortawesome/fontawesome-free/svgs/solid/download.svg?raw';
+import euroSvg from '@fortawesome/fontawesome-free/svgs/solid/euro-sign.svg?raw';
+import filterSvg from '@fortawesome/fontawesome-free/svgs/solid/filter.svg?raw';
+import flagSvg from '@fortawesome/fontawesome-free/svgs/solid/flag.svg?raw';
+import folderSvg from '@fortawesome/fontawesome-free/svgs/solid/folder.svg?raw';
+import gavelSvg from '@fortawesome/fontawesome-free/svgs/solid/gavel.svg?raw';
+import globeSvg from '@fortawesome/fontawesome-free/svgs/solid/globe.svg?raw';
+import hourglassSvg from '@fortawesome/fontawesome-free/svgs/solid/hourglass-half.svg?raw';
+import librarySvg from '@fortawesome/fontawesome-free/svgs/solid/book-bookmark.svg?raw';
+import menuSvg from '@fortawesome/fontawesome-free/svgs/solid/bars.svg?raw';
+import monitorSvg from '@fortawesome/fontawesome-free/svgs/solid/display.svg?raw';
+import moonSvg from '@fortawesome/fontawesome-free/svgs/solid/moon.svg?raw';
+import pauseSvg from '@fortawesome/fontawesome-free/svgs/solid/pause.svg?raw';
+import paySvg from '@fortawesome/fontawesome-free/svgs/solid/credit-card.svg?raw';
+import penSvg from '@fortawesome/fontawesome-free/svgs/solid/pen-to-square.svg?raw';
+import playSvg from '@fortawesome/fontawesome-free/svgs/solid/play.svg?raw';
+import plusSvg from '@fortawesome/fontawesome-free/svgs/solid/plus.svg?raw';
+import refreshSvg from '@fortawesome/fontawesome-free/svgs/solid/arrow-rotate-right.svg?raw';
+import scalesSvg from '@fortawesome/fontawesome-free/svgs/solid/scale-balanced.svg?raw';
+import scanSvg from '@fortawesome/fontawesome-free/svgs/solid/magnifying-glass-chart.svg?raw';
+import searchSvg from '@fortawesome/fontawesome-free/svgs/solid/magnifying-glass.svg?raw';
+import sendSvg from '@fortawesome/fontawesome-free/svgs/solid/paper-plane.svg?raw';
+import settingsSvg from '@fortawesome/fontawesome-free/svgs/solid/gear.svg?raw';
+import shieldSvg from '@fortawesome/fontawesome-free/svgs/solid/shield-halved.svg?raw';
+import sparkleSvg from '@fortawesome/fontawesome-free/svgs/solid/star.svg?raw';
+import sunSvg from '@fortawesome/fontawesome-free/svgs/solid/sun.svg?raw';
+import templatesSvg from '@fortawesome/fontawesome-free/svgs/solid/file-contract.svg?raw';
+import uploadSvg from '@fortawesome/fontawesome-free/svgs/solid/cloud-arrow-up.svg?raw';
+import wandSvg from '@fortawesome/fontawesome-free/svgs/solid/wand-magic-sparkles.svg?raw';
+import xSvg from '@fortawesome/fontawesome-free/svgs/solid/xmark.svg?raw';
+
+import appleSvg from '@fortawesome/fontawesome-free/svgs/brands/apple.svg?raw';
+import linuxSvg from '@fortawesome/fontawesome-free/svgs/brands/linux.svg?raw';
+import windowsSvg from '@fortawesome/fontawesome-free/svgs/brands/windows.svg?raw';
+
+const RAW = {
+  alert: alertSvg,
+  arrowR: arrowRSvg,
+  bell: bellSvg,
+  book: bookSvg,
+  building: buildingSvg,
+  calendar: calendarSvg,
+  chat: chatSvg,
+  check: checkSvg,
+  checkCircle: checkCircleSvg,
+  chevD: chevDSvg,
+  chevR: chevRSvg,
+  circle: circleSvg,
+  clients: clientsSvg,
+  clock: clockSvg,
+  coins: coinsSvg,
+  dashboard: dashboardSvg,
+  doc: docSvg,
+  download: downloadSvg,
+  euro: euroSvg,
+  filter: filterSvg,
+  flag: flagSvg,
+  folder: folderSvg,
+  gavel: gavelSvg,
+  globe: globeSvg,
+  hourglass: hourglassSvg,
+  library: librarySvg,
+  menu: menuSvg,
+  monitor: monitorSvg,
+  moon: moonSvg,
+  pause: pauseSvg,
+  pay: paySvg,
+  pen: penSvg,
+  play: playSvg,
+  plus: plusSvg,
+  refresh: refreshSvg,
+  scales: scalesSvg,
+  scan: scanSvg,
+  search: searchSvg,
+  send: sendSvg,
+  settings: settingsSvg,
+  shield: shieldSvg,
+  sparkle: sparkleSvg,
+  sun: sunSvg,
+  templates: templatesSvg,
+  upload: uploadSvg,
+  wand: wandSvg,
+  x: xSvg,
+
+  apple: appleSvg,
+  linux: linuxSvg,
+  windows: windowsSvg,
 };
 
-/* Brand OS glyphs — filled silhouettes (rendered separately from line icons) */
-const BRAND_ICONS = {
-  windows: (
-    <>
-      <path d="M3 5.5L10.75 4.4V11.5H3V5.5Z" />
-      <path d="M11.625 4.27L21 3V11.5H11.625V4.27Z" />
-      <path d="M3 12.5H10.75V19.6L3 18.5V12.5Z" />
-      <path d="M11.625 12.5H21V21L11.625 19.73V12.5Z" />
-    </>
-  ),
-  apple: (
-    <>
-      <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
-    </>
-  ),
-  linux: (
-    <>
-      <path d="M12 2.2c-2.45 0-4.15 2-4.15 4.6 0 .8.15 1.5.35 2.1-.55.6-1.25 1.45-1.85 2.45-1.05 1.7-1.85 3.7-1.85 5.55 0 2.1.7 3.9 1.9 4.9.4.35.85.6 1.3.7-.1.2-.15.4-.15.65 0 .8.6 1.3 1.45 1.3.7 0 1.3-.4 1.5-1h2.95c.2.6.8 1 1.5 1 .85 0 1.45-.5 1.45-1.3 0-.25-.05-.45-.15-.65.45-.1.9-.35 1.3-.7 1.2-1 1.9-2.8 1.9-4.9 0-1.85-.8-3.85-1.85-5.55-.6-1-1.3-1.85-1.85-2.45.2-.6.35-1.3.35-2.1 0-2.6-1.7-4.6-4.15-4.6zM10.35 5.75c.55 0 .9.55.9 1.15 0 .35-.1.65-.35.85-.05-.4-.2-.65-.55-.65-.3 0-.5.2-.55.55-.2-.2-.3-.5-.3-.75 0-.6.35-1.15.85-1.15zm3.3 0c.5 0 .85.55.85 1.15 0 .25-.1.55-.3.75-.05-.35-.25-.55-.55-.55-.35 0-.5.25-.55.65-.25-.2-.35-.5-.35-.85 0-.6.35-1.15.9-1.15zM12 9.4c.4 0 .85.15 1.25.45-.4.45-.85.65-1.25.65-.4 0-.85-.2-1.25-.65.4-.3.85-.45 1.25-.45z" />
-    </>
-  ),
-};
+function parseRaw(raw) {
+  const vbMatch = raw.match(/viewBox="([^"]+)"/);
+  const viewBox = vbMatch ? vbMatch[1] : '0 0 512 512';
+  const inner = raw
+    .replace(/<svg[^>]*>/, '')
+    .replace(/<\/svg>\s*$/, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\sfill="(?!none)[^"]*"/g, ' fill="currentColor"')
+    .trim();
+  const [, , wStr, hStr] = viewBox.split(/\s+/);
+  const vbW = Number(wStr) || 512;
+  const vbH = Number(hStr) || 512;
+  return { viewBox, inner, vbW, vbH };
+}
 
-export function Icon({ name, size = 20, stroke = 2, fill = false, style, className }) {
-  const brand = BRAND_ICONS[name];
-  if (brand) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24"
-        fill="currentColor" stroke="none"
-        style={style} className={className} aria-hidden="true">
-        {brand}
-      </svg>
-    );
-  }
-  const d = ICON_PATHS[name];
-  if (!d) return null;
+const ICONS = Object.fromEntries(
+  Object.entries(RAW).map(([k, v]) => [k, parseRaw(v)]),
+);
+
+export function Icon({ name, size = 20, style, className }) {
+  const ic = ICONS[name];
+  if (!ic) return null;
+  const ar = ic.vbW / ic.vbH;
+  const w = ar >= 1 ? size : Math.round(size * ar);
+  const h = ar >= 1 ? Math.round(size / ar) : size;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24"
-      fill={fill ? 'currentColor' : 'none'} stroke="currentColor"
-      strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"
-      style={style} className={className} aria-hidden="true">
-      {d.split('M').filter(Boolean).map((seg, i) => <path key={i} d={'M' + seg} />)}
-    </svg>
+    <svg
+      width={w}
+      height={h}
+      viewBox={ic.viewBox}
+      fill="currentColor"
+      style={style}
+      className={className}
+      aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: ic.inner }}
+    />
   );
 }

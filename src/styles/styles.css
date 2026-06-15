@@ -67,6 +67,20 @@
   --shadow-sm: 0 1px 2px rgba(20,18,30,0.06), 0 1px 3px rgba(20,18,30,0.05);
   --shadow-md: 0 4px 12px rgba(20,18,30,0.07), 0 2px 5px rgba(20,18,30,0.05);
   --shadow-lg: 0 18px 48px rgba(20,18,30,0.16), 0 6px 16px rgba(20,18,30,0.08);
+
+  /* Icon tile 3D — used by .hub-ic, .dropzone-ic, .file-chip-ic */
+  --icon-sheen: rgba(255,255,255,0.22);
+  --icon-hi: rgba(255,255,255,0.65);
+  --icon-lo: color-mix(in oklab, var(--accent) 28%, transparent);
+  --icon-cast: 0 8px 18px -8px color-mix(in oklab, var(--accent) 48%, transparent), 0 2px 4px rgba(20,18,30,0.06);
+  --icon-tint-1: color-mix(in oklab, var(--accent) 26%, var(--surface));
+  --icon-tint-2: color-mix(in oklab, var(--accent) 14%, var(--surface));
+  --icon-tile-color: var(--accent-strong);
+  --icon-muted-tint-1: var(--surface);
+  --icon-muted-tint-2: var(--bg-2);
+  --icon-muted-lo: color-mix(in oklab, var(--text-3) 22%, transparent);
+  --icon-muted-cast: 0 6px 14px -8px rgba(20,18,30,0.18), 0 1px 2px rgba(20,18,30,0.05);
+  --icon-muted-color: var(--text-2);
 }
 
 /* ---- Dark theme ---- */
@@ -88,6 +102,20 @@
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
   --shadow-md: 0 6px 16px rgba(0,0,0,0.36);
   --shadow-lg: 0 22px 54px rgba(0,0,0,0.5), 0 8px 18px rgba(0,0,0,0.35);
+
+  /* Icon tile 3D — dark theme overrides */
+  --icon-sheen: rgba(255,255,255,0.07);
+  --icon-hi: color-mix(in oklab, white 14%, transparent);
+  --icon-lo: rgba(0,0,0,0.45);
+  --icon-cast: 0 10px 20px -8px color-mix(in oklab, var(--accent) 55%, transparent), 0 2px 6px rgba(0,0,0,0.42);
+  --icon-tint-1: color-mix(in oklab, var(--accent) 38%, var(--surface));
+  --icon-tint-2: color-mix(in oklab, var(--accent) 22%, var(--surface));
+  --icon-tile-color: color-mix(in oklab, var(--accent) 80%, white 14%);
+  --icon-muted-tint-1: var(--surface-2);
+  --icon-muted-tint-2: var(--surface);
+  --icon-muted-lo: rgba(0,0,0,0.38);
+  --icon-muted-cast: 0 8px 18px -8px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.35);
+  --icon-muted-color: var(--text-2);
 }
 
 * { box-sizing: border-box; }
@@ -385,9 +413,31 @@ button:focus-visible, a:focus-visible, .nav-item:focus-visible, .nav-group-head:
 
 .dropzone { border: 2px dashed var(--border-strong); border-radius: var(--r-lg); padding: var(--s8); text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
 .dropzone:hover { border-color: var(--accent); background: var(--accent-softer); }
-.dropzone-ic { width: 56px; height: 56px; margin: 0 auto; border-radius: 16px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.dropzone-ic {
+  width: 56px; height: 56px; margin: 0 auto; border-radius: 16px;
+  display: grid; place-items: center;
+  background:
+    linear-gradient(180deg, var(--icon-sheen) 0%, rgba(255,255,255,0) 42%),
+    linear-gradient(180deg, var(--icon-tint-1) 0%, var(--icon-tint-2) 100%);
+  color: var(--icon-tile-color);
+  box-shadow:
+    inset 0 1px 0 var(--icon-hi),
+    inset 0 -1.5px 0 var(--icon-lo),
+    var(--icon-cast);
+}
 .file-chip { display: flex; align-items: center; gap: 10px; margin-top: var(--s4); padding: var(--s3) var(--s4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); font-size: 13.5px; font-weight: 500; }
-.file-chip-ic { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.file-chip-ic {
+  width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background:
+    linear-gradient(180deg, var(--icon-sheen) 0%, rgba(255,255,255,0) 50%),
+    linear-gradient(180deg, var(--icon-tint-1) 0%, var(--icon-tint-2) 100%);
+  color: var(--icon-tile-color);
+  box-shadow:
+    inset 0 1px 0 var(--icon-hi),
+    inset 0 -1px 0 var(--icon-lo),
+    0 4px 10px -6px color-mix(in oklab, var(--accent) 38%, transparent);
+}
 
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: var(--s4) 0; border-bottom: 1px solid var(--border); }
 .set-label { font-weight: 600; font-size: 14px; }
