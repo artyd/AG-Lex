@@ -198,6 +198,8 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     docs_json           TEXT NOT NULL,
     contract_markdown   TEXT,           -- raw source MD (Phase 3.3)
     handover_markdown   TEXT,           -- raw source MD (Phase 3.3)
+    contract_html       TEXT,           -- source HTML for display (Phase 3.3+)
+    handover_html       TEXT,           -- source HTML for display (Phase 3.3+)
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
@@ -389,18 +391,24 @@ def migrate_matters(conn) -> None:
 
 
 def migrate_reconciliations(conn) -> None:
-    """Phase 3.3: store the raw source markdown alongside the analysis.
+    """Phase 3.3: store source-side rendering alongside the analysis.
 
-    The Reconcile screen now renders the original document (preserving
-    tables and layout) instead of Claude's compressed `docs` summary.
-    Old rows stay readable — the FE falls back to `docs_json` when these
-    columns are NULL. No-op when columns already exist.
+    The Reconcile screen renders the original document (preserving tables
+    and layout) instead of Claude's compressed `docs` summary. We store
+    both markdown (for Claude prompt rerun + token stats) and HTML
+    (mammoth-grade table preservation for display). Old rows stay readable
+    — the FE falls back to docs_json then markdown when both are NULL.
+    No-op when columns already exist.
     """
     cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
     if "contract_markdown" not in cols:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_markdown TEXT")
     if "handover_markdown" not in cols:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_markdown TEXT")
+    if "contract_html" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_html TEXT")
+    if "handover_html" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_html TEXT")
     conn.commit()
 
 

@@ -32,6 +32,7 @@ from .crud import ALL_ENTITIES, RECONCILIATIONS, build_router, insert_row
 from .database import get_connection, get_db, init_schema, init_user_schema
 from .documents import (
     detect_type_and_convert,
+    detect_type_and_convert_html,
     detect_type_and_extract_raw,
     split_into_sections,
     token_savings,
@@ -340,11 +341,13 @@ def analyze_contract_endpoint(
         raise HTTPException(status_code=502, detail=str(e))
 
 
-async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tuple[str, str]:
-    """Reusable: validate + persist to a temp file + convert to markdown.
+async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tuple[str, str, str]:
+    """Reusable: validate + persist to a temp file + convert to both MD and HTML.
 
-    Returns (markdown, original_filename). Raises HTTPException on any
-    validation failure. The temp file is deleted before returning.
+    Returns (markdown, html, original_filename). Markdown feeds Claude; HTML
+    is what the FE renders so tables/lists survive the round-trip. Raises
+    HTTPException on any validation failure. The temp file is deleted
+    before returning.
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
@@ -377,7 +380,13 @@ async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tupl
                 status_code=422,
                 detail=f"No text extracted from {role} file (possibly a scan without OCR).",
             )
-        return markdown, file.filename or ""
+        # HTML is best-effort — if the format doesn't have a converter or one
+        # blows up, we still return the markdown and the FE falls back to it.
+        try:
+            html = detect_type_and_convert_html(tmp_path)
+        except Exception:
+            html = ""
+        return markdown, html, file.filename or ""
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -395,10 +404,10 @@ async def reconcile_endpoint(
     and handed to Claude with the reconciliation schema. The result is
     persisted to `reconciliations` so it shows up in Library/History.
     """
-    contract_md, contract_name = await _ingest_upload(
+    contract_md, contract_html, contract_name = await _ingest_upload(
         contract_file, RECONCILE_CONTRACT_EXTS, "contract",
     )
-    handover_md, handover_name = await _ingest_upload(
+    handover_md, handover_html, handover_name = await _ingest_upload(
         handover_file, RECONCILE_HANDOVER_EXTS, "handover",
     )
 
@@ -427,10 +436,14 @@ async def reconcile_endpoint(
         "rows": rows,
         "findings": findings,
         "docs": docs,
-        # Phase 3.3: ship the raw source MD back so the FE can render the
+        # Phase 3.3: ship the raw source back so the FE can render the
         # original look (tables, layout) instead of Claude's compressed docs.
+        # HTML is preferred for display (preserves tables); MD stays as the
+        # token-cheap version and a fallback for older parsers.
         "contractMarkdown": contract_md,
         "handoverMarkdown": handover_md,
+        "contractHtml": contract_html,
+        "handoverHtml": handover_html,
         "createdAt": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     return insert_row(conn, RECONCILIATIONS, payload)

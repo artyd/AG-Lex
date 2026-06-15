@@ -233,21 +233,147 @@ function sanitizeBlockHtml(html) {
     .replace(/\sjavascript:/gi, '');
 }
 
+function unescapeMd(s) {
+  // Mammoth/pandoc escape punctuation in markdown output ("1\." for "1.",
+  // "non\-returnable", etc.). Drop the backslash before non-alphanumerics
+  // so the rendered text reads naturally.
+  return String(s).replace(/\\([^A-Za-z0-9])/g, '$1');
+}
+
 function SrcInline({ text }) {
   if (!text) return null;
+  const clean = unescapeMd(text);
   const out = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
+  // Match either **bold**, __bold__ (mammoth's docx output), or *italic*.
+  const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*)/g;
   let last = 0, m, key = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+  while ((m = re.exec(clean)) !== null) {
+    if (m.index > last) out.push(clean.slice(last, m.index));
     const tok = m[0];
-    out.push(tok.startsWith('**')
-      ? <strong key={'b' + key++}>{tok.slice(2, -2)}</strong>
-      : <em key={'i' + key++}>{tok.slice(1, -1)}</em>);
+    if (tok.startsWith('**') || tok.startsWith('__')) {
+      out.push(<strong key={'b' + key++}>{tok.slice(2, -2)}</strong>);
+    } else {
+      out.push(<em key={'i' + key++}>{tok.slice(1, -1)}</em>);
+    }
     last = m.index + tok.length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < clean.length) out.push(clean.slice(last));
   return out;
+}
+
+/* ---------- HTML source renderer with finding overlay ----------
+   Backend now ships `contractHtml` / `handoverHtml` (mammoth's HTML output
+   for docx, openpyxl-built tables for xlsx). We dangerously-set it after
+   sanitization, then in a useEffect walk the rendered DOM and wrap each
+   `row.contract` / `row.t3` value in a `<mark>` so highlights show on the
+   actual source — not on Claude's flattened summary. Click on a mark fires
+   `onPick(cat)` so the right-side findings panel focuses the same row. */
+function SourceHtmlDoc({ html, rows, side, active, onPick, refs }) {
+  const ref = useRef(null);
+
+  // Overlay highlights whenever the doc HTML or the rows change. We tear
+  // down the previous marks first so re-renders don't compound.
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !rows) return;
+    root.querySelectorAll('mark.cmark[data-overlay]').forEach(m => {
+      const parent = m.parentNode;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      parent.removeChild(m);
+      parent.normalize();
+    });
+    if (refs) refs.current = {};
+    const norm = (s) => String(s || '')
+      .replace(/ /g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Walk text nodes once; for each row, wrap the FIRST occurrence so we
+    // don't carpet-bomb the doc when a value (e.g. "USD") appears 50 times.
+    const candidates = (rows || []).filter(r => {
+      if (!r) return false;
+      if (r.status === 'absent' || r.status === 'ok') return false;
+      const v = side === 'contract' ? r.contract : r.t3;
+      const trimmed = norm(v);
+      return trimmed && trimmed !== '—' && trimmed.length >= 2;
+    });
+    if (candidates.length === 0) return;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.parentNode || node.parentNode.tagName === 'SCRIPT') return NodeFilter.FILTER_REJECT;
+        if (node.parentNode.closest && node.parentNode.closest('mark.cmark')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const textNodes = [];
+    let n;
+    while ((n = walker.nextNode())) textNodes.push(n);
+
+    const matched = new Set();
+    for (const tn of textNodes) {
+      const text = tn.textContent;
+      if (!text) continue;
+      for (const row of candidates) {
+        if (matched.has(row.key)) continue;
+        const value = norm(side === 'contract' ? row.contract : row.t3);
+        const idx = text.indexOf(value);
+        if (idx < 0) continue;
+        const parent = tn.parentNode;
+        const before = text.slice(0, idx);
+        const after = text.slice(idx + value.length);
+        const mark = document.createElement('mark');
+        mark.className = 'cmark cmark-' + row.status;
+        mark.setAttribute('data-overlay', '1');
+        mark.setAttribute('data-cat', row.key);
+        mark.textContent = value;
+        if (before) parent.insertBefore(document.createTextNode(before), tn);
+        parent.insertBefore(mark, tn);
+        if (after) {
+          const afterNode = document.createTextNode(after);
+          parent.insertBefore(afterNode, tn);
+        }
+        parent.removeChild(tn);
+        if (refs) refs.current[row.key] = mark;
+        matched.add(row.key);
+        break;
+      }
+    }
+  }, [html, rows, side, refs]);
+
+  // Click on a mark → focus the corresponding finding in the right panel.
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !onPick) return;
+    const handle = (e) => {
+      const target = e.target.closest && e.target.closest('mark.cmark[data-cat]');
+      if (!target || !root.contains(target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cat = target.getAttribute('data-cat');
+      if (cat) onPick(cat);
+    };
+    root.addEventListener('click', handle);
+    return () => root.removeEventListener('click', handle);
+  }, [onPick]);
+
+  // Keep the `active` cmark class in sync with the selection.
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    root.querySelectorAll('mark.cmark.active').forEach(m => m.classList.remove('active'));
+    if (active) {
+      root.querySelectorAll(`mark.cmark[data-cat="${CSS.escape(active)}"]`).forEach(m => m.classList.add('active'));
+    }
+  }, [active, html, rows]);
+
+  return (
+    <div
+      ref={ref}
+      className="cmp-paper-src cmp-paper-html"
+      dangerouslySetInnerHTML={{ __html: sanitizeBlockHtml(html) }}
+    />
+  );
 }
 
 function SourceMarkdown({ markdown }) {
@@ -321,10 +447,25 @@ function SourceMarkdown({ markdown }) {
 }
 
 /* ---------- Contract paper (bilingual EN / UA) ---------- */
-function ContractPaper({ doc, active, onPick, refs, sourceMd }) {
-  // New path: render the original source markdown (preserves tables / layout
-  // / headings exactly as the converter produced them). Falls back to the
-  // Claude-summary `doc.sections` shape for runs persisted before Phase 3.3.
+function ContractPaper({ doc, active, onPick, refs, sourceMd, sourceHtml, rows }) {
+  // Source HTML wins (mammoth preserves tables/bilingual columns exactly).
+  // Source MD is the second-best (Phase 3.3 initial pass). Claude's
+  // `doc.sections` summary is the legacy fallback for runs persisted
+  // before either source-side was stored.
+  if (sourceHtml) {
+    return (
+      <div className="cmp-paper cmp-paper-contract cmp-paper-mdsrc">
+        <SourceHtmlDoc
+          html={sourceHtml}
+          rows={rows}
+          side="contract"
+          active={active}
+          onPick={onPick}
+          refs={refs}
+        />
+      </div>
+    );
+  }
   if (sourceMd) {
     return (
       <div className="cmp-paper cmp-paper-contract cmp-paper-mdsrc">
@@ -367,7 +508,21 @@ function ContractPaper({ doc, active, onPick, refs, sourceMd }) {
 }
 
 /* ---------- Handover paper (Лист погодження / Table 3 form) ---------- */
-function HandoverPaper({ doc, active, onPick, refs, sourceMd }) {
+function HandoverPaper({ doc, active, onPick, refs, sourceMd, sourceHtml, rows }) {
+  if (sourceHtml) {
+    return (
+      <div className="cmp-paper cmp-paper-form cmp-paper-mdsrc">
+        <SourceHtmlDoc
+          html={sourceHtml}
+          rows={rows}
+          side="handover"
+          active={active}
+          onPick={onPick}
+          refs={refs}
+        />
+      </div>
+    );
+  }
   if (sourceMd) {
     return (
       <div className="cmp-paper cmp-paper-form cmp-paper-mdsrc">
@@ -563,8 +718,10 @@ function ResultStep({ t, run, onBack, onRestart }) {
                 </div>
 
                 {which === 'contract'
-                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs} sourceMd={run.contractMarkdown} />
-                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs} sourceMd={run.handoverMarkdown} />}
+                  ? <ContractPaper doc={docs.contract} active={active} onPick={focusFinding} refs={docRefs}
+                      sourceMd={run.contractMarkdown} sourceHtml={run.contractHtml} rows={rows} />
+                  : <HandoverPaper doc={docs.handover} active={active} onPick={focusFinding} refs={docRefs}
+                      sourceMd={run.handoverMarkdown} sourceHtml={run.handoverHtml} rows={rows} />}
 
                 <div className="cmp-src-note"><Icon name="sparkle" size={12} fill={true} /> {t.cmpSrcNote}</div>
               </>

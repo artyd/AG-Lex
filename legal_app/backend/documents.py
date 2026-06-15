@@ -103,10 +103,84 @@ def xlsx_to_markdown(path: str | Path) -> str:
         wb.close()
 
 
+# ---------------------------------------------------------------------------
+# HTML conversion (Phase 3.3) — used for the reconcile display so the FE
+# can preserve the doc's look (tables, bilingual columns, lists) instead of
+# flattening it via mammoth's markdown output. The Claude analysis still
+# rides on the markdown above for token efficiency.
+# ---------------------------------------------------------------------------
+
+def pdf_to_html(path: str | Path) -> str:
+    """Render every page as HTML and concatenate. pymupdf's HTML output
+    preserves text positioning but flattens tables; good enough for display
+    when the source is a born-digital PDF."""
+    import pymupdf
+    doc = pymupdf.open(str(path))
+    try:
+        parts = []
+        for page in doc:
+            parts.append(page.get_text("html"))
+        return "\n".join(parts)
+    finally:
+        doc.close()
+
+
+def docx_to_html(path: str | Path) -> str:
+    """Mammoth's HTML output keeps Word tables, headings, lists, bold —
+    everything we lose in the markdown round-trip. Inline styles are
+    omitted; we restyle on the FE via .cmp-paper-src classes."""
+    import mammoth
+    with open(str(path), "rb") as f:
+        result = mammoth.convert_to_html(f)
+    return result.value
+
+
+def xlsx_to_html(path: str | Path) -> str:
+    """Render every sheet as an HTML table — mirrors xlsx_to_markdown but
+    keeps real <table>/<tr>/<td> tags so the FE renderer doesn't have to
+    parse pipe syntax for the handover view."""
+    import openpyxl
+    from html import escape as _esc
+    wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    try:
+        parts: list[str] = []
+        for ws in wb.worksheets:
+            rows = [
+                ["" if c is None else str(c).strip() for c in row]
+                for row in ws.iter_rows(values_only=True)
+            ]
+            rows = [r for r in rows if any(cell for cell in r)]
+            if not rows:
+                continue
+            if ws.title and ws.title.lower() not in {"sheet", "sheet1", "аркуш1"}:
+                parts.append(f"<h3>{_esc(ws.title)}</h3>")
+            width = max(len(r) for r in rows)
+            rows = [r + [""] * (width - len(r)) for r in rows]
+            parts.append("<table>")
+            parts.append("<thead><tr>" + "".join(
+                f"<th>{_esc(c)}</th>" for c in rows[0]
+            ) + "</tr></thead>")
+            parts.append("<tbody>")
+            for r in rows[1:]:
+                parts.append("<tr>" + "".join(
+                    f"<td>{_esc(c)}</td>" for c in r
+                ) + "</tr>")
+            parts.append("</tbody></table>")
+        return "\n".join(parts)
+    finally:
+        wb.close()
+
+
 _CONVERTERS: dict[str, Callable[[str | Path], str]] = {
     ".pdf": pdf_to_markdown,
     ".docx": docx_to_markdown,
     ".xlsx": xlsx_to_markdown,
+}
+
+_HTML_CONVERTERS: dict[str, Callable[[str | Path], str]] = {
+    ".pdf": pdf_to_html,
+    ".docx": docx_to_html,
+    ".xlsx": xlsx_to_html,
 }
 
 _RAW_EXTRACTORS: dict[str, Callable[[str | Path], str]] = {
@@ -119,6 +193,17 @@ _RAW_EXTRACTORS: dict[str, Callable[[str | Path], str]] = {
 def detect_type_and_convert(path: str | Path) -> str:
     suffix = Path(path).suffix.lower()
     fn = _CONVERTERS.get(suffix)
+    if fn is None:
+        raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx, .xlsx")
+    return fn(path)
+
+
+def detect_type_and_convert_html(path: str | Path) -> str:
+    """Display-side renderer: returns HTML preserving the doc's structure
+    (tables, headings, lists). Used by /api/reconcile so the FE shows the
+    original look instead of mammoth's flattened markdown."""
+    suffix = Path(path).suffix.lower()
+    fn = _HTML_CONVERTERS.get(suffix)
     if fn is None:
         raise ValueError(f"Unsupported file type: {suffix!r}. Supported: .pdf, .docx, .xlsx")
     return fn(path)
