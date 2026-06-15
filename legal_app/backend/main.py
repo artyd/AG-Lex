@@ -28,20 +28,24 @@ from .claude_client import ClaudeError
 from .codex import get_codex_stats
 from .config import get_settings
 from .contract_analysis import analyze_contract
-from .crud import ALL_ENTITIES, RECONCILIATIONS, build_router, insert_row
+from .crud import ALL_ENTITIES, CONTRACTS, RECONCILIATIONS, build_router, insert_row
 from .database import get_connection, get_db, init_schema, init_user_schema
 from .documents import (
+    DisplayPdfError,
     detect_type_and_convert,
     detect_type_and_convert_html,
     detect_type_and_extract_raw,
     split_into_sections,
+    to_display_pdf,
     token_savings,
 )
 from .models import (
     init_entity_schema,
+    migrate_contracts_display_pdf,
     migrate_drafts,
     migrate_matters,
     migrate_reconciliations,
+    migrate_reconciliations_display_pdf,
     migrate_users,
 )
 from .pipeline import analyze
@@ -86,6 +90,8 @@ async def lifespan(app: FastAPI):
         migrate_users(conn)
         migrate_matters(conn)
         migrate_reconciliations(conn)
+        migrate_reconciliations_display_pdf(conn)
+        migrate_contracts_display_pdf(conn)
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
@@ -106,6 +112,63 @@ app.include_router(drafts_module.router)  # Fix 1: custom router replaces generi
 app.include_router(matters_module.router)
 app.include_router(notifications_module.router)
 app.include_router(calendar_module.router)
+
+# Phase 4.x: custom POST /api/contracts that accepts a base64-encoded display
+# PDF (`displayPdfB64`) and writes it to the BLOB column. Registered BEFORE
+# the generic ALL_ENTITIES loop so this handler wins the POST route match;
+# the loop's GET/PATCH/DELETE handlers for /api/contracts still apply.
+class _ContractCreatePayload(BaseModel):
+    filename: Optional[str] = None
+    title: Optional[str] = None
+    counterparty: Optional[str] = None
+    risk: Optional[str] = None
+    score: Optional[int] = 0
+    findingsCount: Optional[int] = 0
+    analysis: Optional[dict] = None
+    createdAt: Optional[str] = None
+    displayPdfB64: Optional[str] = None
+
+
+@app.post(
+    "/api/contracts",
+    status_code=201,
+    dependencies=[Depends(current_user)],
+    tags=["contracts"],
+)
+def create_contract_with_pdf(
+    body: _ContractCreatePayload,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    data = body.model_dump(exclude={"displayPdfB64"}, exclude_none=True)
+    if not data.get("createdAt"):
+        data["createdAt"] = (
+            datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        )
+    inserted = insert_row(conn, CONTRACTS, data)
+    if body.displayPdfB64:
+        import base64 as _b64
+        import sys as _sys
+        try:
+            pdf_bytes = _b64.b64decode(body.displayPdfB64, validate=True)
+            if pdf_bytes.startswith(b"%PDF-"):
+                conn.execute(
+                    "UPDATE contracts SET display_pdf = ? WHERE id = ?",
+                    (pdf_bytes, inserted["id"]),
+                )
+                conn.commit()
+            else:
+                print(
+                    f"[contracts] {inserted['id']}: displayPdfB64 decoded but "
+                    f"not a valid PDF (starts {pdf_bytes[:8]!r})",
+                    file=_sys.stderr, flush=True,
+                )
+        except Exception as e:
+            print(
+                f"[contracts] {inserted['id']}: displayPdfB64 decode failed: {e}",
+                file=_sys.stderr, flush=True,
+            )
+    return inserted
+
 
 # Phase 2.2: mount /api/<entity> for every workspace table. All are gated by
 # `current_user` inside `build_router`. Phase 2.3: invoices reads/writes
@@ -239,11 +302,30 @@ async def upload_document(file: UploadFile = File(...)):
                 detail="No text extracted. The file may be a scan with no text layer (OCR not yet supported).",
             )
 
+        # Phase 4.x: also render the display PDF and ship it base64-encoded
+        # in the response. The FE round-trips the same bytes to POST
+        # /api/contracts when persisting so the BLOB lands without another
+        # upload. Best-effort: missing soffice doesn't block analysis.
+        import base64 as _b64
+        try:
+            display_pdf_bytes = to_display_pdf(tmp_path)
+            display_pdf_b64 = _b64.b64encode(display_pdf_bytes).decode("ascii")
+        except (DisplayPdfError, ValueError) as e:
+            import sys as _sys
+            print(
+                f"[upload] display-PDF failed for {file.filename!r}: "
+                f"{getattr(e, 'kind', 'error')} — {e}",
+                file=_sys.stderr,
+                flush=True,
+            )
+            display_pdf_b64 = None
+
         return {
             "filename": file.filename,
             "markdown": markdown,
             "sections": sections,
             "token_stats": stats,
+            "display_pdf_b64": display_pdf_b64,
         }
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -341,13 +423,19 @@ def analyze_contract_endpoint(
         raise HTTPException(status_code=502, detail=str(e))
 
 
-async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tuple[str, str, str]:
-    """Reusable: validate + persist to a temp file + convert to both MD and HTML.
+async def _ingest_upload(
+    file: UploadFile, allowed: set[str], role: str,
+) -> tuple[str, str, bytes | None, str]:
+    """Reusable: validate + persist to a temp file + convert to MD, HTML, PDF.
 
-    Returns (markdown, html, original_filename). Markdown feeds Claude; HTML
-    is what the FE renders so tables/lists survive the round-trip. Raises
-    HTTPException on any validation failure. The temp file is deleted
-    before returning.
+    Returns (markdown, html, display_pdf_bytes, original_filename). Markdown
+    feeds Claude; HTML is the source-side fallback; the display PDF is what
+    the FE renders pixel-perfect via PDF.js. The PDF is best-effort: when
+    soffice is missing or crashes we log and return None so analysis still
+    proceeds — the FE shows a "preview unavailable" banner.
+
+    Raises HTTPException on any validation failure of the input file. The
+    temp file is deleted before returning.
     """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
@@ -386,7 +474,21 @@ async def _ingest_upload(file: UploadFile, allowed: set[str], role: str) -> tupl
             html = detect_type_and_convert_html(tmp_path)
         except Exception:
             html = ""
-        return markdown, html, file.filename or ""
+        # Display PDF is also best-effort: missing soffice or a crash
+        # should not block analysis — the FE just shows a banner.
+        display_pdf: bytes | None
+        try:
+            display_pdf = to_display_pdf(tmp_path)
+        except (DisplayPdfError, ValueError) as e:
+            import sys as _sys
+            print(
+                f"[_ingest_upload] display-PDF failed for {role} {file.filename!r}: "
+                f"{getattr(e, 'kind', 'error')} — {e}",
+                file=_sys.stderr,
+                flush=True,
+            )
+            display_pdf = None
+        return markdown, html, display_pdf, file.filename or ""
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -404,10 +506,10 @@ async def reconcile_endpoint(
     and handed to Claude with the reconciliation schema. The result is
     persisted to `reconciliations` so it shows up in Library/History.
     """
-    contract_md, contract_html, contract_name = await _ingest_upload(
+    contract_md, contract_html, contract_pdf, contract_name = await _ingest_upload(
         contract_file, RECONCILE_CONTRACT_EXTS, "contract",
     )
-    handover_md, handover_html, handover_name = await _ingest_upload(
+    handover_md, handover_html, handover_pdf, handover_name = await _ingest_upload(
         handover_file, RECONCILE_HANDOVER_EXTS, "handover",
     )
 
@@ -446,7 +548,94 @@ async def reconcile_endpoint(
         "handoverHtml": handover_html,
         "createdAt": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
-    return insert_row(conn, RECONCILIATIONS, payload)
+    inserted = insert_row(conn, RECONCILIATIONS, payload)
+    # Phase 4.x: write the display PDFs with a direct UPDATE since the
+    # BLOB columns are intentionally kept out of RECONCILIATIONS.columns
+    # so the generic CRUD list/get never serializes binary garbage.
+    if contract_pdf is not None or handover_pdf is not None:
+        conn.execute(
+            "UPDATE reconciliations "
+            "SET contract_display_pdf = ?, handover_display_pdf = ? "
+            "WHERE id = ?",
+            (contract_pdf, handover_pdf, inserted["id"]),
+        )
+        conn.commit()
+    # Stable URLs the FE can fetch with `authHeaders()`. We return them
+    # regardless of whether the BLOB landed — a 404 from the endpoint is
+    # what the FE uses to swap to the "preview unavailable" banner.
+    inserted["displayPdfUrl"] = (
+        f"/api/reconciliations/{inserted['id']}/contract-display.pdf"
+    )
+    inserted["handoverDisplayPdfUrl"] = (
+        f"/api/reconciliations/{inserted['id']}/handover-display.pdf"
+    )
+    return inserted
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.x: display-PDF binary endpoints. FE pre-fetches the bytes via
+# `fetch(url, { headers: authHeaders() })` → ArrayBuffer → PDF.js. We
+# explicitly opt out of caching (`no-store`) because the BLOB carries
+# potentially-confidential contract content. Three routes (contract,
+# reconcile-contract, reconcile-handover) instead of one ?role=… handler —
+# clearer URLs and FastAPI gets per-route dependency injection.
+# ---------------------------------------------------------------------------
+
+def _stream_display_pdf(
+    conn: sqlite3.Connection, table: str, blob_col: str, row_id: str,
+) -> "Response":
+    from fastapi.responses import Response as _Response
+    row = conn.execute(
+        f"SELECT {blob_col} FROM {table} WHERE id = ?",
+        (row_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"{table[:-1]} not found")
+    blob = row[0]
+    if not blob:
+        raise HTTPException(
+            status_code=404,
+            detail="display PDF not available for this record",
+        )
+    return _Response(
+        content=bytes(blob),
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Length": str(len(blob)),
+        },
+    )
+
+
+@app.get(
+    "/api/contracts/{rid}/display.pdf",
+    dependencies=[Depends(current_user)],
+    include_in_schema=False,
+)
+def contract_display_pdf(rid: str, conn: sqlite3.Connection = Depends(get_db)):
+    return _stream_display_pdf(conn, "contracts", "display_pdf", rid)
+
+
+@app.get(
+    "/api/reconciliations/{rid}/contract-display.pdf",
+    dependencies=[Depends(current_user)],
+    include_in_schema=False,
+)
+def reconciliation_contract_display_pdf(
+    rid: str, conn: sqlite3.Connection = Depends(get_db),
+):
+    return _stream_display_pdf(conn, "reconciliations", "contract_display_pdf", rid)
+
+
+@app.get(
+    "/api/reconciliations/{rid}/handover-display.pdf",
+    dependencies=[Depends(current_user)],
+    include_in_schema=False,
+)
+def reconciliation_handover_display_pdf(
+    rid: str, conn: sqlite3.Connection = Depends(get_db),
+):
+    return _stream_display_pdf(conn, "reconciliations", "handover_display_pdf", rid)
 
 
 # All future API routes go above this line. The static mount below is registered

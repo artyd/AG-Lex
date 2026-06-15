@@ -30,6 +30,26 @@ class Settings(BaseSettings):
         description="Folder containing built frontend (Vite dist/). FastAPI serves it at /.",
     )
 
+    # Phase 4.x — display-PDF pipeline. soffice converts DOCX/XLSX → PDF so
+    # the FE can render the original 1-to-1 via PDF.js; the analysis still
+    # runs against markdown for token efficiency.
+    SOFFICE_PATH: str = Field(
+        default="soffice",
+        description=(
+            "LibreOffice headless converter. Default `soffice` resolves via PATH; "
+            "set to an absolute path on hosts where it isn't on PATH "
+            "(e.g. /usr/lib/libreoffice/program/soffice)."
+        ),
+    )
+    DISPLAY_PDF_TIMEOUT: float = Field(
+        default=30.0,
+        description="Hard timeout per single-doc soffice conversion (seconds).",
+    )
+    MAX_DISPLAY_PDF_BYTES: int = Field(
+        default=40 * 1024 * 1024,
+        description="Reject rendered PDFs larger than this. Prevents runaway BLOBs.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

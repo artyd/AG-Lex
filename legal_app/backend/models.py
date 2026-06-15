@@ -200,6 +200,8 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     handover_markdown   TEXT,           -- raw source MD (Phase 3.3)
     contract_html       TEXT,           -- source HTML for display (Phase 3.3+)
     handover_html       TEXT,           -- source HTML for display (Phase 3.3+)
+    contract_display_pdf BLOB,          -- display PDF (Phase 4.x, served via /api)
+    handover_display_pdf BLOB,          -- display PDF (Phase 4.x, served via /api)
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
@@ -219,6 +221,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     score          INTEGER NOT NULL DEFAULT 0,
     findings_count INTEGER NOT NULL DEFAULT 0,
     analysis_json  TEXT,           -- findings/comparison/legal_basis/score/warnings
+    display_pdf    BLOB,           -- display PDF (Phase 4.x, served via /api)
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_contracts_user ON contracts(user_id);
@@ -387,6 +390,34 @@ def migrate_matters(conn) -> None:
     conn.execute(
         "UPDATE matters SET started_at = date('now') WHERE started_at IS NULL"
     )
+    conn.commit()
+
+
+def migrate_reconciliations_display_pdf(conn) -> None:
+    """Phase 4.x: add display-PDF BLOB columns to reconciliations.
+
+    The Reconcile screen renders the original document pixel-perfect via
+    PDF.js — the source PDF (or LibreOffice-rendered PDF for DOCX/XLSX)
+    rides in these columns and is streamed via /api/reconciliations/{id}/
+    contract-display.pdf (and …/handover-display.pdf). Idempotent.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
+    if "contract_display_pdf" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_display_pdf BLOB")
+    if "handover_display_pdf" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_display_pdf BLOB")
+    conn.commit()
+
+
+def migrate_contracts_display_pdf(conn) -> None:
+    """Phase 4.x: add a single display-PDF BLOB to the contracts table.
+
+    Mirrors `migrate_reconciliations_display_pdf` but for the single-contract
+    flow. Streamed via /api/contracts/{id}/display.pdf. Idempotent.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(contracts)").fetchall()}
+    if "display_pdf" not in cols:
+        conn.execute("ALTER TABLE contracts ADD COLUMN display_pdf BLOB")
     conn.commit()
 
 
