@@ -65,10 +65,14 @@ export default function App() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [contractUploadOpen, setContractUploadOpen] = useState(false);
   const [contractFile, setContractFile] = useState(null);
+  const [contractUploading, setContractUploading] = useState(false);
   const contractFileRef = useRef(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deskOpen, setDeskOpen] = useState(false);
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
+  // Real upload payload handed to ContractAnalysis: null = demo mode.
+  // Shape: { markdown, sections, filename, tokenStats } (from /api/upload).
+  const [analysisIncoming, setAnalysisIncoming] = useState(null);
   const [user, setUser] = useState(() => lxLoadSession());
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
   const L = I18N[lang];
@@ -169,13 +173,42 @@ export default function App() {
     setContractFile(null);
     setContractUploadOpen(true);
   };
-  const startUpload = () => {
-    setContractUploadOpen(false);
-    setUploadOpen(false);
-    setContractFile(null);
-    setAnalyzeNonce(n => n + 1);
-    setRoute('analyze');
-    toast(L.uploadDone, 'sparkle');
+  // Real path: POST the file to /api/upload, get back {markdown, sections,
+  // token_stats}, hand them to ContractAnalysis via the `incoming` prop. The
+  // demo path (opts.demo) bypasses upload entirely and lets ContractAnalysis
+  // fall back to DEMO so the screen stays useful without a backend.
+  const startUpload = async (opts = {}) => {
+    const isDemo = Boolean(opts.demo) || !contractFile;
+    if (isDemo) {
+      setContractUploadOpen(false);
+      setUploadOpen(false);
+      setContractFile(null);
+      setAnalysisIncoming(null);
+      setAnalyzeNonce(n => n + 1);
+      setRoute('analyze');
+      toast(L.uploadDone, 'sparkle');
+      return;
+    }
+    try {
+      setContractUploading(true);
+      const res = await api.upload(contractFile);
+      setAnalysisIncoming({
+        markdown: res.markdown,
+        sections: res.sections,
+        filename: res.filename,
+        tokenStats: res.token_stats,
+      });
+      setContractUploadOpen(false);
+      setUploadOpen(false);
+      setContractFile(null);
+      setAnalyzeNonce(n => n + 1);
+      setRoute('analyze');
+      toast(L.uploadDone, 'sparkle');
+    } catch (err) {
+      toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+    } finally {
+      setContractUploading(false);
+    }
   };
   const onContractFileChange = (e) => {
     const f = e.target.files && e.target.files[0];
@@ -209,7 +242,7 @@ export default function App() {
 
   let body;
   if (route === 'dashboard') body = <Dashboard t={L} setRoute={setRoute} user={user} />;
-  else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} />;
+  else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} incoming={analysisIncoming} />;
   else if (route === 'reconcile') body = <Reconcile t={L} key={'rc' + analyzeNonce} setRoute={setRoute} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
@@ -287,9 +320,11 @@ export default function App() {
       {/* Contract upload — real file dropzone */}
       <Modal open={contractUploadOpen} onClose={() => setContractUploadOpen(false)} title={L.uploadTitle} sub={L.uploadSub} icon="doc"
         footer={<>
-          <button className="btn btn-subtle" onClick={() => setContractUploadOpen(false)}>{L.cancel}</button>
-          <button className="btn btn-primary" onClick={startUpload} disabled={!contractFile}>
-            <Icon name="sparkle" size={15} fill={true} /> {L.uploadAnalyze}
+          <button className="btn btn-subtle" onClick={() => setContractUploadOpen(false)} disabled={contractUploading}>{L.cancel}</button>
+          <button className="btn btn-primary" onClick={() => startUpload()} disabled={!contractFile || contractUploading}>
+            {contractUploading
+              ? <><Icon name="refresh" size={15} /> {L.uploading || 'Uploading…'}</>
+              : <><Icon name="sparkle" size={15} fill={true} /> {L.uploadAnalyze}</>}
           </button>
         </>}>
         <input ref={contractFileRef} type="file" accept=".pdf,.docx,.doc" style={{ display: 'none' }} onChange={onContractFileChange} />
@@ -322,7 +357,7 @@ export default function App() {
             <div style={{ fontSize: 12.5, fontWeight: 600 }}>{L.uploadDemoLabel}</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 1 }}>{L.uploadDemoSub}</div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={startUpload}>{L.uploadDemoBtn}</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => startUpload({ demo: true })} disabled={contractUploading}>{L.uploadDemoBtn}</button>
         </div>
       </Modal>
 

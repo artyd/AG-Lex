@@ -128,9 +128,9 @@ function FindingCard({ f, active, onClick, applied, onApply, t }) {
 }
 
 /* ---------- Legal basis card ---------- */
-function LegalBasis({ t }) {
+function LegalBasis({ t, items }) {
   const [open, setOpen] = useState(false);
-  const D = DEMO;
+  const list = Array.isArray(items) && items.length ? items : DEMO.legalBasis;
   return (
     <div className="legal-card">
       <button className="legal-head" onClick={() => setOpen(o => !o)}>
@@ -143,7 +143,7 @@ function LegalBasis({ t }) {
       </button>
       {open && (
         <div className="legal-list">
-          {D.legalBasis.map((l, i) => (
+          {list.map((l, i) => (
             <div className="legal-item" key={i}>
               <span className={'legal-scope legal-' + l.scope}>{l.scope === 'EU' ? 'ЄС' : 'UA'}</span>
               <span style={{ flex: 1 }}>
@@ -327,28 +327,37 @@ function Chat({ t, inject }) {
 }
 
 /* ---------- AI panel ---------- */
-function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause }) {
-  const D = DEMO;
+function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
+  // `data` (always defined) is the merged real-or-demo bundle from
+  // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
+  // from DEMO until the backend learns to return them (Task 5/future).
+  const findings = data.findings;
+  const comparison = data.comparison;
+  const legalBasis = data.legalBasis;
+  const missing = data.missing;
+  const keyData = data.keyData;
+  const summary = data.summary;
+  const warnings = data.warnings;
   const [filter, setFilter] = useState('all');
 
-  const appliedWeight = D.findings.reduce((s, f) => s + (applied[f.id] ? (f.weight || 0) : 0), 0);
-  const liveScore = Math.min(92, D.score.value + appliedWeight);
-  const openHigh = D.findings.filter(f => f.level === 'high' && !applied[f.id]).length;
-  const openMed = D.findings.filter(f => f.level === 'med' && !applied[f.id]).length;
-  const resolved = D.findings.filter(f => applied[f.id]).length;
+  const appliedWeight = findings.reduce((s, f) => s + (applied[f.id] ? (f.weight || 0) : 0), 0);
+  const liveScore = Math.min(92, (data.score?.value || 0) + appliedWeight);
+  const openHigh = findings.filter(f => f.level === 'high' && !applied[f.id]).length;
+  const openMed = findings.filter(f => f.level === 'med' && !applied[f.id]).length;
+  const resolved = findings.filter(f => applied[f.id]).length;
   const scoreLabel = liveScore >= 80 ? t.scoreLow : liveScore >= 58 ? t.scoreMed : t.scoreHigh;
   const scoreColor = liveScore >= 75 ? 'var(--risk-low)' : liveScore >= 55 ? 'var(--risk-med)' : 'var(--risk-high)';
 
-  const fixable = D.findings.filter(f => f.suggest);
+  const fixable = findings.filter(f => f.suggest);
   const allFixed = fixable.every(f => applied[f.id]);
-  const filtered = filter === 'all' ? D.findings : D.findings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
+  const filtered = filter === 'all' ? findings : findings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
 
   const tabs = [
     { id: 'risks', label: t.tabRisks, n: openHigh + openMed },
     { id: 'chat', label: t.tabChat, icon: 'sparkle' },
     { id: 'summary', label: t.tabSummary },
     { id: 'data', label: t.tabData },
-    { id: 'missing', label: t.tabMissing, n: D.missing.length - addedSet.size },
+    { id: 'missing', label: t.tabMissing, n: missing.length - addedSet.size },
     { id: 'compare', label: t.tabCompare },
   ];
 
@@ -364,7 +373,25 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
       <div className="aipanel-head">
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, marginBottom: 12 }}>
           <Icon name="sparkle" size={16} fill={true} /> {t.aiAnalysis}
+          {isDemo ? (
+            <span title={t.demoBadgeSub || ''} style={{
+              marginLeft: 'auto', fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em',
+              textTransform: 'uppercase', color: 'var(--text-3)',
+              border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px',
+            }}>{t.demoBadge || 'demo'}</span>
+          ) : null}
         </div>
+        {warnings.length > 0 ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10,
+            padding: '6px 10px', borderRadius: 8,
+            background: 'var(--risk-med-soft)', color: 'var(--risk-med)',
+            fontSize: 12.5,
+          }}>
+            <Icon name="alert" size={13} />
+            <span style={{ flex: 1 }}>{warnings.join(' · ')}</span>
+          </div>
+        ) : null}
         <div className="score-block">
           <ScoreRing value={liveScore} size={66} />
           <div>
@@ -394,7 +421,7 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
         <div className="aipanel-body">
           {tab === 'risks' && (
             <div className="view-enter" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <LegalBasis t={t} />
+              <LegalBasis t={t} items={legalBasis} />
               <div className="risk-toolbar">
                 <div className="seg seg-sm">
                   {[['all', t.filterAll], ['crit', t.filterCrit], ['mod', t.filterMod]].map(([id, lbl]) => (
@@ -421,16 +448,16 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
                 <Icon name="sparkle" size={15} fill={true} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 2 }} />
                 <div>
                   <div style={{ fontWeight: 700, marginBottom: 6 }}>{t.summaryTitle}</div>
-                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--text-2)' }}>{D.summary}</p>
+                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--text-2)' }}>{summary}</p>
                 </div>
               </div>
-              <LegalBasis t={t} />
+              <LegalBasis t={t} items={legalBasis} />
             </div>
           )}
 
           {tab === 'data' && (
             <div className="view-enter" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {D.keyData.map((d, i) => (
+              {keyData.map((d, i) => (
                 <div className="data-card" key={i}>
                   <div className="data-ic"><Icon name={d.icon} size={16} /></div>
                   <div style={{ minWidth: 0 }}>
@@ -447,7 +474,7 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
             <div className="view-enter">
               <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 10 }}>{t.missingSub}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                {D.missing.map((m, i) => {
+                {missing.map((m, i) => {
                   const added = addedSet.has(i);
                   return (
                     <div className={'miss-card' + (added ? ' miss-done' : '')} key={i}>
@@ -473,7 +500,7 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
             <div className="view-enter">
               <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 10 }}>{t.compareSub}</div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {D.comparison.map((c, i) => {
+                {comparison.map((c, i) => {
                   const [col, label, ic] = statusMap[c.status];
                   return (
                     <div className="cmp-row" key={i}>
@@ -496,9 +523,9 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
 }
 
 /* ---------- Protocol modal content ---------- */
-function ProtocolModal({ open, onClose, t }) {
-  const D = DEMO;
-  const rows = D.findings.filter(f => f.suggest);
+function ProtocolModal({ open, onClose, t, findings }) {
+  const list = Array.isArray(findings) ? findings : DEMO.findings;
+  const rows = list.filter(f => f.suggest);
   const copyAll = () => {
     const text = rows.map((f, i) => `${i + 1}. ${f.clause} — ${f.title}\n  ${t.protoCurrent}: ${f.suggest.from}\n  ${t.protoProposed}: ${f.suggest.to}\n  ${t.protoBasis}: ${f.law || '—'}`).join('\n\n');
     try { navigator.clipboard.writeText(text); } catch (e) {}
@@ -658,9 +685,33 @@ function PendingAnalysisBanner({ t, name, status, analysis, onRetry, onClose }) 
 }
 
 /* ---------- Main analysis view ---------- */
-function ContractAnalysis({ t }) {
+function ContractAnalysis({ t, incoming }) {
   const D = DEMO;
-  const fById = useMemo(() => Object.fromEntries(D.findings.map(f => [f.id, f])), []);
+  // Real analysis result from POST /api/analyze/contract. Null until the
+  // round-trip completes (or never, in demo mode).
+  const [analysis, setAnalysis] = useState(null);
+  // 'demo'    — no incoming doc, showing DEMO with a badge
+  // 'loading' — incoming.markdown is being analyzed
+  // 'ready'   — analysis received, panels show real findings
+  // 'error'   — API failed, degraded to DEMO with badge
+  const [analysisStatus, setAnalysisStatus] = useState(incoming ? 'loading' : 'demo');
+
+  // Merged data source: real fields override DEMO when available. `missing` /
+  // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
+  // stay on DEMO until Task 5/future extends the backend.
+  const data = useMemo(() => ({
+    findings: analysis?.findings ?? D.findings,
+    comparison: analysis?.comparison ?? D.comparison,
+    legalBasis: analysis?.legal_basis ?? D.legalBasis,
+    score: analysis?.score ?? D.score,
+    warnings: analysis?.warnings ?? [],
+    missing: D.missing,
+    keyData: D.keyData,
+    summary: D.summary,
+  }), [analysis, D]);
+  const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
+
+  const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
   const [phase, setPhase] = useState('loading');
   const [tab, setTab] = useState('risks');
   const [active, setActive] = useState(null);
@@ -681,6 +732,37 @@ function ContractAnalysis({ t }) {
   const [trOpen, setTrOpen] = useState(false);
   const [apprSteps, setApprSteps] = useState(LX.approval);
   const [comments, setComments] = useState(LX.comments);
+
+  // Mount: if we got an uploaded doc, analyze it for real. Cancellable so a
+  // route change mid-flight doesn't write to a stale state.
+  const liveRef = useRef(true);
+  useEffect(() => {
+    liveRef.current = true;
+    if (!incoming || !incoming.markdown) return () => { liveRef.current = false; };
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.analyzeContract({
+          markdown: incoming.markdown,
+          sections: incoming.sections,
+        });
+        if (cancelled || !liveRef.current) return;
+        setAnalysis(res);
+        setAnalysisStatus('ready');
+        setPhase('ready');
+      } catch (_e) {
+        if (cancelled || !liveRef.current) return;
+        // Backend down or 502 — surface as demo fallback so the screen stays
+        // useful. A toast at the call site would be nicer but the existing
+        // demo flow shows the badge + same content, which is the safest UX.
+        toast(t.uploadError || 'Analysis failed', 'alert');
+        setAnalysisStatus('error');
+        setPhase('ready');
+      }
+    })();
+    return () => { cancelled = true; liveRef.current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming]);
   // Fix 2: state for the document handoff from DocBuilder ("Відкрити в аналізі").
   // `pendingDoc.markdown` is the freshly-generated contract; `pendingStatus`
   // tracks the auto-triggered /api/analyze/contract round-trip.
@@ -726,11 +808,15 @@ function ContractAnalysis({ t }) {
     }
   }
 
+  // Demo polish: 2.35s fake overlay only when there's no real incoming doc.
+  // With incoming.markdown the analyze() effect above drives phase → 'ready'
+  // once the real API call resolves (or errors out).
   useEffect(() => {
     if (phase !== 'loading') return;
+    if (incoming && incoming.markdown) return;
     const tm = setTimeout(() => setPhase('ready'), 2350);
     return () => clearTimeout(tm);
-  }, [phase]);
+  }, [phase, incoming]);
 
   const scrollToSeg = (id) => {
     const el = segRefs.current[id];
@@ -750,7 +836,7 @@ function ContractAnalysis({ t }) {
   const onApply = (id) => setApplied(a => ({ ...a, [id]: true }));
   const onApplyAll = () => {
     const next = {};
-    D.findings.forEach(f => { if (f.suggest) next[f.id] = true; });
+    data.findings.forEach(f => { if (f.suggest) next[f.id] = true; });
     setApplied(a => ({ ...a, ...next }));
     toast(t.allApplied, 'wand');
   };
@@ -779,7 +865,7 @@ function ContractAnalysis({ t }) {
     toast(t.clauseAdded, 'check');
   };
 
-  const addedClauses = D.missing.filter((_, i) => addedSet.has(i));
+  const addedClauses = data.missing.filter((_, i) => addedSet.has(i));
 
   return (
     <div className="analysis">
@@ -877,12 +963,13 @@ function ContractAnalysis({ t }) {
           {phase === 'ready'
             ? <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
                 applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
-                chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause} />
+                chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
+                data={data} isDemo={isDemo} />
             : <PanelSkeleton />}
         </div>
       </div>
 
-      <ProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} t={t} />
+      <ProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} t={t} findings={data.findings} />
       <DiffModal open={diffOpen} onClose={() => setDiffOpen(false)} t={t} />
       <SummaryModal open={sumOpen} onClose={() => setSumOpen(false)} t={t} />
       <TranslateModal open={trOpen} onClose={() => setTrOpen(false)} t={t} />
