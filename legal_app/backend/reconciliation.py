@@ -243,6 +243,10 @@ def reconcile(
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> dict:
     """Call Claude with structured output → reconciliation payload."""
+    from .mock_ai import is_mock_ai, mock_reconciliation
+    if is_mock_ai():
+        return mock_reconciliation()
+
     settings = get_settings()
     cli = client or _client()
 

@@ -37,3 +37,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Playwright artifacts + e2e scratch DB
+e2e/.tmp/
+playwright-report/
+test-results/

@@ -31,4 +31,9 @@ export default defineConfig({
       },
     },
   },
+  // Vitest auto-discovers *.test.{js,ts} and *.spec.{js,ts} — keep it out of
+  // the e2e/ folder so it doesn't try to run Playwright specs under jsdom.
+  test: {
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+  },
 })

@@ -136,7 +136,11 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     dependency with `app.dependency_overrides[get_db] = ...` to inject an
     in-memory connection.
     """
-    conn = get_connection()
+    # async endpoints (e.g. /api/reconcile) dispatch sync Depends() in a
+    # threadpool while the endpoint body runs on the event-loop thread; the
+    # connection must cross that boundary. We keep the connection scoped to
+    # a single request so SQLite's no-mid-flight-writes rule still holds.
+    conn = get_connection(check_same_thread=False)
     try:
         yield conn
     finally:

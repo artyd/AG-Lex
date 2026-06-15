@@ -80,16 +80,12 @@ async def lifespan(app: FastAPI):
         init_entity_schema(conn)      # workspace entities (Phase 2.2)
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
-        migrate_drafts(conn)          # Fix 1: add user_id + is_shared, backfill legacy rows
-        # Phase 2.4: realtime Matters needs users.legacy_id (bridges auth ids to
-        # the prototype TEXT user_ids used across domain tables), plus richer
-        # columns on `matters` for the detail view. Order matters: users first
-        # because the matters migration references them indirectly.
+        migrate_drafts(conn)
         migrate_users(conn)
         migrate_matters(conn)
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
-        seed_all(conn)                # populate workspace tables from demo data
+        seed_all(conn)
     finally:
         conn.close()
     yield
