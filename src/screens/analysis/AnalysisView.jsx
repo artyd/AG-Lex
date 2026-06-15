@@ -22,6 +22,12 @@ import { PdfViewer } from './PdfViewer';
 
 const LOAD = { idle: 'idle', loading: 'loading', ready: 'ready', missing: 'missing', error: 'error' };
 
+// Track every fetch attempt per doc so the fallback banner can tell the
+// user *why* the PDF didn't show up — was it config (URL missing), backend
+// (404 / 500), or the network? Keyed by `${docIdx}@${attempt}` so manual
+// retries actually re-trigger the useEffect.
+function _diagKey(docIdx, attempt) { return `${docIdx}@${attempt}`; }
+
 const ZOOM_LEVELS = [0.75, 0.9, 1.0, 1.15, 1.3, 1.5, 1.75, 2.0, 2.5];
 const ZOOM_DEFAULT = 1.3;
 
@@ -56,42 +62,61 @@ export function AnalysisView({
   // keeps both in memory so flipping tabs is instant.
   const [bytesByIdx, setBytesByIdx] = useState({});
   const [stateByIdx, setStateByIdx] = useState({}); // idx → LOAD.*
+  const [diagByIdx, setDiagByIdx] = useState({});   // idx → { status, url, reason }
+  const [retryByIdx, setRetryByIdx] = useState({}); // idx → attempt counter
   const [pagesByIdx, setPagesByIdx] = useState({}); // idx → { [pageNumber]: pageInfo }
+  const attempt = retryByIdx[docIdx] || 0;
 
-  // Fetch the current document's bytes once. URL change re-fetches; bytes
-  // already provided on the doc descriptor short-circuit the network step.
+  // Fetch the current document's bytes. URL change OR a manual retry
+  // re-fires the effect. Bytes already on the descriptor short-circuit
+  // the network step.
   useEffect(() => {
     if (!cur) return;
     if (cur.displayPdfBytes && !bytesByIdx[docIdx]) {
       setBytesByIdx((m) => ({ ...m, [docIdx]: cur.displayPdfBytes }));
       setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.ready }));
+      setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'bytes' } }));
       return;
     }
     if (!cur.displayPdfUrl) {
+      console.warn('[AnalysisView] doc', docIdx, 'has no displayPdfUrl — banner will show.');
       setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.missing }));
+      setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'no-url' } }));
       return;
     }
     if (bytesByIdx[docIdx]) return;
     setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.loading }));
     let cancelled = false;
-    fetch(cur.displayPdfUrl, { headers: authHeaders() })
+    const url = cur.displayPdfUrl;
+    fetch(url, { headers: authHeaders() })
       .then(async (r) => {
         if (cancelled) return;
         if (r.status === 404) {
+          console.warn('[AnalysisView] 404 from', url, '— BLOB likely NULL on the server.');
           setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.missing }));
+          setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'http', status: 404, url } }));
           return;
         }
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.ok) {
+          console.error('[AnalysisView] HTTP', r.status, 'from', url);
+          setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.error }));
+          setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'http', status: r.status, url } }));
+          return;
+        }
         const buf = await r.arrayBuffer();
         if (cancelled) return;
         setBytesByIdx((m) => ({ ...m, [docIdx]: new Uint8Array(buf) }));
         setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.ready }));
+        setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'ok', status: 200, url, bytes: buf.byteLength } }));
       })
-      .catch(() => {
-        if (!cancelled) setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.error }));
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('[AnalysisView] fetch failed for', url, e);
+        setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.error }));
+        setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'net', url, message: String(e && e.message || e) } }));
       });
     return () => { cancelled = true; };
-  }, [docIdx, cur && cur.displayPdfUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [docIdx, attempt, cur && cur.displayPdfUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const docState = stateByIdx[docIdx] || LOAD.idle;
   const docBytes = bytesByIdx[docIdx] || null;
@@ -150,9 +175,47 @@ export function AnalysisView({
               {t?.previewUnavailable || 'Перегляд недоступний для цього запису.'}
             </div>
             <div className="analysis-fallback-sub">
-              {t?.previewUnavailableSub
-                || 'Записи до цього оновлення не зберігали оригінал. Завантажте контракт ще раз — і документ зʼявиться тут.'}
+              {(() => {
+                const d = diagByIdx[docIdx];
+                if (!d) return t?.previewUnavailableSub
+                  || 'Записи до цього оновлення не зберігали оригінал. Завантажте контракт ще раз — і документ зʼявиться тут.';
+                if (d.kind === 'no-url') {
+                  return 'Бекенд не повернув посилання на оригінал. Імовірно це запис, створений до цього оновлення — завантажте файли ще раз.';
+                }
+                if (d.kind === 'http' && d.status === 404) {
+                  return 'Файл недоступний на сервері (HTTP 404). Запис є, але оригінал не зберігся — швидше за все LibreOffice (soffice) не зміг сконвертувати один із файлів. Перевірте логи деплою: `journalctl -u aglex | grep to_display_pdf`.';
+                }
+                if (d.kind === 'http') {
+                  return `Сервер повернув HTTP ${d.status}. URL: ${d.url}`;
+                }
+                if (d.kind === 'net') {
+                  return `Помилка мережі при завантаженні ${d.url || ''}: ${d.message}`;
+                }
+                return t?.previewUnavailableSub || 'Невідома помилка.';
+              })()}
             </div>
+            {cur && cur.displayPdfUrl ? (
+              <details className="analysis-fallback-diag">
+                <summary>Діагностика</summary>
+                <pre>{JSON.stringify({
+                  url: cur.displayPdfUrl,
+                  diag: diagByIdx[docIdx] || null,
+                  state: docState,
+                }, null, 2)}</pre>
+              </details>
+            ) : null}
+            {cur && cur.displayPdfUrl ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm analysis-fallback-retry"
+                onClick={() => {
+                  setBytesByIdx((m) => { const n = { ...m }; delete n[docIdx]; return n; });
+                  setRetryByIdx((m) => ({ ...m, [docIdx]: (m[docIdx] || 0) + 1 }));
+                }}
+              >
+                <Icon name="refresh" size={14} /> Спробувати ще раз
+              </button>
+            ) : null}
           </div>
         ) : null}
 
