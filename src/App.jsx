@@ -65,10 +65,25 @@ export default function App() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [contractUploadOpen, setContractUploadOpen] = useState(false);
   const [contractFile, setContractFile] = useState(null);
+  const [contractUploading, setContractUploading] = useState(false);
   const contractFileRef = useRef(null);
+  // Pair upload (contract + handover) — modal entry point that mirrors the
+  // single-contract modal but with two square slots and one CTA.
+  const [pairUploadOpen, setPairUploadOpen] = useState(false);
+  const [pairContractFile, setPairContractFile] = useState(null);
+  const [pairHandoverFile, setPairHandoverFile] = useState(null);
+  const [pairUploading, setPairUploading] = useState(false);
+  const pairContractRef = useRef(null);
+  const pairHandoverRef = useRef(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deskOpen, setDeskOpen] = useState(false);
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
+  // Real upload payload handed to ContractAnalysis: null = demo mode.
+  // Shape: { markdown, sections, filename, tokenStats } (from /api/upload).
+  const [analysisIncoming, setAnalysisIncoming] = useState(null);
+  // Pre-fetched reconciliation result handed to Reconcile via prop. Same
+  // pattern as analysisIncoming — null = let the screen show its UploadStep.
+  const [reconcileIncoming, setReconcileIncoming] = useState(null);
   const [user, setUser] = useState(() => lxLoadSession());
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
   const L = I18N[lang];
@@ -169,13 +184,42 @@ export default function App() {
     setContractFile(null);
     setContractUploadOpen(true);
   };
-  const startUpload = () => {
-    setContractUploadOpen(false);
-    setUploadOpen(false);
-    setContractFile(null);
-    setAnalyzeNonce(n => n + 1);
-    setRoute('analyze');
-    toast(L.uploadDone, 'sparkle');
+  // Real path: POST the file to /api/upload, get back {markdown, sections,
+  // token_stats}, hand them to ContractAnalysis via the `incoming` prop. The
+  // demo path (opts.demo) bypasses upload entirely and lets ContractAnalysis
+  // fall back to DEMO so the screen stays useful without a backend.
+  const startUpload = async (opts = {}) => {
+    const isDemo = Boolean(opts.demo) || !contractFile;
+    if (isDemo) {
+      setContractUploadOpen(false);
+      setUploadOpen(false);
+      setContractFile(null);
+      setAnalysisIncoming(null);
+      setAnalyzeNonce(n => n + 1);
+      setRoute('analyze');
+      toast(L.uploadDone, 'sparkle');
+      return;
+    }
+    try {
+      setContractUploading(true);
+      const res = await api.upload(contractFile);
+      setAnalysisIncoming({
+        markdown: res.markdown,
+        sections: res.sections,
+        filename: res.filename,
+        tokenStats: res.token_stats,
+      });
+      setContractUploadOpen(false);
+      setUploadOpen(false);
+      setContractFile(null);
+      setAnalyzeNonce(n => n + 1);
+      setRoute('analyze');
+      toast(L.uploadDone, 'sparkle');
+    } catch (err) {
+      toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+    } finally {
+      setContractUploading(false);
+    }
   };
   const onContractFileChange = (e) => {
     const f = e.target.files && e.target.files[0];
@@ -184,8 +228,50 @@ export default function App() {
   };
   const startReconcile = () => {
     setUploadOpen(false);
+    setReconcileIncoming(null);
     setAnalyzeNonce(n => n + 1);
     setRoute('reconcile');
+  };
+  const openPairUpload = () => {
+    setUploadOpen(false);
+    setPairContractFile(null);
+    setPairHandoverFile(null);
+    setPairUploadOpen(true);
+  };
+  const onPairContractChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setPairContractFile(f);
+    e.target.value = '';
+  };
+  const onPairHandoverChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) setPairHandoverFile(f);
+    e.target.value = '';
+  };
+  // Real pair flow: POST both files to /api/reconcile, hand the finished run
+  // straight to <Reconcile incomingRun={...} /> so it lands on ResultStep
+  // without re-asking for files. Demo pair stays inside Reconcile.jsx for the
+  // direct-navigation case (Library row click, etc.).
+  const submitPairUpload = async () => {
+    if (!pairContractFile || !pairHandoverFile || pairUploading) return;
+    try {
+      setPairUploading(true);
+      const fd = new FormData();
+      fd.append('contract_file', pairContractFile);
+      fd.append('handover_file', pairHandoverFile);
+      const run = await api.reconcile(fd);
+      setReconcileIncoming(run);
+      setPairUploadOpen(false);
+      setPairContractFile(null);
+      setPairHandoverFile(null);
+      setAnalyzeNonce(n => n + 1);
+      setRoute('reconcile');
+      toast(L.uploadDone, 'sparkle');
+    } catch (err) {
+      toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+    } finally {
+      setPairUploading(false);
+    }
   };
   const startBatch = () => {
     setUploadOpen(false);
@@ -209,8 +295,8 @@ export default function App() {
 
   let body;
   if (route === 'dashboard') body = <Dashboard t={L} setRoute={setRoute} user={user} />;
-  else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} />;
-  else if (route === 'reconcile') body = <Reconcile t={L} key={'rc' + analyzeNonce} setRoute={setRoute} />;
+  else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} incoming={analysisIncoming} />;
+  else if (route === 'reconcile') body = <Reconcile t={L} key={'rc' + analyzeNonce} setRoute={setRoute} incomingRun={reconcileIncoming} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query} />;
@@ -266,7 +352,7 @@ export default function App() {
             <span className="hub-block-s">{L.hubContractSub}</span>
             <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
           </button>
-          <button className="hub-block hub-accent hub-block-lg" onClick={startReconcile}>
+          <button className="hub-block hub-accent hub-block-lg" onClick={openPairUpload}>
             <span className="hub-new">{L.hubNew}</span>
             <span className="hub-ic hub-ic-lg"><Icon name="scan" size={28} /></span>
             <span className="hub-block-t">{L.hubCompare}</span>
@@ -287,9 +373,11 @@ export default function App() {
       {/* Contract upload — real file dropzone */}
       <Modal open={contractUploadOpen} onClose={() => setContractUploadOpen(false)} title={L.uploadTitle} sub={L.uploadSub} icon="doc"
         footer={<>
-          <button className="btn btn-subtle" onClick={() => setContractUploadOpen(false)}>{L.cancel}</button>
-          <button className="btn btn-primary" onClick={startUpload} disabled={!contractFile}>
-            <Icon name="sparkle" size={15} fill={true} /> {L.uploadAnalyze}
+          <button className="btn btn-subtle" onClick={() => setContractUploadOpen(false)} disabled={contractUploading}>{L.cancel}</button>
+          <button className="btn btn-primary" onClick={() => startUpload()} disabled={!contractFile || contractUploading}>
+            {contractUploading
+              ? <><Icon name="refresh" size={15} /> {L.uploading || 'Uploading…'}</>
+              : <><Icon name="sparkle" size={15} fill={true} /> {L.uploadAnalyze}</>}
           </button>
         </>}>
         <input ref={contractFileRef} type="file" accept=".pdf,.docx,.doc" style={{ display: 'none' }} onChange={onContractFileChange} />
@@ -322,7 +410,60 @@ export default function App() {
             <div style={{ fontSize: 12.5, fontWeight: 600 }}>{L.uploadDemoLabel}</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 1 }}>{L.uploadDemoSub}</div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={startUpload}>{L.uploadDemoBtn}</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => startUpload({ demo: true })} disabled={contractUploading}>{L.uploadDemoBtn}</button>
+        </div>
+      </Modal>
+
+      {/* Pair upload — contract + handover (two square dropzones, one CTA) */}
+      <Modal open={pairUploadOpen} onClose={() => setPairUploadOpen(false)} title={L.cmpUploadTitle} sub={L.cmpUploadSub} icon="scan" wide
+        footer={<>
+          <button className="btn btn-subtle" onClick={() => setPairUploadOpen(false)} disabled={pairUploading}>{L.cancel}</button>
+          <button className="btn btn-primary" onClick={submitPairUpload}
+            disabled={!pairContractFile || !pairHandoverFile || pairUploading}>
+            {pairUploading
+              ? <><Icon name="refresh" size={15} /> {L.uploading || 'Uploading…'}</>
+              : <><Icon name="scan" size={15} /> {L.cmpRun}</>}
+          </button>
+        </>}>
+        <input ref={pairContractRef} type="file" accept=".pdf,.docx" style={{ display: 'none' }} onChange={onPairContractChange} />
+        <input ref={pairHandoverRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display: 'none' }} onChange={onPairHandoverChange} />
+        <div className="pair-slots">
+          {[
+            { file: pairContractFile, setFile: setPairContractFile, ref: pairContractRef,
+              tag: L.cmpSlotContract, accept: 'PDF, DOCX', icon: 'doc', accentIcon: 'doc' },
+            { file: pairHandoverFile, setFile: setPairHandoverFile, ref: pairHandoverRef,
+              tag: L.cmpSlotHandover, accept: 'PDF, DOCX, XLSX', icon: 'folder', accentIcon: 'folder' },
+          ].map((slot, i) => (
+            <div key={i} className="pair-slot">
+              <div className="pair-slot-tag"><Icon name={slot.accentIcon} size={13} /> {slot.tag}</div>
+              {slot.file ? (
+                <>
+                  <button className="dropzone dropzone-filled pair-drop"
+                    onClick={() => slot.ref.current && slot.ref.current.click()}
+                    disabled={pairUploading}>
+                    <div className="dropzone-ic" style={{ background: 'var(--risk-low-soft)', color: 'var(--risk-low)' }}>
+                      <Icon name="check" size={26} stroke={2.5} />
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginTop: 10, color: 'var(--risk-low)' }}>{L.uploadSelected}</div>
+                  </button>
+                  <div className="file-chip" style={{ marginTop: 10 }}>
+                    <span className="file-chip-ic"><Icon name={slot.icon} size={15} /></span>
+                    <span style={{ flex: 1, minWidth: 0, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{slot.file.name}</span>
+                    <span style={{ color: 'var(--text-3)', fontSize: 12, fontFeatureSettings: '"tnum"' }}>{(slot.file.size / 1024 / 1024).toFixed(1)} МБ</span>
+                    <button className="icon-btn" aria-label={L.uploadRemove} onClick={() => slot.setFile(null)} style={{ width: 26, height: 26 }} disabled={pairUploading}>
+                      <Icon name="x" size={13} />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button className="dropzone pair-drop" onClick={() => slot.ref.current && slot.ref.current.click()} disabled={pairUploading}>
+                  <div className="dropzone-ic"><Icon name="upload" size={24} /></div>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginTop: 10 }}>{L.uploadDrop}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>{slot.accept}</div>
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       </Modal>
 

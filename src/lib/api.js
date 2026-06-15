@@ -124,6 +124,19 @@ const team = {
   members: () => request('/api/team/members'),
 };
 
+// Single-document pipeline (Phase 3.1 — see legal_app/backend/main.py).
+// `upload` turns a real PDF/DOCX into markdown + section list + token-stats.
+// `analyzeContract` then turns the markdown (or sections) into the findings /
+// comparison / legal_basis / score structure ContractAnalysis already renders.
+function upload(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  return multipart('/api/upload', fd);
+}
+function analyzeContract({ markdown, sections } = {}) {
+  return request('/api/analyze/contract', { method: 'POST', body: { markdown, sections } });
+}
+
 export const api = {
   request,
   matters,
@@ -144,6 +157,8 @@ export const api = {
   versions: entity('versions'),
   reconciliations: entity('reconciliations'),
   reconcile: (formData) => multipart('/api/reconcile', formData),
+  upload,
+  analyzeContract,
 };
 
 export { ApiError };
