@@ -15,6 +15,91 @@ const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
 };
 
+/* ---------- Tiny Markdown renderer for uploaded contracts ----------
+   Covers what /api/upload actually emits today: paragraphs,
+   pipe-tables, **bold**, *italic*. Deliberately minimal — no extra deps,
+   no untrusted-HTML execution; <strong>/<em> only. Task 4 will overlay
+   <mark> highlights on top of the same node tree. */
+function MdInline({ text }) {
+  if (!text) return null;
+  const out = [];
+  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
+  let last = 0;
+  let m;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('**')) out.push(<strong key={'b' + key++}>{tok.slice(2, -2)}</strong>);
+    else out.push(<em key={'i' + key++}>{tok.slice(1, -1)}</em>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function MdBlock({ text }) {
+  if (!text) return null;
+  const lines = text.split(/\r?\n/);
+  const blocks = [];
+  let buf = [];
+  const flush = () => { if (buf.length) { blocks.push(buf); buf = []; } };
+  for (const ln of lines) {
+    if (ln.trim() === '') flush();
+    else buf.push(ln);
+  }
+  flush();
+
+  const splitRow = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+  const isDivider = (l) => /^\s*\|?[-: \|]+\|?\s*$/.test(l);
+
+  return blocks.map((b, idx) => {
+    // Pipe-table detection: ≥2 lines, all start with |, contains divider row.
+    const pipey = b.length >= 2 && b.every(l => l.trim().startsWith('|'));
+    if (pipey) {
+      const divIdx = b.findIndex(isDivider);
+      if (divIdx > 0) {
+        const head = splitRow(b[divIdx - 1]);
+        const body = b.slice(divIdx + 1).map(splitRow);
+        return (
+          <table className="doc-table" key={idx}>
+            <thead><tr>{head.map((c, k) => <th key={k}><MdInline text={c} /></th>)}</tr></thead>
+            <tbody>{body.map((r, k) => (
+              <tr key={k}>{r.map((c, j) => <td key={j}><MdInline text={c} /></td>)}</tr>
+            ))}</tbody>
+          </table>
+        );
+      }
+    }
+    // Otherwise treat the block as a paragraph (markdown soft-wrap → single line).
+    return <p className="doc-p" key={idx}><MdInline text={b.join(' ')} /></p>;
+  });
+}
+
+/* ---------- Real (uploaded) document renderer ----------
+   Mirrors the visual shape of <ContractDoc> (doc-head / doc-clause /
+   doc-clause-title / doc-p) so styling stays consistent, but reads
+   from /api/upload's `sections` shape: {number, title, text}. */
+function ContractDocReal({ filename, sections }) {
+  return (
+    <div className="doc">
+      <div className="doc-head">
+        <h1 className="doc-title">{filename || 'Договір'}</h1>
+      </div>
+      {(sections || []).map((s, i) => {
+        const head = [s.number, s.title].filter(Boolean).join(' ');
+        const anchor = s.number ? `clause-${String(s.number).replace(/\s+/g, '')}` : `clause-i-${i}`;
+        return (
+          <section className="doc-clause" id={anchor} key={i}>
+            {head ? <h3 className="doc-clause-title">{head}</h3> : null}
+            <MdBlock text={s.text} />
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ---------- Inline highlighted document ---------- */
 function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, onHover, onPick, onAsk, addedClauses, t }) {
   const clickTimer = useRef(null);
@@ -456,17 +541,34 @@ function AiPanel({ t, tab, setTab, active, setActive, applied, onApply, onApplyA
           )}
 
           {tab === 'data' && (
-            <div className="view-enter" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {keyData.map((d, i) => (
-                <div className="data-card" key={i}>
-                  <div className="data-ic"><Icon name={d.icon} size={16} /></div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600 }}>{d.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 650, letterSpacing: '-0.01em' }}>{d.value}</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{d.sub}</div>
+            <div className="view-enter">
+              {data.tokenStats ? (
+                <div className="data-card" style={{ marginBottom: 10, gridColumn: '1 / -1' }}>
+                  <div className="data-ic"><Icon name="sparkle" size={16} fill={true} /></div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600 }}>Токени після конвертації</div>
+                    <div style={{ fontSize: 14, fontWeight: 650, letterSpacing: '-0.01em', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {(data.tokenStats.markdown_tokens || 0).toLocaleString('uk-UA')} / {(data.tokenStats.raw_tokens || 0).toLocaleString('uk-UA')}
+                      {data.tokenStats.savings_pct > 0 ? (
+                        <span className="doc-savings"><Icon name="check" size={11} stroke={3} /> −{data.tokenStats.savings_pct}%</span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>Markdown → економія токенів при аналізі</div>
                   </div>
                 </div>
-              ))}
+              ) : null}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {keyData.map((d, i) => (
+                  <div className="data-card" key={i}>
+                    <div className="data-ic"><Icon name={d.icon} size={16} /></div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600 }}>{d.label}</div>
+                      <div style={{ fontSize: 14, fontWeight: 650, letterSpacing: '-0.01em' }}>{d.value}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{d.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -705,10 +807,11 @@ function ContractAnalysis({ t, incoming }) {
     legalBasis: analysis?.legal_basis ?? D.legalBasis,
     score: analysis?.score ?? D.score,
     warnings: analysis?.warnings ?? [],
+    tokenStats: incoming?.tokenStats || null,
     missing: D.missing,
     keyData: D.keyData,
     summary: D.summary,
-  }), [analysis, D]);
+  }), [analysis, D, incoming]);
   const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
 
   const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
@@ -943,9 +1046,11 @@ function ContractAnalysis({ t, incoming }) {
           {phase === 'loading'
             ? <AnalyzingOverlay t={t} />
             : <div className="view-enter">
-                <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
-                  highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
-                  onHover={onHover} onPick={onPick} onAsk={onAsk} />
+                {incoming && Array.isArray(incoming.sections) && incoming.sections.length > 0
+                  ? <ContractDocReal filename={incoming.filename} sections={incoming.sections} />
+                  : <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
+                      highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
+                      onHover={onHover} onPick={onPick} onAsk={onAsk} />}
               </div>}
           {tooltip && (
             <div className="hl-tip" style={{ left: tooltip.x, top: tooltip.y }}>
