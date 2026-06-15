@@ -620,6 +620,38 @@ select.field { cursor: pointer; }
 .cmp-clause-h { font-family: var(--font-ui); font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }
 .cmp-clause-b p { font-size: 12.5px; line-height: 1.7; margin: 0; text-align: justify; }
 
+/* source-html view (Phase 3.3+) — mammoth/openpyxl HTML rendered as-is so
+   docx tables and bilingual columns survive the round-trip. */
+.cmp-paper-html { font-family: var(--font-ui); font-size: 13px; line-height: 1.55; padding: clamp(20px, 4vw, 40px); }
+.cmp-paper-html table {
+  width: 100%; border-collapse: collapse; margin: 14px 0;
+  border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden;
+  table-layout: auto;
+}
+.cmp-paper-html th, .cmp-paper-html td {
+  padding: 9px 11px; vertical-align: top; line-height: 1.55;
+  border: 1px solid var(--border); text-align: left;
+}
+.cmp-paper-html th { background: var(--bg-2); font-weight: 700; font-size: 12.5px; color: var(--text-2); }
+.cmp-paper-html p { margin: 0 0 8px; font-size: 13px; line-height: 1.6; }
+.cmp-paper-html p:last-child { margin-bottom: 0; }
+.cmp-paper-html h1, .cmp-paper-html h2, .cmp-paper-html h3, .cmp-paper-html h4 {
+  margin: 18px 0 8px; font-weight: 700; letter-spacing: -0.01em;
+}
+.cmp-paper-html h1 { font-size: 22px; }
+.cmp-paper-html h2 { font-size: 18px; }
+.cmp-paper-html h3 { font-size: 16px; }
+.cmp-paper-html h4 { font-size: 14.5px; }
+.cmp-paper-html ul, .cmp-paper-html ol { margin: 4px 0 8px 22px; padding: 0; }
+.cmp-paper-html li { margin: 2px 0; }
+.cmp-paper-html strong { font-weight: 700; }
+.cmp-paper-html em { font-style: italic; }
+.cmp-paper-html mark.cmark { cursor: pointer; }
+.cmp-paper-html mark.cmark.active {
+  outline: 2px solid currentColor; outline-offset: 1px;
+  filter: brightness(1.05);
+}
+
 /* source-markdown view (Phase 3.3) — preserves the original doc's look
    when the FE has access to the raw `contractMarkdown`/`handoverMarkdown`. */
 .cmp-paper-mdsrc { font-family: var(--font-ui); padding: clamp(20px, 4vw, 40px); }
