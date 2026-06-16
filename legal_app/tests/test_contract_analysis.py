@@ -295,6 +295,79 @@ def test_generate_findings_caches_system_prompt():
     assert system[0]["cache_control"] == {"type": "ephemeral"}
 
 
+def test_schema_requires_summary_keydata_missing():
+    """PR-2: the structured-output schema now bundles the three former
+    demo-only AiPanel tabs into the same response. Required keys ensure
+    Claude can't silently drop them."""
+    required = set(CONTRACT_ANALYSIS_JSON_SCHEMA.get("required") or [])
+    assert {"summary", "keyData", "missing"} <= required
+    keydata_props = CONTRACT_ANALYSIS_JSON_SCHEMA["properties"]["keyData"]["items"]["properties"]
+    icon_enum = set(keydata_props["icon"]["enum"])
+    # Icons must subset what src/ui/Icon.jsx actually renders — anything else
+    # produces a blank icon slot in the UI.
+    assert {"building", "coins", "calendar", "doc", "pay"} <= icon_enum
+
+
+def test_generate_findings_extracts_summary_keydata_missing():
+    fake = _fake_anthropic_client({
+        "findings": [],
+        "comparison": [],
+        "summary": "Short summary of the contract.",
+        "keyData": [
+            {"label": "Сторона А", "value": "ТОВ Тест", "sub": "Київ", "icon": "building"},
+            {"label": "Сума", "value": "100 000 ₴", "sub": "", "icon": "coins"},
+        ],
+        "missing": [
+            {"title": "Форс-мажор", "note": "Відсутній розділ.", "law": "ст. 617 ЦК"},
+        ],
+    })
+    result = generate_findings("contract", client=fake)
+    assert result["summary"] == "Short summary of the contract."
+    assert len(result["keyData"]) == 2
+    assert result["keyData"][0]["icon"] == "building"
+    assert len(result["missing"]) == 1
+    assert result["missing"][0]["law"] == "ст. 617 ЦК"
+
+
+def test_mock_contract_analysis_shape_matches_real_response():
+    """Mock-mode response must include the same top-level keys as the real
+    analyzer, otherwise AiPanel renders inconsistent UI between dev (mock)
+    and prod (real Claude). Guards against the easy mistake of extending the
+    real path without updating the fixture."""
+    from backend.mock_ai import mock_contract_analysis
+    mock = mock_contract_analysis()
+    expected_keys = {
+        "findings", "comparison", "legal_basis", "score", "warnings",
+        "summary", "keyData", "missing", "usage", "model",
+    }
+    assert expected_keys <= set(mock)
+    assert isinstance(mock["summary"], str) and len(mock["summary"]) > 0
+    assert isinstance(mock["keyData"], list) and len(mock["keyData"]) > 0
+    assert isinstance(mock["missing"], list)
+    # Every mock icon must be in the schema enum.
+    from backend.contract_analysis import _KEYDATA_ICON_ENUM
+    for d in mock["keyData"]:
+        assert d["icon"] in _KEYDATA_ICON_ENUM, f"bad mock icon: {d['icon']}"
+
+
+def test_normalise_keydata_drops_invalid_icon():
+    """The Claude schema enforces enum at request time, but defensive
+    normalisation catches anything that slips through (e.g. cached old
+    responses). Invalid icon → empty string so the FE renders no glyph
+    instead of a broken slot."""
+    fake = _fake_anthropic_client({
+        "findings": [],
+        "comparison": [],
+        "summary": "",
+        "keyData": [
+            {"label": "X", "value": "Y", "sub": "Z", "icon": "balance-scale-fa"},
+        ],
+        "missing": [],
+    })
+    result = generate_findings("contract", client=fake)
+    assert result["keyData"][0]["icon"] == ""
+
+
 # ---------------------------------------------------------------------------
 # analyze_contract orchestration
 # ---------------------------------------------------------------------------
@@ -302,11 +375,22 @@ def test_generate_findings_caches_system_prompt():
 def test_analyze_contract_returns_full_response_shape(db_with_codex):
     fake = _fake_anthropic_client({"findings": SAMPLE_FINDINGS, "comparison": SAMPLE_COMPARISON})
     result = analyze_contract("contract text", conn=db_with_codex, client=fake)
-    assert set(result) == {"findings", "comparison", "legal_basis", "score", "warnings", "usage", "model"}
+    # PR-2 of analyze-unification adds summary / keyData / missing so AiPanel
+    # stops rendering DEMO data for those three tabs on real analyses.
+    assert set(result) == {
+        "findings", "comparison", "legal_basis", "score", "warnings",
+        "summary", "keyData", "missing", "usage", "model",
+    }
     assert len(result["findings"]) == 3
     assert result["score"]["value"] == 71
     assert any("631" in w for w in result["warnings"])
     assert any(b["code"] == "ЦКУ" for b in result["legal_basis"])
+    # The fake Claude response in SAMPLE_* didn't include the new keys, so
+    # the normalisers default them to empty — that's the safety net the FE
+    # also relies on.
+    assert result["summary"] == ""
+    assert result["keyData"] == []
+    assert result["missing"] == []
 
 
 # ---------------------------------------------------------------------------
