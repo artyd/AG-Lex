@@ -19,6 +19,7 @@ from . import auth as auth_module
 from . import builder as builder_module
 from . import calendar_routes as calendar_module
 from . import drafts as drafts_module
+from . import lawyer_chat as lawyer_chat_module
 from . import matters_routes as matters_module
 from . import notifications_routes as notifications_module
 from . import team as team_module
@@ -105,6 +106,7 @@ app.include_router(auth_module.router)
 app.include_router(team_module.router)
 app.include_router(assist_module.router)
 app.include_router(builder_module.router)
+app.include_router(lawyer_chat_module.router)
 app.include_router(drafts_module.router)  # Fix 1: custom router replaces generic CRUD
 # Phase 2.4: custom routers for /api/matters, /api/notifications, /api/calendar.
 # The matters router enforces row-level access via case_members; the generic

@@ -78,6 +78,7 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
     { id: 'review', icon: 'filter', label: t.review },
   ];
   const knowledge = [
+    { id: 'lawyer', icon: 'sparkle', label: t.lawNav || 'AI-адвокат' },
     { id: 'clauses', icon: 'book', label: t.clauseLib },
     { id: 'legal', icon: 'scales', label: t.legalSearch },
     { id: 'counterparty', icon: 'building', label: t.counterparty },

@@ -486,6 +486,148 @@ select.field { cursor: pointer; }
 .cop-send:hover:not(:disabled) { background: var(--accent-strong); transform: scale(1.05); }
 .cop-send:disabled { background: var(--border-strong); cursor: default; }
 
+/* ===== AI Lawyer chat (lc-*) ===== */
+.lc-page .cop-inner { max-width: 780px; }
+
+/* hero avatar (gradient + soft pulsing glow) */
+.lc-welcome { padding-top: clamp(8px, 4vh, 40px); }
+.lc-hero-av {
+  width: 72px; height: 72px; margin: 0 auto; position: relative;
+  border-radius: 22px; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 55%, #111));
+  box-shadow: 0 14px 40px color-mix(in oklab, var(--accent) 38%, transparent),
+              inset 0 0 0 1px color-mix(in oklab, #fff 18%, transparent);
+  animation: lcAvFloat 4.2s ease-in-out infinite;
+}
+.lc-hero-glow {
+  position: absolute; inset: -8px; border-radius: 28px; z-index: -1;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--accent) 40%, transparent), transparent 70%);
+  animation: lcGlowPulse 3.2s ease-in-out infinite;
+}
+@keyframes lcAvFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes lcGlowPulse { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0.85; transform: scale(1.06); } }
+
+/* credential chips under the hero */
+.lc-creds {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+  margin: 0 auto 22px; max-width: 540px;
+}
+.lc-cred {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 6px 11px; border-radius: 999px;
+}
+.lc-cred svg { color: var(--accent); }
+.lc-try { text-align: center; }
+.lc-chips { justify-content: center; }
+.lc-chip { transition: border-color 0.18s, color 0.18s, background 0.18s, transform 0.18s; }
+.lc-chip:hover { transform: translateY(-1px); }
+
+/* bot bubble: lawyer avatar (square gradient w/ scales icon) */
+.lc-av {
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 55%, #111));
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--accent) 24%, transparent),
+              inset 0 0 0 1px color-mix(in oklab, #fff 14%, transparent);
+}
+.lc-av-think { animation: lcAvThink 1.6s ease-in-out infinite; }
+@keyframes lcAvThink {
+  0%, 100% { box-shadow: 0 4px 12px color-mix(in oklab, var(--accent) 24%, transparent); }
+  50% { box-shadow: 0 4px 22px color-mix(in oklab, var(--accent) 55%, transparent); }
+}
+
+/* message bubble shell */
+.lc-bubble { max-width: 86%; }
+.lc-text p { margin: 0 0 9px; }
+.lc-text p:last-child { margin-bottom: 0; }
+.lc-text strong { font-weight: 700; color: var(--text); }
+.lc-text ol.lc-list { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; }
+.lc-text ol.lc-list li { font-size: 14px; line-height: 1.55; padding-left: 4px; }
+.lc-text ol.lc-list li::marker { color: var(--accent); font-weight: 700; }
+
+/* inline citation chip */
+.lc-cite {
+  display: inline-block; font-size: 12.5px; font-weight: 600;
+  color: var(--accent); background: var(--accent-softer);
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  padding: 1px 8px; border-radius: 999px;
+  margin: 0 1px; white-space: nowrap;
+  font-feature-settings: 'tnum';
+}
+
+/* blinking caret while the typewriter runs */
+.lc-caret {
+  display: inline-block; width: 2px; height: 14px; vertical-align: text-bottom;
+  background: var(--accent); margin-left: 2px; border-radius: 1px;
+  animation: lcCaretBlink 0.85s steps(2) infinite;
+}
+@keyframes lcCaretBlink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+/* source-card cluster under the answer */
+.lc-sources { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.lc-sources-h {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 8px;
+}
+.lc-source-card { animation: lcCardIn 0.32s ease-out backwards; }
+.lc-source-card:nth-child(1) { animation-delay: 0.04s; }
+.lc-source-card:nth-child(2) { animation-delay: 0.12s; }
+.lc-source-card:nth-child(3) { animation-delay: 0.20s; }
+.lc-source-card:nth-child(4) { animation-delay: 0.28s; }
+@keyframes lcCardIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.lc-src-accent { color: var(--accent); }
+.lc-src-info   { color: var(--info, var(--accent)); }
+.lc-src-low    { color: var(--risk-low); }
+.lc-src-muted  { color: var(--text-3); }
+
+/* hallucination-warning banner under an answer */
+.lc-warn {
+  display: flex; align-items: flex-start; gap: 7px;
+  margin-top: 12px; padding: 8px 11px; border-radius: var(--r-md);
+  background: var(--risk-med-soft); color: var(--risk-med);
+  font-size: 12px; line-height: 1.4;
+}
+.lc-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+/* "thinking…" row */
+.lc-thinking-row { display: flex; align-items: center; gap: 10px; }
+.lc-thinking-l { font-size: 13px; color: var(--text-3); font-style: italic; }
+
+/* composer: extra padding for the disclaimer/cache footer */
+.lc-composer .cop-composer-inner { padding-bottom: var(--s5); }
+.lc-input { padding-left: 14px; }
+.lc-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 8px; padding: 0 14px;
+  font-size: 11.5px; color: var(--text-3); line-height: 1.4;
+}
+.lc-disc { flex: 1; min-width: 0; }
+.lc-cache {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-weight: 600; color: var(--accent);
+  background: var(--accent-softer);
+  padding: 4px 9px; border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* bubble entrance animation (every new message) */
+.lc-msg-enter { animation: lcMsgIn 0.28s cubic-bezier(.22,.61,.36,1); }
+@keyframes lcMsgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lc-hero-av, .lc-hero-glow, .lc-av-think,
+  .lc-caret, .lc-source-card, .lc-msg-enter { animation: none !important; }
+}
+
 /* ===== Due diligence report ===== */
 .dd-head { display: flex; align-items: flex-start; gap: 14px; }
 .dd-score { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
