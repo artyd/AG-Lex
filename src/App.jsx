@@ -4,7 +4,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon } from './ui/Icon';
 import { Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
-import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, useTweaks } from './ui/tweaks-panel';
+import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, TweakToggle, useTweaks } from './ui/tweaks-panel';
+import { HelpTip, seedTrainingMode } from './ui/HelpTip';
 import { roleLabel } from './lib/labels';
 import { lxLoadSession, lxLogout, initialsOf, hueOf } from './lib/auth';
 import { api } from './lib/api';
@@ -30,7 +31,8 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": "#cf2230",
   "font": "'Onest', system-ui, sans-serif",
   "density": "comfy",
-  "dark": false
+  "dark": false,
+  "training": false
 }/*EDITMODE-END*/;
 
 // Brand palette — red is primary (red / white / black corporate identity);
@@ -101,6 +103,11 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('lx_route', route); }, [route]);
   useEffect(() => { localStorage.setItem('lx_lang', lang); }, [lang]);
+  // PR-3: keep HelpTip's local cache in sync with the training tweak.
+  // useTweaks' setTweak already dispatches a 'tweakchange' event, but on
+  // initial mount the cache is false-defaulted; seed it here so a refresh
+  // doesn't lose the user's previous choice.
+  useEffect(() => { seedTrainingMode(!!t.training); }, [t.training]);
   useEffect(() => { localStorage.setItem('aglex_notif_read', JSON.stringify(notifRead)); }, [notifRead]);
 
   const titleKey = PAGE_TITLES[route] || 'dashboard';
@@ -370,28 +377,34 @@ export default function App() {
       {/* Launcher modal — analysis hub. Three hub-block cards. */}
       <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
         <div className="hub-grid hub-grid-2">
-          <button className="hub-block hub-accent hub-block-lg" onClick={openContractUpload}>
-            <span className="hub-ic hub-ic-lg"><Icon name="doc" size={28} /></span>
-            <span className="hub-block-t">{L.hubContract}</span>
-            <span className="hub-block-s">{L.hubContractSub}</span>
-            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
-          </button>
-          <button className="hub-block hub-accent hub-block-lg" onClick={openPairUpload}>
-            <span className="hub-new">{L.hubNew}</span>
-            <span className="hub-ic hub-ic-lg"><Icon name="scan" size={28} /></span>
-            <span className="hub-block-t">{L.hubCompare}</span>
-            <span className="hub-block-s">{L.hubCompareSub}</span>
-            <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
-          </button>
+          <HelpTip text={(L.tips && L.tips.hubContract) || ''} placement="bottom">
+            <button className="hub-block hub-accent hub-block-lg" onClick={openContractUpload}>
+              <span className="hub-ic hub-ic-lg"><Icon name="doc" size={28} /></span>
+              <span className="hub-block-t">{L.hubContract}</span>
+              <span className="hub-block-s">{L.hubContractSub}</span>
+              <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
+            </button>
+          </HelpTip>
+          <HelpTip text={(L.tips && L.tips.hubCompare) || ''} placement="bottom">
+            <button className="hub-block hub-accent hub-block-lg" onClick={openPairUpload}>
+              <span className="hub-new">{L.hubNew}</span>
+              <span className="hub-ic hub-ic-lg"><Icon name="scan" size={28} /></span>
+              <span className="hub-block-t">{L.hubCompare}</span>
+              <span className="hub-block-s">{L.hubCompareSub}</span>
+              <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
+            </button>
+          </HelpTip>
         </div>
-        <button className="hub-block hub-muted hub-block-row" onClick={startBatch}>
-          <span className="hub-ic"><Icon name="sparkle" size={22} fill={true} /></span>
-          <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left' }}>
-            <span className="hub-block-t" style={{ fontSize: 15 }}>{L.hubBatch}</span>
-            <span className="hub-block-s" style={{ flex: '0 0 auto' }}>{L.hubBatchSub}</span>
-          </span>
-          <Icon name="arrowR" size={16} style={{ color: 'var(--text-3)' }} />
-        </button>
+        <HelpTip text={(L.tips && L.tips.hubBatch) || ''} placement="top">
+          <button className="hub-block hub-muted hub-block-row" onClick={startBatch}>
+            <span className="hub-ic"><Icon name="sparkle" size={22} fill={true} /></span>
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left' }}>
+              <span className="hub-block-t" style={{ fontSize: 15 }}>{L.hubBatch}</span>
+              <span className="hub-block-s" style={{ flex: '0 0 auto' }}>{L.hubBatchSub}</span>
+            </span>
+            <Icon name="arrowR" size={16} style={{ color: 'var(--text-3)' }} />
+          </button>
+        </HelpTip>
       </Modal>
 
       {/* Contract upload — real file dropzone */}
@@ -531,6 +544,20 @@ export default function App() {
             ))}
           </div>
         </div>
+        <div className="set-row">
+          <div>
+            <div className="set-label">{L.training}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{L.trainingSub}</div>
+          </div>
+          <label className="hl-toggle">
+            <input
+              type="checkbox"
+              checked={!!t.training}
+              onChange={(e) => setTweak('training', e.target.checked)}
+            />
+            <span className="hl-track"><span className="hl-knob" /></span>
+          </label>
+        </div>
         <hr className="divider" />
         <button className="desk-hero" onClick={() => { setSettingsOpen(false); setDeskOpen(true); }}>
           <span className="desk-hero-glow" aria-hidden="true" />
@@ -597,6 +624,8 @@ export default function App() {
         <TweakRadio label={L.density} value={t.density}
           options={[{ value: 'comfy', label: L.comfy }, { value: 'compact', label: L.compact }]}
           onChange={(v) => setTweak('density', v)} />
+        <TweakToggle label={L.training} value={!!t.training}
+          onChange={(v) => setTweak('training', v)} />
       </TweaksPanel>
     </div>
   );
