@@ -334,7 +334,8 @@ export default function App() {
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
   else if (route === 'lawyer') body = <LawyerChat t={L} setRoute={setRoute} lang={lang} />;
-  else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query} />;
+  else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query}
+    clearAnalysisIncoming={() => { setAnalysisIncoming(null); setAnalyzeNonce(n => n + 1); }} />;
   else if (route === 'batch') body = <Batch t={L} setRoute={setRoute} />;
   else if (route === 'matters') body = <Matters t={L} setRoute={setRoute} />;
   else if (route === 'litigation') body = <Litigation t={L} setRoute={setRoute} />;
