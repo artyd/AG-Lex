@@ -90,6 +90,21 @@ function LegalSearch({ t }) {
   const [q, setQ] = useState('');
   const [type, setType] = useState('all');
   const [open, setOpen] = useState(null);
+  // PR: when LawyerChat sends the user here via a citation-card click it
+  // drops a hint in localStorage — pre-filter the screen so the user lands
+  // on the article instead of an empty grid. One-shot: we consume the hint.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('aglex_legal_jump');
+      if (!raw) return;
+      const hint = JSON.parse(raw);
+      if (hint && typeof hint === 'object') {
+        if (hint.articleNumber) setQ(String(hint.articleNumber));
+        if (hint.filter) setType(hint.filter);
+        localStorage.removeItem('aglex_legal_jump');
+      }
+    } catch (_e) { /* private mode — fine */ }
+  }, []);
   const lc = q.trim().toLowerCase();
   const typeBadge = { code: ['var(--accent)', 'ЦК/ГК'], law: ['var(--info)', 'ЗУ'], case: ['var(--risk-med)', 'ВС'], eu: ['var(--risk-low)', 'ЄС'] };
   const filters = [['all', t.legalAll], ['code', t.typeCode], ['law', t.typeLaw], ['case', t.typeCase], ['eu', t.typeEu]];

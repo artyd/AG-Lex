@@ -18,6 +18,7 @@ import { Dashboard, Library, Clients, Templates, Calendar } from './screens/View
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
+import { LawyerChat } from './screens/LawyerChat';
 import { Litigation } from './screens/Litigation';
 import { DocReview } from './screens/DocReview';
 import { ConflictCheck } from './screens/ConflictCheck';
@@ -53,6 +54,7 @@ const PAGE_TITLES = {
   clauses: 'clauseLibTitle', legal: 'legalTitle', counterparty: 'cpTitle',
   clients: 'clientsTitle', templates: 'templatesTitle', team: 'teamTitle',
   esign: 'esignTitle', conflict: 'conflictTitle', portal: 'portalTitle',
+  lawyer: 'lawTitle',
 };
 
 export default function App() {
@@ -331,6 +333,7 @@ export default function App() {
   else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} incoming={analysisIncoming} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
+  else if (route === 'lawyer') body = <LawyerChat t={L} setRoute={setRoute} lang={lang} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query} />;
   else if (route === 'batch') body = <Batch t={L} setRoute={setRoute} />;
   else if (route === 'matters') body = <Matters t={L} setRoute={setRoute} />;
