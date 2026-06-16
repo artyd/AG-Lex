@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# AG Lex — block commits whose code/doc are out of sync.
+#
+# Installed via:   node tools/hooks/install.mjs   (or `npm run docs:install-hook`)
+# Removed by:      rm .git/hooks/pre-commit
+#
+# Strategy: run the docs generator in --check mode. It compares what it
+# WOULD generate to what's actually on disk. If anything would change,
+# the commit is blocked with a friendly message telling the contributor
+# to run `npm run docs` and stage the result.
+#
+# This intentionally runs the FULL generator (not just on staged files)
+# because a change in module A's docstring can affect the folder README
+# in A's parent, which lists summaries. Easier to be correct than fast.
+
+set -e
+
+# Find a Python interpreter — prefer the legal_app venv (matches CI),
+# fall back to system python3 / python.
+PYTHON=""
+if [ -x "legal_app/venv/Scripts/python.exe" ]; then
+  PYTHON="legal_app/venv/Scripts/python.exe"
+elif [ -x "legal_app/venv/bin/python" ]; then
+  PYTHON="legal_app/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="python3"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON="python"
+else
+  echo "[pre-commit] no python interpreter found — skipping docs check." >&2
+  exit 0
+fi
+
+# Only run when there are staged source files that the generator looks
+# at. Avoids slowing down commits that only touch dist/, .env, etc.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if ! echo "$STAGED" | grep -qE '^(legal_app/backend/|src/|scripts/).*\.(py|js|jsx)$'; then
+  exit 0
+fi
+
+if ! "$PYTHON" scripts/generate_docs.py --check; then
+  echo ""
+  echo "[pre-commit] docs are out of sync with code."
+  echo "[pre-commit] run \`npm run docs\` (or"
+  echo "[pre-commit]     \`$PYTHON scripts/generate_docs.py\`)"
+  echo "[pre-commit] then \`git add docs/\` and try the commit again."
+  exit 1
+fi
