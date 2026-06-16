@@ -12,6 +12,8 @@ import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
 import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
 import { AnalysisView } from './analysis/AnalysisView';
+import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
+import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 
 // Decode the upload's base64 PDF to a Uint8Array PDF.js can consume directly.
 function decodePdfB64(b64) {
@@ -502,7 +504,7 @@ function Chat({ t, inject }) {
 }
 
 /* ---------- AI panel ---------- */
-export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo }) {
+export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo, hideTabs }) {
   // `data` (always defined) is the merged real-or-demo bundle from
   // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
   // from DEMO until the backend learns to return them (Task 5/future).
@@ -527,6 +529,11 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
   const allFixed = fixable.every(f => applied[f.id]);
   const filtered = filter === 'all' ? findings : findings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
 
+  // Reconcile callers pass hideTabs=['summary','data','missing'] because
+  // those concepts (executive summary, contract metadata, missing clauses)
+  // don't map onto the pair-comparison flow. Default empty array keeps the
+  // single-contract path untouched.
+  const hidden = new Set(hideTabs || []);
   const tabs = [
     { id: 'risks', label: t.tabRisks, n: openHigh + openMed },
     { id: 'chat', label: t.tabChat, icon: 'sparkle' },
@@ -534,7 +541,7 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
     { id: 'data', label: t.tabData },
     { id: 'missing', label: t.tabMissing, n: missing.length - addedSet.size },
     { id: 'compare', label: t.tabCompare },
-  ];
+  ].filter((tb) => !hidden.has(tb.id));
 
   const statusMap = {
     ok: ['var(--risk-low)', t.statusOk, 'check'],
@@ -715,6 +722,191 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
     </div>
   );
 }
+
+/* ---------- Reconcile result view ----------
+   Lifts the analysis-bar + AnalysisView wiring from the deleted
+   src/screens/Reconcile.jsx so the analyze route renders BOTH the
+   single-contract flow (ContractAnalysis main render) AND the pair-
+   reconcile flow (ReconcileResult) — the user navigates from the
+   dashboard modal and never lands on a separate /reconcile screen.
+
+   `run` is the /api/reconcile response (or a hydrated row from
+   /api/reconciliations/:id when the user re-opens from Library).
+   `pending` flips the body to a loading state while the upload modal's
+   POST is in flight. */
+export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
+  const pair = (run && run.pair) || {};
+  const adapted = useMemo(
+    () => (run ? reconcileToAnalysisProps(run, t) : null),
+    [run, t],
+  );
+
+  const [active, setActive] = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const [tab, setTab] = useState('risks');
+  const [applied, setApplied] = useState({});
+
+  const data = useMemo(() => ({
+    findings: (adapted && adapted.findings) || [],
+    comparison: (adapted && adapted.comparison) || [],
+    legalBasis: (adapted && adapted.legalBasis) || [],
+    score: (adapted && adapted.score) || { value: 0, label: '', risks: { high: 0, med: 0, low: 0 } },
+    warnings: (adapted && adapted.warnings) || [],
+    // hideTabs=['summary','data','missing'] keeps these out of the UI,
+    // but AiPanel still reads `missing.length` for the tab badge — pass
+    // empty arrays so the read is safe even though the tab won't render.
+    missing: [],
+    keyData: [],
+    summary: '',
+    tokenStats: null,
+  }), [adapted]);
+
+  const counts = useMemo(() => {
+    const c = { must: 0, should: 0, nice: 0, flag: 0, mismatches: 0 };
+    if (run) {
+      (run.findings || []).forEach((f) => { if (c[f.severity] != null) c[f.severity] += 1; });
+      (run.rows || []).forEach((r) => { if (r.status === 'mismatch') c.mismatches += 1; });
+    }
+    return c;
+  }, [run]);
+
+  const verdict = counts.must > 0 || counts.mismatches > 0
+    ? 'crit'
+    : counts.should + counts.flag > 0 ? 'warn' : 'ok';
+  const overallMeta = {
+    crit: ['cmpOverallCrit', 'var(--risk-high)'],
+    warn: ['cmpOverallWarn', 'var(--risk-med)'],
+    ok:   ['cmpOverallOk',   'var(--risk-low)'],
+  }[verdict];
+
+  async function addEditsToTasks() {
+    const fixable = ((run && run.findings) || []).filter(
+      (f) => f.severity === 'must' || f.severity === 'should',
+    );
+    if (fixable.length === 0) { toast(t.cmpTasksAdded, 'calendar'); return; }
+    const due = new Date(Date.now() + 7 * 86400 * 1000).toISOString().slice(0, 10);
+    let created = 0;
+    for (const f of fixable) {
+      try {
+        await api.tasks.create({
+          title: 'Правка: ' + (f.issue || '').slice(0, 80),
+          matter: pair.counterparty || pair.product,
+          assignee: '',
+          due,
+          priority: f.severity,
+          col: 'todo',
+        });
+        created += 1;
+      } catch (_e) { /* skip silently */ }
+    }
+    toast(created > 0 ? t.cmpTasksAdded : t.cmpTasksFailed, created > 0 ? 'calendar' : 'alert');
+  }
+
+  function exportReport() {
+    if (!run) return;
+    const lines = [];
+    lines.push(`# ${t.reconcileTitle} · ${pair.product || ''}`);
+    lines.push(`${pair.counterparty || ''} · ${pair.contractNo || ''} · ${pair.date || ''}`);
+    lines.push('');
+    (run.rows || []).forEach((r) => {
+      lines.push(`- [${(r.status || '').toUpperCase()}] ${r.name}: ${t.cmpT3} = ${r.t3 || '—'} | ${t.cmpContract} = ${r.contract || '—'}`);
+      if (r.reason) lines.push(`  ${t.cmpWhy}: ${r.reason}`);
+      if (r.rec) lines.push(`  ${t.cmpRec}: ${r.rec}`);
+    });
+    lines.push('');
+    lines.push('## ' + t.cmpFindings);
+    (run.findings || []).forEach((f, i) => {
+      lines.push(`${i + 1}. [${(f.severity || '').toUpperCase()}] ${f.location || ''}: ${f.issue || ''}`);
+      if (f.rec) lines.push(`   → ${f.rec}`);
+    });
+    try { navigator.clipboard.writeText(lines.join('\n')); } catch (_e) {}
+    toast(t.cmpExported, 'doc');
+  }
+
+  // Pending state: upload modal has closed and POST /api/reconcile is in
+  // flight. Show the analyzing overlay until `run` shows up.
+  if (pending || !run) {
+    const steps = t.cmpSteps || [];
+    return (
+      <div className="analysis">
+        <div className="analysis-body">
+          <div className="doc-scroll">
+            <div className="analyzing">
+              <div className="analyzing-card">
+                <div className="analyzing-orb"><Icon name="scan" size={26} /></div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginTop: 16 }}>{t.cmpAnalyzing}</div>
+                <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4 }}>{t.cmpAnalyzingSub}</div>
+                <div className="prog"><div className="prog-bar" style={{ width: '60%' }} /></div>
+                <div className="analyzing-steps">
+                  {steps.map((s, i) => (
+                    <div key={i} className="astep now">
+                      <span className="astep-dot" />
+                      {s}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="panel-wrap panel-loading" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="analysis">
+      <div className="analysis-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          {onBack ? (
+            <button className="hub-back" style={{ margin: 0 }} onClick={onBack}>
+              <Icon name="chevR" size={16} style={{ transform: 'rotate(180deg)' }} /> {t.cmpBack}
+            </button>
+          ) : null}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pair.product || '—'}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{pair.counterparty}{pair.contractNo ? ' · ' + pair.contractNo : ''}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <span className="cmp-overall" style={{ color: overallMeta[1], background: `color-mix(in oklab, ${overallMeta[1]} 13%, transparent)` }}>
+            <Icon name={verdict === 'ok' ? 'checkCircle' : 'alert'} size={14} /> {t[overallMeta[0]]}
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={addEditsToTasks}><Icon name="calendar" size={15} /> {t.cmpToTasks}</button>
+          <button className="btn btn-ghost btn-sm" onClick={exportReport}><Icon name="download" size={15} /> {t.cmpReexport}</button>
+          {onRestart ? (
+            <button className="btn btn-primary btn-sm" onClick={onRestart}><Icon name="refresh" size={15} /> {t.cmpRun}</button>
+          ) : null}
+        </div>
+      </div>
+      <AnalysisView
+        documents={adapted.documents}
+        findings={adapted.findings}
+        active={active}
+        setActive={setActive}
+        hovered={hovered}
+        setHovered={setHovered}
+        t={t}
+        panel={
+          <AiPanel t={t} tab={tab} setTab={setTab}
+            active={active} setActive={setActive}
+            hovered={hovered} setHovered={setHovered}
+            applied={applied}
+            onApply={(id) => setApplied((a) => ({ ...a, [id]: true }))}
+            onApplyAll={() => {}}
+            scrollToSeg={() => {}}
+            chatInject={null}
+            addedSet={new Set()}
+            onAddClause={() => {}}
+            data={data}
+            isDemo={false}
+            hideTabs={['summary', 'data', 'missing']} />
+        }
+      />
+    </div>
+  );
+}
+
 
 /* ---------- Protocol modal content ---------- */
 function ProtocolModal({ open, onClose, t, findings }) {
@@ -899,6 +1091,68 @@ function PendingAnalysisBanner({ t, name, status, analysis, onRetry, onClose }) 
 
 /* ---------- Main analysis view ---------- */
 function ContractAnalysis({ t, incoming }) {
+  // PR-1 of the analyze-unification work: reconcile rows now share this
+  // route. Two entry points lead here:
+  //   1) Dashboard pair-upload modal → App.jsx sets
+  //      incoming = { reconcileRun: <pending|run>, pending? }.
+  //   2) Library row click → openReconciliation() puts the id in
+  //      RECON_OPEN_KEY localStorage and routes to 'analyze'; we pop it
+  //      and fetch the persisted row via api.reconciliations.get(id).
+  // Both delegate to <ReconcileResult>; the rest of this component (the
+  // single-contract analyze flow) is untouched.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'reconcileRun')) {
+    return (
+      <ReconcileResult
+        t={t}
+        run={incoming.reconcileRun || null}
+        pending={!!incoming.pending}
+      />
+    );
+  }
+  return <ContractAnalysisMain t={t} incoming={incoming} />;
+}
+
+/** Library handoff for reconcile rows. Mounted ONCE per analyze-route mount;
+ *  the consumer renders <ReconcileResult> with the fetched run. Returns null
+ *  when no handoff is queued so the single-contract code path takes over. */
+function useReconcileHandoff() {
+  const [run, setRun] = useState(undefined); // undefined = not yet decided
+  useEffect(() => {
+    const id = popReconOpenId();
+    if (!id) { setRun(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.reconciliations.get(id);
+        if (!cancelled && r) {
+          saveReconHistory(r);
+          setRun(r);
+        } else if (!cancelled) {
+          setRun(null);
+        }
+      } catch (_e) {
+        if (!cancelled) setRun(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return run; // undefined while pending, null when nothing to handoff, run when ready
+}
+
+function ContractAnalysisMain({ t, incoming }) {
+  const reconHandoff = useReconcileHandoff();
+  if (reconHandoff === undefined) {
+    // We popped a key but the GET is in flight — render the same pending
+    // body the upload-modal path uses.
+    return <ReconcileResult t={t} run={null} pending />;
+  }
+  if (reconHandoff) {
+    return <ReconcileResult t={t} run={reconHandoff} />;
+  }
+  return <ContractAnalysisSingle t={t} incoming={incoming} />;
+}
+
+function ContractAnalysisSingle({ t, incoming }) {
   const D = DEMO;
   // Real analysis result from POST /api/analyze/contract. Null until the
   // round-trip completes (or never, in demo mode).

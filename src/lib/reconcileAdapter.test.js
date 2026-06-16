@@ -4,6 +4,7 @@ import {
   reconcileToComparison,
   reconcileToScore,
   reconcileToAnalysisProps,
+  snippetForCat,
 } from './reconcileAdapter';
 
 describe('reconcileToFindings', () => {
@@ -35,17 +36,71 @@ describe('reconcileToFindings', () => {
     expect(out[1].id).toBe('pq');
   });
 
-  it('leaves law and suggest null on every output', () => {
+  it('leaves law null and falls back to suggest:null when no docs snippet exists', () => {
     const run = { findings: [{ id: 'a', severity: 'must', issue: 'i', rec: 'r' }] };
     const f = reconcileToFindings(run)[0];
     expect(f.law).toBe(null);
     expect(f.suggest).toBe(null);
   });
 
+  it('derives suggest.from from docs.contract when category matches', () => {
+    const run = {
+      findings: [{ id: 'a', severity: 'must', cat: 'incoterms', issue: 'i', rec: 'r' }],
+      docs: {
+        contract: {
+          sections: [{
+            uaP: [
+              { t: 'CIF Гданськ, MSC/Maersk до 12.04.2026', cat: 'incoterms', st: 'mismatch' },
+              { t: 'CIF', cat: 'incoterms', st: 'mismatch' },
+            ],
+          }],
+        },
+      },
+    };
+    const f = reconcileToFindings(run)[0];
+    expect(f.suggest).toEqual({ from: 'CIF Гданськ, MSC/Maersk до 12.04.2026', to: '' });
+  });
+
   it('handles missing/empty findings without crashing', () => {
     expect(reconcileToFindings(null)).toEqual([]);
     expect(reconcileToFindings({})).toEqual([]);
     expect(reconcileToFindings({ findings: [] })).toEqual([]);
+  });
+});
+
+describe('snippetForCat', () => {
+  it('returns the longest matching fragment across uaP and enP', () => {
+    const docs = {
+      contract: {
+        sections: [
+          { uaP: [{ t: 'short', cat: 'price', st: 'mismatch' }] },
+          { enP: [{ t: 'a much longer fragment about price', cat: 'price', st: 'mismatch' }] },
+        ],
+      },
+    };
+    expect(snippetForCat(docs, 'price')).toBe('a much longer fragment about price');
+  });
+
+  it('ignores cat:"plain" and st:"ok" fragments', () => {
+    const docs = {
+      contract: {
+        sections: [{
+          uaP: [
+            { t: 'this is plain text and should be ignored', cat: 'plain', st: 'ok' },
+            { t: 'this is also ignored', cat: 'price', st: 'ok' },
+            { t: '25 kg', cat: 'price', st: 'mismatch' },
+          ],
+        }],
+      },
+    };
+    expect(snippetForCat(docs, 'price')).toBe('25 kg');
+  });
+
+  it('returns null when no fragment matches', () => {
+    expect(snippetForCat(null, 'price')).toBe(null);
+    expect(snippetForCat({}, 'price')).toBe(null);
+    expect(snippetForCat({ contract: { sections: [] } }, 'price')).toBe(null);
+    expect(snippetForCat({ contract: { sections: [{ uaP: [{ t: 'x', cat: 'other', st: 'mismatch' }] }] } }, 'price')).toBe(null);
   });
 });
 

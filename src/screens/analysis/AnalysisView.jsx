@@ -172,6 +172,14 @@ export function AnalysisView({
     }));
   }, [docBytes, pagesByIdx, docIdx, findings, active, hovered]);
 
+  // When findings exist but every overlay rect failed to resolve, surface
+  // a one-line banner. Common reasons: (a) PDF has no text layer (scanned
+  // document rendered to PDF via OCR-less path), (b) reconcile snippet
+  // wording diverges word-for-word from the contract text. Without this
+  // hint, the user sees a clean PDF and thinks the analyzer found nothing.
+  const allUnmatched = highlights.length > 0
+    && highlights.every((h) => !h.matched);
+
   return (
     <div className="analysis-body">
       <div className="doc-scroll analysis-doc-pane">
@@ -269,6 +277,17 @@ export function AnalysisView({
                 <Icon name="refresh" size={14} /> Спробувати ще раз
               </button>
             ) : null}
+          </div>
+        ) : null}
+
+        {docState === LOAD.ready && docBytes && allUnmatched ? (
+          <div className="analysis-highlights-miss" role="status">
+            <Icon name="alert" size={14} />
+            <span>
+              {`Підсвітку не знайдено для жодного з ${findings.length} зауважень. `}
+              {'Імовірно у PDF немає текстового шару (сканований документ) '}
+              {'або формулювання в передачі справ розходиться слово-в-слово з контрактом.'}
+            </span>
           </div>
         ) : null}
 

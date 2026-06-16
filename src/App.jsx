@@ -15,7 +15,6 @@ import { I18N } from './data/i18n';
 import { Auth } from './screens/Auth';
 import { Dashboard, Library, Clients, Templates, Calendar } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
-import { Reconcile } from './screens/Reconcile';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
 import { Litigation } from './screens/Litigation';
@@ -45,7 +44,7 @@ const FONT_OPTIONS = [
 ];
 
 const PAGE_TITLES = {
-  dashboard: 'dashboard', analyze: 'analyze', reconcile: 'reconcileTitle',
+  dashboard: 'dashboard', analyze: 'analyze',
   builder: 'builderTitle', copilot: 'copilotTitle', library: 'libTitle', batch: 'batchTitle',
   matters: 'mattersTitle', tasks: 'tasksTitle', calendar: 'calendarTitle', billing: 'billingTitle',
   litigation: 'litTitle', review: 'reviewTitle',
@@ -79,11 +78,11 @@ export default function App() {
   const [deskOpen, setDeskOpen] = useState(false);
   const [analyzeNonce, setAnalyzeNonce] = useState(0);
   // Real upload payload handed to ContractAnalysis: null = demo mode.
-  // Shape: { markdown, sections, filename, tokenStats } (from /api/upload).
+  // Shape for single-contract: { markdown, sections, filename, tokenStats } (from /api/upload).
+  // Shape for reconcile (pair upload): { reconcileRun: <run>|null, pending?: bool, filename?: string }
+  // — ContractAnalysis branches on the presence of `reconcileRun` to render
+  // <ReconcileResult> instead of the single-contract analyze flow.
   const [analysisIncoming, setAnalysisIncoming] = useState(null);
-  // Pre-fetched reconciliation result handed to Reconcile via prop. Same
-  // pattern as analysisIncoming — null = let the screen show its UploadStep.
-  const [reconcileIncoming, setReconcileIncoming] = useState(null);
   const [user, setUser] = useState(() => lxLoadSession());
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
   const L = I18N[lang];
@@ -244,10 +243,13 @@ export default function App() {
     e.target.value = '';
   };
   const startReconcile = () => {
+    // Direct-nav entry point (e.g. a sidebar shortcut). With the dedicated
+    // /reconcile screen gone, the only way to start a pair flow is the
+    // pair-upload modal — route there instead.
     setUploadOpen(false);
-    setReconcileIncoming(null);
-    setAnalyzeNonce(n => n + 1);
-    setRoute('reconcile');
+    setPairContractFile(null);
+    setPairHandoverFile(null);
+    setPairUploadOpen(true);
   };
   const openPairUpload = () => {
     setUploadOpen(false);
@@ -265,33 +267,33 @@ export default function App() {
     if (f) setPairHandoverFile(f);
     e.target.value = '';
   };
-  // Real pair flow: POST both files to /api/reconcile, hand the finished run
-  // straight to <Reconcile incomingRun={...} /> so it lands on ResultStep
-  // without re-asking for files. Demo pair stays inside Reconcile.jsx for the
-  // direct-navigation case (Library row click, etc.).
+  // Real pair flow: POST both files to /api/reconcile, hand the finished
+  // run to ContractAnalysis via analysisIncoming = { reconcileRun, pending }
+  // — the screen branches to <ReconcileResult> on the `reconcileRun` key.
+  // The pair-upload modal lives on the dashboard hub; navigation lands on
+  // the unified /analyze route (no separate /reconcile screen).
   const submitPairUpload = async () => {
     if (!pairContractFile || !pairHandoverFile || pairUploading) return;
-    // Same as startUpload — close the modal first and show the analyzing
-    // animation while we wait on the network. Reconcile reads `pending`
-    // on the incoming prop and stays on AnalyzingStep until the real run
-    // shows up.
+    // Close the modal first and show the analyzing animation while we wait
+    // on the network. ReconcileResult reads `pending` and stays on the
+    // overlay until the real run shows up.
     const fd = new FormData();
     fd.append('contract_file', pairContractFile);
     fd.append('handover_file', pairHandoverFile);
     setPairUploadOpen(false);
     setPairContractFile(null);
     setPairHandoverFile(null);
-    setReconcileIncoming({ pending: true });
+    setAnalysisIncoming({ reconcileRun: null, pending: true });
     setAnalyzeNonce(n => n + 1);
-    setRoute('reconcile');
+    setRoute('analyze');
     try {
       setPairUploading(true);
       const run = await api.reconcile(fd);
-      setReconcileIncoming(run);
+      setAnalysisIncoming({ reconcileRun: run });
       toast(L.uploadDone, 'sparkle');
     } catch (err) {
       toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
-      setReconcileIncoming(null);
+      setAnalysisIncoming(null);
       setRoute('dashboard');
     } finally {
       setPairUploading(false);
@@ -320,7 +322,6 @@ export default function App() {
   let body;
   if (route === 'dashboard') body = <Dashboard t={L} setRoute={setRoute} user={user} />;
   else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} incoming={analysisIncoming} />;
-  else if (route === 'reconcile') body = <Reconcile t={L} key={'rc' + analyzeNonce} setRoute={setRoute} incomingRun={reconcileIncoming} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query} />;
