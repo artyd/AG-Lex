@@ -16,7 +16,7 @@
    ============================================================ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../ui/Icon';
-import { authHeaders } from '../../lib/auth';
+import { authHeaders, lxLogout } from '../../lib/auth';
 import { findingsToHighlights } from '../../lib/pdfHighlight';
 import { PdfViewer } from './PdfViewer';
 
@@ -91,6 +91,18 @@ export function AnalysisView({
     fetch(url, { headers: authHeaders() })
       .then(async (r) => {
         if (cancelled) return;
+        if (r.status === 401) {
+          // Auth, not a file problem — token expired or session cleared.
+          // Mirror api.js: clear the cached session so other screens stop
+          // showing stale auth state. The user lands on the same banner
+          // with a clear "session expired" message and a hint to re-login;
+          // they don't lose context (route + reconcile row stay).
+          console.warn('[AnalysisView] 401 from', url, '— session expired, clearing.');
+          try { lxLogout(); } catch (_) { /* best-effort */ }
+          setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.error }));
+          setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'http', status: 401, url } }));
+          return;
+        }
         if (r.status === 404) {
           console.warn('[AnalysisView] 404 from', url, '— BLOB likely NULL on the server.');
           setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.missing }));
@@ -184,6 +196,9 @@ export function AnalysisView({
                 }
                 if (d.kind === 'http' && d.status === 404) {
                   return 'Файл недоступний на сервері (HTTP 404). Запис є, але оригінал не зберігся — швидше за все LibreOffice (soffice) не зміг сконвертувати один із файлів. Перевірте логи деплою: `journalctl -u aglex | grep to_display_pdf`.';
+                }
+                if (d.kind === 'http' && d.status === 401) {
+                  return 'Сесія прострочена або недійсна — увійдіть знову, щоб переглянути документ. Це не помилка файлу: запит до бекенда був відхилений ще на перевірці автентифікації.';
                 }
                 if (d.kind === 'http') {
                   return `Сервер повернув HTTP ${d.status}. URL: ${d.url}`;
