@@ -31,7 +31,7 @@ from .claude_client import ClaudeError, _client
 from .config import get_settings
 from .database import get_db
 from .pipeline import _CITATION_RE
-from .prompts import DOC_BUILDER_PROMPT
+from .prompts import DOC_BUILDER_PROMPT, INTERNATIONAL_CONTRACT_PROMPT
 from .rbac import require
 from .search import hybrid_search
 
@@ -39,7 +39,13 @@ from .search import hybrid_search
 DEFAULT_MAX_TOKENS = 8000
 ARTICLES_FOR_CONTEXT = 8  # generous; Claude truncates what it doesn't need
 
-DocumentType = Literal["services", "supply", "lease", "nda", "claim", "lawsuit"]
+DocumentType = Literal[
+    "services", "supply", "lease", "nda", "claim", "lawsuit",
+    # Phase F1 of the unified-builder work: bilingual UA/EN supply contract
+    # produced from the "Передача справ" intake form. Output schema includes
+    # parallel UA/EN sections so the FE can render two columns side-by-side.
+    "international_supply",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +99,37 @@ DOC_TYPES: dict[str, _Type] = {
         seed_query="позовна заява стягнення збитків господарський суд позивач відповідач",
         default_heading="ПОЗОВНА ЗАЯВА",
     ),
+    "international_supply": _Type(
+        label="Міжнародний контракт постачання (UA/EN)",
+        layout="contract",
+        seed_query=(
+            "міжнародний контракт постачання Incoterms 2020 валютний контроль "
+            "експорт імпорт CIF FCA FOB митниця сертифікат якості форс-мажор "
+            "арбітраж зовнішньоекономічна діяльність"
+        ),
+        default_heading="КОНТРАКТ / CONTRACT",
+    ),
 }
+
+# Categories the international-supply prompt expects in `params`. These mirror
+# the 15 reconciliation categories the user's "Передача справ" intake form
+# produces — so the same intake schema can feed both /api/reconcile (compare
+# existing contract vs handover) AND /api/generate-document (draft a new
+# contract from the handover). One vocabulary, two flows.
+INTERNATIONAL_INTAKE_KEYS: tuple[str, ...] = (
+    "supplier", "product", "price", "quantity", "incoterms", "delivery",
+    "payment", "origin", "hscode", "certificates", "packaging", "quality",
+    "consignee", "regnumber", "additional",
+)
+
+# Required-field gate for international supply. The intake form must populate
+# at least these BEFORE we send the request to Claude — otherwise the prompt
+# would have to make up half the contract. List corresponds to the * fields in
+# the user's intake template (Додаток А / "Передача справ").
+INTERNATIONAL_REQUIRED_KEYS: tuple[str, ...] = (
+    "supplier", "product", "price", "quantity", "incoterms",
+    "payment", "consignee",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +149,89 @@ GENERATE_JSON_SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+
+# Schema used for international_supply only — adds parallel UA/EN sections
+# so the FE can render the two-column layout the user's reference template
+# uses. document_markdown is still emitted (as the UA-side flattening) so
+# downstream consumers that don't know about sections still work.
+INTERNATIONAL_GENERATE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["document_markdown", "layout", "articles_cited", "sections_bilingual"],
+    "properties": {
+        "document_markdown": {"type": "string"},
+        "layout": {"type": "string", "enum": ["contract", "letter"]},
+        "articles_cited": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        # 15 contract sections per the user's reference template, each with
+        # parallel Ukrainian + English titles and bodies. Body is markdown so
+        # numbered sub-clauses (1.1, 1.2 …) render correctly on both sides.
+        "sections_bilingual": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["n", "ua_title", "en_title", "ua_text", "en_text"],
+                "properties": {
+                    "n": {"type": "integer"},
+                    "ua_title": {"type": "string"},
+                    "en_title": {"type": "string"},
+                    "ua_text": {"type": "string"},
+                    "en_text": {"type": "string"},
+                },
+            },
+        },
+        # Appendix #1: the goods specification table generated from the
+        # intake's product/quantity/price fields. Rendered on its own page.
+        "specification": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["rows", "total"],
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["product", "producer", "packaging", "quantity", "price", "amount"],
+                        "properties": {
+                            "product": {"type": "string"},
+                            "producer": {"type": "string"},
+                            "packaging": {"type": "string"},
+                            "quantity": {"type": "string"},
+                            "price": {"type": "string"},
+                            "amount": {"type": "string"},
+                        },
+                    },
+                },
+                "total": {"type": "string"},
+            },
+        },
+    },
+}
+
+
+def _check_intake_required(params: dict, required_keys: tuple[str, ...]) -> list[str]:
+    """Essential-conditions validator: emit a warning per missing required key.
+    The intake form should refuse to submit when any of these are blank, but
+    we double-check on the server so direct API callers can't bypass it
+    silently. Warnings flow into the response so the FE can highlight the
+    intake field that needs attention."""
+    missing: list[str] = []
+    for k in required_keys:
+        v = (params or {}).get(k)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            missing.append(k)
+    if not missing:
+        return []
+    return [
+        f"Пропущено обовʼязкову істотну умову: «{k}». "
+        f"Контракт без цього поля підписувати ризиковано."
+        for k in missing
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -212,29 +331,51 @@ def generate_document(
     client: anthropic.Anthropic | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> dict:
-    """Generate a full document via Claude with grounded codex citations."""
+    """Generate a full document via Claude with grounded codex citations.
+
+    For `international_supply`: uses the bilingual prompt/schema and emits
+    `sections_bilingual` (parallel UA/EN sections) + `specification` for the
+    Appendix #1 goods table. Other types still get a flat
+    `document_markdown` per the original wire contract.
+    """
     if doc_type not in DOC_TYPES:
         raise ValueError(f"Unknown document type: {doc_type!r}")
 
     settings = get_settings()
     cli = client or _client()
 
+    is_international = doc_type == "international_supply"
+
+    # Essential-conditions gate. We DON'T 4xx on missing fields — the FE
+    # has the gate that prevents submission — but we surface a clear
+    # warning per missing field so anyone bypassing the form (curl,
+    # script, tests) gets the same feedback the UI gives.
+    intake_warnings: list[str] = []
+    if is_international:
+        intake_warnings = _check_intake_required(params, INTERNATIONAL_REQUIRED_KEYS)
+
     articles = _retrieve_articles(conn, doc_type, params)
     user_content = _build_user_turn(doc_type, params, options or {}, articles)
 
+    system_prompt = INTERNATIONAL_CONTRACT_PROMPT if is_international else DOC_BUILDER_PROMPT
+    schema = INTERNATIONAL_GENERATE_JSON_SCHEMA if is_international else GENERATE_JSON_SCHEMA
+    # Bilingual generation roughly doubles output size — bump the token
+    # ceiling so Claude doesn't truncate mid-section.
+    effective_max_tokens = max_tokens * 2 if is_international else max_tokens
+
     response = _wrap_anthropic_errors(lambda: cli.messages.create(
         model=settings.MODEL_NAME,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         system=[{
             "type": "text",
-            "text": DOC_BUILDER_PROMPT,
+            "text": system_prompt,
             "cache_control": {"type": "ephemeral"},
         }],
         messages=[{"role": "user", "content": user_content}],
         output_config={
             "format": {
                 "type": "json_schema",
-                "schema": GENERATE_JSON_SCHEMA,
+                "schema": schema,
             },
         },
     ))
@@ -249,9 +390,9 @@ def generate_document(
     layout = parsed.get("layout") or DOC_TYPES[doc_type].layout
     articles_cited = [str(a) for a in (parsed.get("articles_cited") or [])]
 
-    warnings = _validate_cited_articles(conn, articles_cited)
+    warnings = intake_warnings + _validate_cited_articles(conn, articles_cited)
 
-    return {
+    result: dict[str, Any] = {
         "document_markdown": document_markdown,
         "layout": layout,
         "articles_cited": articles_cited,
@@ -260,7 +401,17 @@ def generate_document(
         "type_label": DOC_TYPES[doc_type].label,
         "model": response.model,
         "usage": _usage_dict(response.usage),
+        # Every generated doc is a working draft until a qualified lawyer
+        # approves it. The FE renders a prominent banner; downstream
+        # consumers (E-sign, etc.) should refuse to act on a draft whose
+        # status hasn't been escalated. Phase 2 implements the real
+        # approval workflow; Phase 1 just plants the flag.
+        "review_status": "draft",
     }
+    if is_international:
+        result["sections_bilingual"] = parsed.get("sections_bilingual") or []
+        result["specification"] = parsed.get("specification") or {"rows": [], "total": ""}
+    return result
 
 
 # ---------------------------------------------------------------------------

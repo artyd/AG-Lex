@@ -16,6 +16,10 @@ from backend import builder as builder_module
 from backend.builder import (
     DOC_TYPES,
     GENERATE_JSON_SCHEMA,
+    INTERNATIONAL_GENERATE_JSON_SCHEMA,
+    INTERNATIONAL_INTAKE_KEYS,
+    INTERNATIONAL_REQUIRED_KEYS,
+    _check_intake_required,
     _validate_cited_articles,
     generate_document,
 )
@@ -114,17 +118,30 @@ _DEFAULT_PAYLOAD = {
 # DOC_TYPES registry
 # ---------------------------------------------------------------------------
 
-def test_doc_types_cover_six_required_kinds():
+def test_doc_types_cover_seven_required_kinds():
+    # Phase F1 adds `international_supply` (bilingual UA/EN).
     assert set(DOC_TYPES.keys()) == {
         "services", "supply", "lease", "nda", "claim", "lawsuit",
+        "international_supply",
     }
 
 
 def test_doc_types_have_layouts():
     contracts = {k for k, v in DOC_TYPES.items() if v.layout == "contract"}
     letters = {k for k, v in DOC_TYPES.items() if v.layout == "letter"}
-    assert {"services", "supply", "lease", "nda"} <= contracts
+    assert {"services", "supply", "lease", "nda", "international_supply"} <= contracts
     assert {"claim", "lawsuit"} == letters
+
+
+def test_international_intake_keys_match_reconciliation_categories():
+    # Same 15 categories the reconciliation prompt extracts — single
+    # vocabulary, two flows (compare existing contract / draft new one).
+    assert set(INTERNATIONAL_INTAKE_KEYS) == {
+        "supplier", "product", "price", "quantity", "incoterms", "delivery",
+        "payment", "origin", "hscode", "certificates", "packaging", "quality",
+        "consignee", "regnumber", "additional",
+    }
+    assert set(INTERNATIONAL_REQUIRED_KEYS) <= set(INTERNATIONAL_INTAKE_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +153,38 @@ def test_schema_locks_required_fields():
         "document_markdown", "layout", "articles_cited",
     }
     assert GENERATE_JSON_SCHEMA["properties"]["layout"]["enum"] == ["contract", "letter"]
+
+
+def test_international_schema_adds_bilingual_sections_and_specification():
+    # Phase F1: bilingual schema must enforce parallel UA/EN sections + the
+    # Appendix #1 goods specification table.
+    required = set(INTERNATIONAL_GENERATE_JSON_SCHEMA["required"])
+    assert {"sections_bilingual"} <= required
+    sec_item = INTERNATIONAL_GENERATE_JSON_SCHEMA["properties"]["sections_bilingual"]["items"]
+    assert set(sec_item["required"]) == {"n", "ua_title", "en_title", "ua_text", "en_text"}
+    spec = INTERNATIONAL_GENERATE_JSON_SCHEMA["properties"]["specification"]["properties"]
+    row_item = spec["rows"]["items"]
+    assert set(row_item["required"]) == {
+        "product", "producer", "packaging", "quantity", "price", "amount",
+    }
+
+
+def test_check_intake_required_flags_missing_essentials():
+    warnings = _check_intake_required(
+        {"supplier": "ACME", "product": "Sorbitol"},
+        INTERNATIONAL_REQUIRED_KEYS,
+    )
+    # supplier+product filled; the rest of the required keys missing → one
+    # warning per missing key.
+    expected_missing = set(INTERNATIONAL_REQUIRED_KEYS) - {"supplier", "product"}
+    assert len(warnings) == len(expected_missing)
+    for k in expected_missing:
+        assert any(f"«{k}»" in w for w in warnings)
+
+
+def test_check_intake_required_passes_when_all_filled():
+    full = {k: "x" for k in INTERNATIONAL_REQUIRED_KEYS}
+    assert _check_intake_required(full, INTERNATIONAL_REQUIRED_KEYS) == []
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +240,63 @@ def test_generate_document_warns_on_invented_articles(db_with_codex):
     fake = _fake_anthropic_client(payload)
     result = generate_document("services", {}, {}, conn=db_with_codex, client=fake)
     assert any("9999" in w for w in result["warnings"])
+
+
+def test_international_supply_returns_bilingual_shape_and_draft_status(db_with_codex):
+    """The international supply pipeline uses a different prompt+schema and
+    returns parallel UA/EN sections + an Appendix #1 specification. Every
+    generated doc carries review_status='draft' until a real approval
+    workflow lands in Phase F2."""
+    payload = {
+        "document_markdown": "# КОНТРАКТ\n…",
+        "layout": "contract",
+        "articles_cited": ["ст. 712 ЦК"],
+        "sections_bilingual": [
+            {"n": 1, "ua_title": "Преамбула", "en_title": "Preamble",
+             "ua_text": "Сторони…", "en_text": "The Parties…"},
+            {"n": 2, "ua_title": "Предмет", "en_title": "Subject",
+             "ua_text": "Постачальник…", "en_text": "The Supplier…"},
+        ],
+        "specification": {
+            "rows": [{"product": "Sorbitol", "producer": "ACME",
+                      "packaging": "drum", "quantity": "24 MT",
+                      "price": "USD 640", "amount": "USD 15 360"}],
+            "total": "USD 15 360",
+        },
+    }
+    fake = _fake_anthropic_client(payload)
+    intake = {k: f"value-{k}" for k in INTERNATIONAL_REQUIRED_KEYS}
+    result = generate_document("international_supply", intake, {},
+                               conn=db_with_codex, client=fake)
+    assert result["type"] == "international_supply"
+    assert result["review_status"] == "draft"
+    assert len(result["sections_bilingual"]) == 2
+    assert result["sections_bilingual"][0]["en_title"] == "Preamble"
+    assert result["specification"]["rows"][0]["product"] == "Sorbitol"
+    # Picked the bilingual schema, not the default one.
+    used_schema = fake.messages.create.call_args.kwargs["output_config"]["format"]["schema"]
+    assert used_schema is INTERNATIONAL_GENERATE_JSON_SCHEMA
+    # The intake required keys are all filled → no essential-conditions warnings.
+    assert not any("істотну умову" in w for w in result["warnings"])
+
+
+def test_international_supply_emits_intake_warnings_when_required_missing(db_with_codex):
+    payload = {
+        "document_markdown": "# КОНТРАКТ\n…",
+        "layout": "contract",
+        "articles_cited": [],
+        "sections_bilingual": [],
+        "specification": {"rows": [], "total": ""},
+    }
+    fake = _fake_anthropic_client(payload)
+    # Submit only `supplier` — every other required field is missing.
+    result = generate_document(
+        "international_supply", {"supplier": "ACME"}, {},
+        conn=db_with_codex, client=fake,
+    )
+    assert any("істотну умову" in w for w in result["warnings"])
+    # Backend still calls Claude (the UI gate is the soft block) — but the
+    # response carries explicit warnings the FE can highlight per-field.
 
 
 def test_generate_document_raises_on_unknown_type(db_with_codex):
