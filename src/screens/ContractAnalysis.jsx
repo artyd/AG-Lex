@@ -1011,8 +1011,11 @@ function ContractAnalysis({ t, incoming }) {
               _doc: { filename: incoming.filename, sections: incoming.sections || [] },
             },
             // Phase 4.x: round-trip the display PDF back to the backend so the
-            // BLOB lands on the persisted contract row.
+            // BLOB lands on the persisted contract row. When soffice failed,
+            // displayPdfError rides alongside so the saved row carries the
+            // reason — a later display-PDF 404 can then explain *why*.
             displayPdfB64: incoming.displayPdfB64 || null,
+            displayPdfError: incoming.displayPdfError || null,
             createdAt: new Date().toISOString(),
           });
         } catch (_e) { /* persistence is best-effort */ }

@@ -59,13 +59,41 @@ def auth(client):
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-def _insert_contract(conn, rid: str, pdf: bytes | None) -> None:
+def _insert_contract(
+    conn, rid: str, pdf: bytes | None, err_json: str | None = None,
+) -> None:
     conn.execute(
         "INSERT INTO contracts (id, filename, title, risk, score, findings_count,"
-        " analysis_json, display_pdf, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " analysis_json, display_pdf, display_pdf_error, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (rid, "sample.docx", "sample.docx", "med", 64, 0,
-         "{}", pdf, "2026-06-15T09:00:00Z"),
+         "{}", pdf, err_json, "2026-06-15T09:00:00Z"),
+    )
+    conn.commit()
+
+
+def _insert_reconciliation(
+    conn,
+    rid: str,
+    contract_pdf: bytes | None,
+    handover_pdf: bytes | None,
+    contract_err_json: str | None = None,
+    handover_err_json: str | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO reconciliations ("
+        " id, contract_file, handover_file, product, counterparty, verdict,"
+        " must_count, should_count, pair_json, rows_json, findings_json, docs_json,"
+        " contract_display_pdf, handover_display_pdf,"
+        " contract_display_pdf_error, handover_display_pdf_error, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            rid, "c.docx", "h.xlsx", "", "", "clean",
+            0, 0, "{}", "[]", "[]", "[]",
+            contract_pdf, handover_pdf,
+            contract_err_json, handover_err_json,
+            "2026-06-15T09:00:00Z",
+        ),
     )
     conn.commit()
 
@@ -89,7 +117,40 @@ def test_contract_display_pdf_404_when_blob_null(client, auth, db_conn):
     _insert_contract(db_conn, "c-no-pdf", None)
     r = client.get("/api/contracts/c-no-pdf/display.pdf", headers=auth)
     assert r.status_code == 404
-    assert "display pdf" in r.json()["detail"].lower()
+    # 404 body is now a structured dict: {detail, [kind, message]}. With no
+    # persisted error column we only get the generic detail string.
+    detail = r.json()["detail"]
+    assert isinstance(detail, dict)
+    assert "display pdf" in detail["detail"].lower()
+    assert "kind" not in detail
+    assert "message" not in detail
+
+
+def test_contract_display_pdf_404_surfaces_persisted_error(client, auth, db_conn):
+    """When soffice failed, the 404 returns kind+message so the FE banner can
+    show the actual reason instead of asking the user to grep journalctl."""
+    import json as _json
+    err = _json.dumps({
+        "kind": "missing",
+        "message": "soffice binary not found (looked up 'soffice')",
+    })
+    _insert_contract(db_conn, "c-no-soffice", None, err_json=err)
+    r = client.get("/api/contracts/c-no-soffice/display.pdf", headers=auth)
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert detail["kind"] == "missing"
+    assert "soffice binary not found" in detail["message"]
+
+
+def test_contract_display_pdf_404_tolerates_malformed_error_json(client, auth, db_conn):
+    """Garbage in the error column must not crash the 404 — fall back to the
+    generic detail. Defensive because the column is hand-fillable JSON TEXT."""
+    _insert_contract(db_conn, "c-bad-json", None, err_json="{not json")
+    r = client.get("/api/contracts/c-bad-json/display.pdf", headers=auth)
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert "display pdf" in detail["detail"].lower()
+    assert "kind" not in detail
 
 
 def test_contract_display_pdf_404_when_row_missing(client, auth):
@@ -101,6 +162,31 @@ def test_reconciliation_display_pdf_404_on_unknown(client, auth):
     for tail in ("contract-display.pdf", "handover-display.pdf"):
         r = client.get(f"/api/reconciliations/rec-nope/{tail}", headers=auth)
         assert r.status_code == 404
+
+
+def test_reconciliation_contract_pdf_404_surfaces_persisted_error(client, auth, db_conn):
+    import json as _json
+    err = _json.dumps({"kind": "crash", "message": "soffice exit 77 rendering c.docx"})
+    _insert_reconciliation(db_conn, "rec-err1", None, None, contract_err_json=err)
+    r = client.get(
+        "/api/reconciliations/rec-err1/contract-display.pdf", headers=auth,
+    )
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert detail["kind"] == "crash"
+    assert "soffice exit 77" in detail["message"]
+
+
+def test_reconciliation_handover_pdf_404_surfaces_persisted_error(client, auth, db_conn):
+    import json as _json
+    err = _json.dumps({"kind": "timeout", "message": "soffice exceeded 30.0s"})
+    _insert_reconciliation(db_conn, "rec-err2", None, None, handover_err_json=err)
+    r = client.get(
+        "/api/reconciliations/rec-err2/handover-display.pdf", headers=auth,
+    )
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert detail["kind"] == "timeout"
 
 
 def test_create_contract_persists_display_pdf_b64(client, auth, db_conn):
@@ -149,3 +235,40 @@ def test_create_contract_without_display_pdf_b64(client, auth, db_conn):
     # Endpoint returns 404 when BLOB is NULL.
     r2 = client.get(f"/api/contracts/{cid}/display.pdf", headers=auth)
     assert r2.status_code == 404
+
+
+def test_create_contract_persists_display_pdf_error(client, auth, db_conn):
+    """When /api/upload returned display_pdf_error (soffice failed), the FE
+    forwards it via displayPdfError. The contract row stores it and the later
+    display 404 surfaces kind+message — no journalctl trip required."""
+    import json as _json
+    payload = {
+        "filename": "broken.docx",
+        "title": "broken.docx",
+        "risk": "med",
+        "score": 60,
+        "findingsCount": 0,
+        "analysis": {},
+        "displayPdfError": {
+            "kind": "missing",
+            "message": "soffice binary not found (looked up 'soffice')",
+        },
+    }
+    r = client.post("/api/contracts", json=payload, headers=auth)
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+    row = db_conn.execute(
+        "SELECT display_pdf, display_pdf_error FROM contracts WHERE id = ?",
+        (cid,),
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] is not None
+    parsed = _json.loads(row[1])
+    assert parsed["kind"] == "missing"
+    assert "soffice binary not found" in parsed["message"]
+    # The display 404 surfaces it for the FE banner.
+    r2 = client.get(f"/api/contracts/{cid}/display.pdf", headers=auth)
+    assert r2.status_code == 404
+    detail = r2.json()["detail"]
+    assert detail["kind"] == "missing"
+    assert "soffice" in detail["message"]

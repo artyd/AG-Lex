@@ -92,9 +92,24 @@ export function AnalysisView({
       .then(async (r) => {
         if (cancelled) return;
         if (r.status === 404) {
-          console.warn('[AnalysisView] 404 from', url, '— BLOB likely NULL on the server.');
+          // The display 404 carries the persisted soffice failure reason
+          // ({detail, kind, message}) so we can show "soffice not installed",
+          // "soffice crashed", etc. instead of the generic "BLOB is NULL".
+          // Old rows (created before this fix) return just {detail: "..."}.
+          let serverKind = null, serverMessage = null;
+          try {
+            const body = await r.clone().json();
+            const d = body && body.detail;
+            if (d && typeof d === 'object') {
+              serverKind = d.kind || null;
+              serverMessage = d.message || null;
+            }
+          } catch (_) { /* non-JSON body — fall through to generic message */ }
+          console.warn('[AnalysisView] 404 from', url, '— BLOB NULL.', { serverKind, serverMessage });
           setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.missing }));
-          setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'http', status: 404, url } }));
+          setDiagByIdx((m) => ({ ...m, [docIdx]: {
+            kind: 'http', status: 404, url, serverKind, serverMessage,
+          } }));
           return;
         }
         if (!r.ok) {
@@ -183,6 +198,29 @@ export function AnalysisView({
                   return 'Бекенд не повернув посилання на оригінал. Імовірно це запис, створений до цього оновлення — завантажте файли ще раз.';
                 }
                 if (d.kind === 'http' && d.status === 404) {
+                  // Server returned a structured 404 with the persisted
+                  // soffice failure kind — surface a specific Ukrainian
+                  // explanation per kind so the user knows what to do.
+                  if (d.serverKind === 'missing') {
+                    return 'LibreOffice (soffice) не встановлено на сервері. Адмін має встановити: `apt-get install --no-install-recommends libreoffice-core libreoffice-writer libreoffice-calc fonts-noto fonts-noto-cjk`.';
+                  }
+                  if (d.serverKind === 'crash') {
+                    return `LibreOffice не зміг сконвертувати файл (soffice exit non-zero). Імовірно файл пошкоджений або в незвичному форматі. Технічно: ${d.serverMessage || 'crash'}`;
+                  }
+                  if (d.serverKind === 'timeout') {
+                    return `Конвертація перевищила ліміт часу. Спробуйте менший / простіший файл. Технічно: ${d.serverMessage || 'timeout'}`;
+                  }
+                  if (d.serverKind === 'empty') {
+                    return `LibreOffice не створив валідний PDF (порожній або не схожий на PDF). Технічно: ${d.serverMessage || 'empty'}`;
+                  }
+                  if (d.serverKind === 'too_large') {
+                    return `Згенерований PDF перевищує дозволений розмір. Технічно: ${d.serverMessage || 'too_large'}`;
+                  }
+                  if (d.serverKind) {
+                    return `Конвертація не вдалася (${d.serverKind}). ${d.serverMessage || ''}`.trim();
+                  }
+                  // Old row created before the persisted-error fix — fall back
+                  // to the original hint about checking journalctl.
                   return 'Файл недоступний на сервері (HTTP 404). Запис є, але оригінал не зберігся — швидше за все LibreOffice (soffice) не зміг сконвертувати один із файлів. Перевірте логи деплою: `journalctl -u aglex | grep to_display_pdf`.';
                 }
                 if (d.kind === 'http') {

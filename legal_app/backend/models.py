@@ -202,6 +202,8 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     handover_html       TEXT,           -- source HTML for display (Phase 3.3+)
     contract_display_pdf BLOB,          -- display PDF (Phase 4.x, served via /api)
     handover_display_pdf BLOB,          -- display PDF (Phase 4.x, served via /api)
+    contract_display_pdf_error TEXT,    -- JSON {kind, message} when soffice failed (Phase 4.x)
+    handover_display_pdf_error TEXT,    -- JSON {kind, message} when soffice failed (Phase 4.x)
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
@@ -222,6 +224,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     findings_count INTEGER NOT NULL DEFAULT 0,
     analysis_json  TEXT,           -- findings/comparison/legal_basis/score/warnings
     display_pdf    BLOB,           -- display PDF (Phase 4.x, served via /api)
+    display_pdf_error TEXT,        -- JSON {kind, message} when soffice failed (Phase 4.x)
     created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_contracts_user ON contracts(user_id);
@@ -406,6 +409,13 @@ def migrate_reconciliations_display_pdf(conn) -> None:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_display_pdf BLOB")
     if "handover_display_pdf" not in cols:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_display_pdf BLOB")
+    # Error columns carry the soffice failure reason ({"kind": "...", "message": "..."})
+    # so the 404 from the display endpoint can tell the user *why* — without
+    # forcing them to SSH and grep journalctl.
+    if "contract_display_pdf_error" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_display_pdf_error TEXT")
+    if "handover_display_pdf_error" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_display_pdf_error TEXT")
     conn.commit()
 
 
@@ -418,6 +428,8 @@ def migrate_contracts_display_pdf(conn) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(contracts)").fetchall()}
     if "display_pdf" not in cols:
         conn.execute("ALTER TABLE contracts ADD COLUMN display_pdf BLOB")
+    if "display_pdf_error" not in cols:
+        conn.execute("ALTER TABLE contracts ADD COLUMN display_pdf_error TEXT")
     conn.commit()
 
 
