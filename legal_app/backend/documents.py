@@ -360,10 +360,17 @@ def to_display_pdf(
                 file=sys.stderr,
                 flush=True,
             )
-            raise DisplayPdfError(
-                "crash",
-                f"soffice exit {proc.returncode} rendering {src.name}",
-            )
+            # Surface what soffice actually complained about so the UI banner
+            # can show the cause without sending the user to journalctl. Cap
+            # the tail aggressively (exit 127 → "oosplash: not found" type
+            # messages; we don't need 512 chars of XML stack traces in the UI).
+            tail = (stderr_tail or stdout_tail or "").strip()
+            if len(tail) > 240:
+                tail = "…" + tail[-240:]
+            detail = f"soffice exit {proc.returncode} rendering {src.name}"
+            if tail:
+                detail = f"{detail}: {tail}"
+            raise DisplayPdfError("crash", detail)
 
         produced = Path(outdir) / (src.stem + ".pdf")
         if not produced.is_file():

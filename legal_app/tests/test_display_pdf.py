@@ -163,6 +163,34 @@ def test_fallback_resolves_when_path_lookup_fails(tmp_path, monkeypatch):
     assert b"Minimal AG Lex test PDF" in out
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash stub script is POSIX-only")
+def test_crash_kind_carries_stderr_tail(tmp_path, monkeypatch):
+    """When soffice exits non-zero we surface its stderr in the
+    DisplayPdfError message so the UI banner can show the actual cause —
+    reproduces the prod 'exit 127' case where the wrapper script failed to
+    find a helper binary and we need the stderr to know why.
+    """
+    src = tmp_path / "sample.docx"
+    src.write_bytes(b"PK\x03\x04 fake docx")
+    stub = tmp_path / "stub_crashing_soffice.sh"
+    stub.write_text(
+        "#!/bin/sh\n"
+        # Mimics the soffice wrapper's "exec'd helper not found" path.
+        "echo '/usr/lib/libreoffice/program/oosplash: not found' >&2\n"
+        "exit 127\n"
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("SOFFICE_PATH", str(stub))
+    get_settings.cache_clear()
+
+    with pytest.raises(DisplayPdfError) as exc:
+        to_display_pdf(src)
+    assert exc.value.kind == "crash"
+    msg = str(exc.value)
+    assert "exit 127" in msg
+    assert "oosplash" in msg  # the actual cause now reaches the UI
+
+
 def test_fallback_misses_raise_kind_missing(tmp_path, monkeypatch):
     """When neither the configured path nor any fallback resolves, we still
     raise DisplayPdfError(kind='missing') with the updated hint about
