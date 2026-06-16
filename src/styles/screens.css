@@ -216,6 +216,65 @@ select.field { cursor: pointer; }
 
 .dbuild-sheet { background: #fff; color: #1a1a1a; border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-md); padding: clamp(28px, 5vw, 56px); font-family: var(--font-doc); line-height: 1.6; }
 [data-theme="dark"] .dbuild-sheet { background: oklch(0.96 0.004 286); }
+
+/* Phase F1: intake-form blocks (Передача справ — 3 grouped sections) */
+.dbuild-intake-block { margin-bottom: var(--s5); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s4) var(--s5); background: var(--surface); }
+.dbuild-intake-h { margin-bottom: var(--s3); padding-bottom: var(--s3); border-bottom: 1px dashed var(--border); }
+.dbuild-intake-t { font-weight: 700; font-size: 14.5px; color: var(--text); }
+.dbuild-intake-s { font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+.field-required .field-label::after { content: ' *'; color: var(--accent); }
+
+/* Phase F1: draft-needs-review banner — loud accent ring so a junior
+   user doesn't try to E-sign an unreviewed AI draft. */
+.dbuild-draft-banner {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  padding: var(--s4) var(--s5);
+  margin-bottom: var(--s5);
+  border: 1.5px solid color-mix(in oklab, var(--risk-med) 50%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--risk-med) 6%, var(--surface));
+  box-shadow: 0 4px 14px -8px color-mix(in oklab, var(--risk-med) 50%, transparent);
+}
+.dbuild-draft-ic {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: color-mix(in oklab, var(--risk-med) 18%, transparent);
+  color: var(--risk-med);
+}
+.dbuild-draft-body { flex: 1; min-width: 0; }
+.dbuild-draft-t { font-weight: 800; font-size: 14px; color: var(--risk-med); letter-spacing: 0.02em; text-transform: uppercase; }
+.dbuild-draft-s { font-size: 13px; line-height: 1.55; color: var(--text-2); margin-top: 4px; }
+
+/* Phase F1: bilingual UA/EN contract sheet — two-column lockstep render */
+.dbuild-bilingual-sheet { font-family: var(--font-doc); }
+.dbuild-bilingual-head { text-align: center; margin: 0 0 var(--s5); padding-bottom: var(--s4); border-bottom: 2px solid var(--border); }
+.dbuild-bilingual-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.dbuild-bilingual-sub { margin-top: 6px; font-size: 12.5px; color: #777; letter-spacing: 0.02em; text-transform: uppercase; }
+.dbuild-bilingual-grid { display: flex; flex-direction: column; gap: var(--s5); }
+.dbuild-bilingual-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); padding-bottom: var(--s4); border-bottom: 1px dashed var(--border); }
+.dbuild-bilingual-row:last-child { border-bottom: none; }
+.dbuild-bilingual-col { min-width: 0; }
+.dbuild-bilingual-col-en { padding-left: var(--s4); border-left: 1px solid var(--border); }
+.dbuild-bilingual-num { font-weight: 700; font-size: 15px; margin-bottom: 8px; color: #1a1a1a; }
+.dbuild-bilingual-text { font-size: 14px; line-height: 1.65; white-space: pre-wrap; color: #222; }
+.dbuild-bilingual-appendix { margin-top: var(--s7); padding-top: var(--s5); border-top: 2px solid var(--border); }
+.dbuild-bilingual-appendix h2 { text-align: center; font-size: 17px; margin: 0 0 var(--s4); }
+.dbuild-spec-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dbuild-spec-table th, .dbuild-spec-table td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+.dbuild-spec-table thead th { background: var(--bg-2); font-weight: 700; }
+.dbuild-spec-table tfoot td { background: var(--bg-2); }
+.dbuild-bilingual-warnings { margin-top: var(--s5); padding: var(--s4) var(--s5); border: 1px solid color-mix(in oklab, var(--risk-med) 40%, transparent); border-radius: var(--r-md); background: color-mix(in oklab, var(--risk-med) 6%, transparent); }
+.dbuild-bilingual-warnings-h { font-weight: 700; color: var(--risk-med); margin-bottom: 8px; font-size: 13.5px; }
+.dbuild-bilingual-warnings ul { margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.dbuild-bilingual-laws { margin-top: var(--s4); font-size: 12.5px; color: var(--text-3); }
+@media (max-width: 900px) {
+  .dbuild-bilingual-row { grid-template-columns: 1fr; }
+  .dbuild-bilingual-col-en { padding-left: 0; border-left: none; padding-top: var(--s4); border-top: 1px solid var(--border); }
+}
 .dsheet-h { text-align: center; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 4px; line-height: 1.3; }
 .dsheet-num { font-weight: 500; color: #777; }
 .dsheet-sub { font-weight: 500; font-size: 16px; }

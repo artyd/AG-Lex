@@ -252,7 +252,90 @@ const DOC_TYPES = [
       F('grounds', 'Підстави позову', { full: true, area: true }),
       F('amount', 'Ціна позову, грн', { type: 'num' }), F('city', 'Місто', { def: 'м. Київ' }),
     ], toggles: [] },
+  // Phase F1: bilingual UA/EN international supply contract built from the
+  // "Передача справ" intake form. Field keys match the 15 reconciliation
+  // categories so the same vocabulary feeds both /api/reconcile and
+  // /api/generate-document. Required (*) keys are gated client-side AND
+  // re-validated server-side; missing essentials become warnings in the
+  // response so direct API callers can't bypass.
+  {
+    id: 'international_supply', icon: 'globe',
+    name: 'Міжнародний контракт постачання (UA/EN)',
+    desc: '15-розділовий двомовний контракт з intake-форми «Передача справ»',
+    gen: null,   // server-only — no local fallback; the prompt + RAG do the work
+    bilingual: true,
+    intake: true,
+    requiredKeys: ['supplier', 'product', 'price', 'quantity', 'incoterms', 'payment', 'consignee'],
+    blocks: [
+      {
+        id: 'sales-direct',
+        title: 'Блок 1 — відділ продажів (прямий контракт)',
+        sub: 'Заповнюється при прямому контракті з клієнтом і постачальником',
+        fields: [
+          F('product',      'Найменування товару *',   { full: true, required: true }),
+          F('quantity',     'Кількість + од. виміру *', { required: true }),
+          F('price',        'Ціна та умови (INCOTERMS) *', { required: true }),
+          F('payment',      'Умови оплати *',          { full: true, required: true }),
+          F('delivery',     'Строки поставки',         {}),
+          F('quality',      'Вимоги покупця до якості', { full: true, area: true }),
+          F('consignee',    'Реквізити покупця / вантажоодержувача *', { full: true, area: true, required: true }),
+          F('origin',       'Виробник',                {}),
+          F('regnumber',    '№ реєстрації / схожий контракт', {}),
+          F('packaging',    'Особливі вимоги до маркування', { full: true }),
+          F('certificates', 'Сертифікат аналізу',      {}),
+        ],
+      },
+      {
+        id: 'procurement',
+        title: 'Блок 3 — відділ закупівель',
+        sub: 'Дані Продавця, виробника, документи',
+        fields: [
+          F('supplier',     'Найменування Продавця та реквізити *', { full: true, area: true, required: true }),
+          F('hscode',       'Код ТН ЗЕД / HS code',    {}),
+          F('additional',   'MSDS, безпека вантажу, додаткові вимоги', { full: true, area: true }),
+        ],
+      },
+    ],
+    // Flat fields list — combined view for the generic form renderer that
+    // doesn't know about blocks. The intake renderer reads `blocks` directly.
+    fields: [
+      F('supplier',     'Постачальник *',  { full: true, required: true }),
+      F('product',      'Товар *',         { required: true }),
+      F('price',        'Ціна *',          { required: true }),
+      F('quantity',     'Кількість *',     { required: true }),
+      F('incoterms',    'INCOTERMS *',     { required: true }),
+      F('delivery',     'Поставка',        {}),
+      F('payment',      'Оплата *',        { required: true }),
+      F('origin',       'Виробник',        {}),
+      F('hscode',       'HS code',         {}),
+      F('certificates', 'Сертифікати',     {}),
+      F('packaging',    'Упаковка',        {}),
+      F('quality',      'Якість',          {}),
+      F('consignee',    'Одержувач *',     { full: true, required: true }),
+      F('regnumber',    '№ реєстрації',    {}),
+      F('additional',   'Додаткові вимоги', { full: true, area: true }),
+    ],
+    toggles: [],
+  },
 ];
+
+/* ---------- Field renderer (shared between flat + intake-block forms) ----- */
+function renderField(f, v, set) {
+  const wrap = 'field-row' + (f.full ? ' field-full' : '') + (f.required ? ' field-required' : '');
+  const value = v[f.key] != null ? v[f.key] : '';
+  return (
+    <label key={f.key} className={wrap}>
+      <span className="field-label">{f.label}</span>
+      {f.type === 'select'
+        ? <select className="field" value={value} onChange={(e) => set(f.key, e.target.value)}>
+            {f.options.map(([val, lbl]) => <option key={val} value={val}>{lbl}</option>)}
+          </select>
+        : f.area
+          ? <textarea className="field" rows={3} value={value} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder || ''} />
+          : <input className="field" value={value} inputMode={f.type === 'num' ? 'numeric' : undefined} onChange={(e) => set(f.key, e.target.value)} placeholder={f.placeholder || ''} />}
+    </label>
+  );
+}
 
 /* ---------- Helpers ---------- */
 function dbToday() { const d = new Date(2026, 5, 9), p = x => String(x).padStart(2, '0'); return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`; }
@@ -339,6 +422,128 @@ function DocSheet({ doc, v }) {
   );
 }
 
+/* ---------- "Draft — needs lawyer review" banner ----------
+   Shown on every server-generated doc. Phase F1 just plants the visible
+   flag; Phase F2 implements the real approval workflow that the E-sign
+   flow has to gate against. The badge is intentionally loud so a junior
+   user doesn't try to ship an AI draft without a senior signing off. */
+function DraftReviewBanner({ t }) {
+  return (
+    <div className="dbuild-draft-banner" role="status">
+      <span className="dbuild-draft-ic"><Icon name="alert" size={16} /></span>
+      <div className="dbuild-draft-body">
+        <div className="dbuild-draft-t">{t?.builderDraftTitle || 'ПРОЄКТ — потребує перевірки юристом'}</div>
+        <div className="dbuild-draft-s">
+          {t?.builderDraftSub
+            || 'AI зібрав робочий проєкт документа на основі чинного законодавства України. '
+             + 'Перед підписанням або відправкою на Е-підпис документ має перевірити та затвердити '
+             + 'кваліфікований юрист. Система не гарантує юридичної сили автоматично.'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Bilingual UA/EN renderer (international supply, Phase F1) ----
+   Two columns side by side; sections render in lockstep so the user can
+   scroll one and visually align with the other. Each section gets a
+   numbered heading on both sides; the body text is rendered as
+   pre-wrapped markdown so the numbered sub-clauses Claude emits (1.1,
+   1.2, …) stay aligned. Appendix #1 specification renders as an actual
+   <table>. */
+function BilingualDocSheet({ apiDoc, t }) {
+  if (!apiDoc) return null;
+  const sections = apiDoc.sections_bilingual || [];
+  const spec = apiDoc.specification || null;
+  return (
+    <div className="dbuild-sheet dbuild-bilingual-sheet">
+      <DraftReviewBanner t={t} />
+      <div className="dbuild-bilingual-head">
+        <h1>{apiDoc.type_label || 'КОНТРАКТ / CONTRACT'}</h1>
+        <div className="dbuild-bilingual-sub">UA / EN · 15 розділів · INCOTERMS 2020</div>
+      </div>
+
+      {sections.length > 0 ? (
+        <div className="dbuild-bilingual-grid">
+          {sections.map((s) => (
+            <div key={s.n} className="dbuild-bilingual-row">
+              <div className="dbuild-bilingual-col dbuild-bilingual-col-ua">
+                <div className="dbuild-bilingual-num">{s.n}. {s.ua_title}</div>
+                <div className="dbuild-bilingual-text">{s.ua_text}</div>
+              </div>
+              <div className="dbuild-bilingual-col dbuild-bilingual-col-en">
+                <div className="dbuild-bilingual-num">{s.n}. {s.en_title}</div>
+                <div className="dbuild-bilingual-text">{s.en_text}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="tr-note" style={{ color: 'var(--risk-med)' }}>
+          <Icon name="alert" size={13} /> Двомовні розділи не повернуто — показано тільки UA-варіант нижче.
+        </div>
+      )}
+
+      {spec && Array.isArray(spec.rows) && spec.rows.length > 0 ? (
+        <div className="dbuild-bilingual-appendix">
+          <h2>Додаток №1 — Специфікація / Appendix #1 — Specification</h2>
+          <table className="dbuild-spec-table">
+            <thead>
+              <tr>
+                <th>Товар / Product</th>
+                <th>Виробник / Producer</th>
+                <th>Пакування / Packaging</th>
+                <th>Кількість / Qty</th>
+                <th>Ціна / Price</th>
+                <th>Сума / Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {spec.rows.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.product}</td>
+                  <td>{r.producer}</td>
+                  <td>{r.packaging}</td>
+                  <td>{r.quantity}</td>
+                  <td>{r.price}</td>
+                  <td>{r.amount}</td>
+                </tr>
+              ))}
+            </tbody>
+            {spec.total ? (
+              <tfoot>
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'right', fontWeight: 700 }}>
+                    Разом / Total
+                  </td>
+                  <td style={{ fontWeight: 700 }}>{spec.total}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      ) : null}
+
+      {apiDoc.warnings && apiDoc.warnings.length > 0 ? (
+        <div className="dbuild-bilingual-warnings">
+          <div className="dbuild-bilingual-warnings-h">
+            <Icon name="alert" size={14} /> Перевірте перед підписанням
+          </div>
+          <ul>
+            {apiDoc.warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
+      {apiDoc.articles_cited && apiDoc.articles_cited.length > 0 ? (
+        <div className="dbuild-bilingual-laws">
+          <Icon name="scales" size={13} /> Правові підстави: {apiDoc.articles_cited.join(', ')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /* ---------- API document renderer (Phase 3.3) ---------- */
 function ApiDocSheet({ apiDoc }) {
   if (!apiDoc) return null;
@@ -380,6 +585,7 @@ const TYPE_ID_TO_API = {
   nda: 'nda',
   claim: 'claim',
   lawsuit: 'lawsuit',
+  international_supply: 'international_supply',
 };
 
 function DocBuilder({ t, setRoute, user }) {
@@ -448,7 +654,16 @@ function DocBuilder({ t, setRoute, user }) {
   const set = (k, val) => setV(p => ({ ...p, [k]: val }));
 
   const generate = async () => {
-    if (!String(v.partyA || '').trim() || !String(v.partyB || '').trim()) {
+    // Intake-form types (international supply) validate against `requiredKeys`
+    // instead of the generic partyA/partyB pair. The check matches the
+    // server-side INTERNATIONAL_REQUIRED_KEYS gate exactly.
+    if (type?.intake) {
+      const missing = (type.requiredKeys || []).filter((k) => !String(v[k] || '').trim());
+      if (missing.length > 0) {
+        toast((t.builderRequired || 'Заповніть обовʼязкові поля') + ': ' + missing.join(', '), 'alert');
+        return;
+      }
+    } else if (!String(v.partyA || '').trim() || !String(v.partyB || '').trim()) {
       toast(t.builderRequired, 'alert'); return;
     }
     setPhase('gen');
@@ -660,18 +875,26 @@ function DocBuilder({ t, setRoute, user }) {
 
         {phase === 'gen' ? <BuildOverlay t={t} /> : (
           <>
-            <div className="dbuild-form">
-              {type.fields.map(f => (
-                <label key={f.key} className={'field-row' + (f.full ? ' field-full' : '')}>
-                  <span className="field-label">{f.label}</span>
-                  {f.type === 'select'
-                    ? <select className="field" value={v[f.key]} onChange={e => set(f.key, e.target.value)}>{f.options.map(([val, lbl]) => <option key={val} value={val}>{lbl}</option>)}</select>
-                    : f.area
-                      ? <textarea className="field" rows={3} value={v[f.key] || ''} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder || ''} />
-                      : <input className="field" value={v[f.key] || ''} inputMode={f.type === 'num' ? 'numeric' : undefined} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder || ''} />}
-                </label>
-              ))}
-            </div>
+            {type.intake && type.blocks ? (
+              // Intake mode: render fields grouped into blocks (Передача справ
+              // form: sales-direct / procurement). Each block has a heading
+              // + a sub-line so the user sees the intent of each group.
+              type.blocks.map((blk) => (
+                <div key={blk.id} className="dbuild-intake-block">
+                  <div className="dbuild-intake-h">
+                    <div className="dbuild-intake-t">{blk.title}</div>
+                    {blk.sub ? <div className="dbuild-intake-s">{blk.sub}</div> : null}
+                  </div>
+                  <div className="dbuild-form">
+                    {blk.fields.map((f) => renderField(f, v, set))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="dbuild-form">
+                {type.fields.map((f) => renderField(f, v, set))}
+              </div>
+            )}
             {type.toggles && type.toggles.length > 0 && (
               <div className="dbuild-toggles">
                 <div className="dbuild-toggles-h">{t.builderClauses}</div>
@@ -711,7 +934,11 @@ function DocBuilder({ t, setRoute, user }) {
           <Icon name="alert" size={13} /> Показано офлайн-демо (API недоступний — увійдіть та перевірте право `ai`).
         </div>
       ) : null}
-      {apiDoc ? <ApiDocSheet apiDoc={apiDoc} /> : doc ? <DocSheet doc={doc} v={v} /> : null}
+      {apiDoc
+        ? (apiDoc.type === 'international_supply'
+            ? <BilingualDocSheet apiDoc={apiDoc} t={t} />
+            : <ApiDocSheet apiDoc={apiDoc} />)
+        : doc ? <DocSheet doc={doc} v={v} /> : null}
     </div></div>
   );
 }
