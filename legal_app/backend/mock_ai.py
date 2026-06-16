@@ -105,12 +105,35 @@ def mock_contract_analysis() -> dict[str, Any]:
         {"code": "ЦКУ", "ref": "ст. 651 «Підстави для зміни або розірвання»", "scope": "UA"},
     ]
     score = {"value": 54, "label": "Підвищений ризик", "risks": {"high": 1, "med": 1, "low": 1}}
+    # PR-2 of analyze-unification: AiPanel's Summary / Data / Missing tabs
+    # now read from the analyzer response. Mock returns plausible content so
+    # e2e tests that mount AiPanel can assert non-demo strings.
+    summary = (
+        "Договір постачання послуг на тестовий проєкт між Покупцем та "
+        "Виконавцем. Сильні сторони: чітко зафіксована ціна та валюта. "
+        "Ключові ризики: висока пеня без обмеження, можливість одностороннього "
+        "розірвання без компенсації, відсутність форс-мажорного застереження."
+    )
+    key_data = [
+        {"icon": "building", "label": "Покупець", "value": "ТОВ «Тест»", "sub": "Київ"},
+        {"icon": "building", "label": "Виконавець", "value": "ФОП Іваненко", "sub": "Львів"},
+        {"icon": "coins",    "label": "Сума договору", "value": "100 000 ₴", "sub": "без ПДВ"},
+        {"icon": "calendar", "label": "Дата підписання", "value": "01.06.2026", "sub": ""},
+        {"icon": "pay",      "label": "Умови оплати", "value": "Передоплата 50%", "sub": "Залишок — після приймання"},
+    ]
+    missing_sections = [
+        {"title": "Форс-мажорне застереження", "note": "Розділ відсутній; без нього сторона несе ризик повної відповідальності за невиконання через об'єктивні обставини.", "law": "ст. 617 ЦК України"},
+        {"title": "Захист персональних даних", "note": "Сторони обмінюються контактами представників — потрібен пункт про обробку ПД відповідно до GDPR / ЗУ «Про захист ПД».", "law": "GDPR · ЗУ «Про захист ПД»"},
+    ]
     return {
         "findings": findings,
         "comparison": comparison,
         "legal_basis": legal_basis,
         "score": score,
         "warnings": [],
+        "summary": summary,
+        "keyData": key_data,
+        "missing": missing_sections,
         "usage": {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0},
         "model": "mock",
     }

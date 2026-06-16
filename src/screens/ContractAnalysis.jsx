@@ -1190,9 +1190,10 @@ function ContractAnalysisSingle({ t, incoming }) {
   }, [effectiveDoc, uploadedBytes, reopenedDisplayUrl]);
   const usePdfView = Boolean(uploadedBytes || reopenedDisplayUrl);
 
-  // Merged data source: real fields override DEMO when available. `missing` /
-  // `keyData` / `summary` aren't returned by /api/analyze/contract yet — they
-  // stay on DEMO until the backend learns them.
+  // Merged data source: real fields override DEMO when available. PR-2 of
+  // analyze-unification: `summary`, `keyData`, `missing` now come from the
+  // analyzer too (extended schema in /api/analyze/contract). DEMO stays as
+  // the fallback for `analysisStatus === 'demo' | 'error'`.
   const data = useMemo(() => ({
     findings: analysis?.findings ?? D.findings,
     comparison: analysis?.comparison ?? D.comparison,
@@ -1200,9 +1201,9 @@ function ContractAnalysisSingle({ t, incoming }) {
     score: analysis?.score ?? D.score,
     warnings: analysis?.warnings ?? [],
     tokenStats: effectiveDoc?.tokenStats || null,
-    missing: D.missing,
-    keyData: D.keyData,
-    summary: D.summary,
+    missing: analysis?.missing ?? D.missing,
+    keyData: analysis?.keyData ?? D.keyData,
+    summary: analysis?.summary ?? D.summary,
   }), [analysis, D, effectiveDoc]);
   const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
 
@@ -1305,6 +1306,12 @@ function ContractAnalysisSingle({ t, incoming }) {
           legal_basis: a.legal_basis || [],
           score: a.score || null,
           warnings: a.warnings || [],
+          // PR-2: surface analyzer's summary/keyData/missing on Library
+          // re-open too. Rows persisted before PR-2 simply don't have these
+          // fields and the merge in `data` falls back to DEMO (intentional).
+          summary: a.summary,
+          keyData: a.keyData,
+          missing: a.missing,
         });
         setLoadedDoc({
           filename: c.filename || (a._doc && a._doc.filename) || 'Договір',
