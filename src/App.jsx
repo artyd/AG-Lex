@@ -223,6 +223,11 @@ export default function App() {
         // Phase 4.x: base64 → kept as string for the back-half
         // (POST /api/contracts uses it as-is). PdfViewer decodes via atob.
         displayPdfB64: res.display_pdf_b64 || null,
+        // When soffice failed, the backend returns the {kind, message} here
+        // so the FE can forward it to POST /api/contracts and the saved
+        // contract row carries the failure reason. Without this the row
+        // would lose the "why" the moment we leave the upload response.
+        displayPdfError: res.display_pdf_error || null,
       });
       toast(L.uploadDone, 'sparkle');
     } catch (err) {

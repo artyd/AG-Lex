@@ -127,6 +127,10 @@ class _ContractCreatePayload(BaseModel):
     analysis: Optional[dict] = None
     createdAt: Optional[str] = None
     displayPdfB64: Optional[str] = None
+    # {"kind": "missing|crash|timeout|empty|too_large|error", "message": "..."}
+    # Sent by the FE when /api/upload returned display_pdf_error. Persisted
+    # alongside the (NULL) BLOB so the display 404 can explain *why*.
+    displayPdfError: Optional[dict] = None
 
 
 @app.post(
@@ -139,27 +143,26 @@ def create_contract_with_pdf(
     body: _ContractCreatePayload,
     conn: sqlite3.Connection = Depends(get_db),
 ) -> dict:
-    data = body.model_dump(exclude={"displayPdfB64"}, exclude_none=True)
+    data = body.model_dump(
+        exclude={"displayPdfB64", "displayPdfError"}, exclude_none=True,
+    )
     if not data.get("createdAt"):
         data["createdAt"] = (
             datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
         )
     inserted = insert_row(conn, CONTRACTS, data)
+    pdf_bytes: bytes | None = None
     if body.displayPdfB64:
         import base64 as _b64
         import sys as _sys
         try:
-            pdf_bytes = _b64.b64decode(body.displayPdfB64, validate=True)
-            if pdf_bytes.startswith(b"%PDF-"):
-                conn.execute(
-                    "UPDATE contracts SET display_pdf = ? WHERE id = ?",
-                    (pdf_bytes, inserted["id"]),
-                )
-                conn.commit()
+            decoded = _b64.b64decode(body.displayPdfB64, validate=True)
+            if decoded.startswith(b"%PDF-"):
+                pdf_bytes = decoded
             else:
                 print(
                     f"[contracts] {inserted['id']}: displayPdfB64 decoded but "
-                    f"not a valid PDF (starts {pdf_bytes[:8]!r})",
+                    f"not a valid PDF (starts {decoded[:8]!r})",
                     file=_sys.stderr, flush=True,
                 )
         except Exception as e:
@@ -167,6 +170,19 @@ def create_contract_with_pdf(
                 f"[contracts] {inserted['id']}: displayPdfB64 decode failed: {e}",
                 file=_sys.stderr, flush=True,
             )
+    err_json: str | None = None
+    if body.displayPdfError and isinstance(body.displayPdfError, dict):
+        import json as _json
+        kind = body.displayPdfError.get("kind") or "error"
+        message = body.displayPdfError.get("message") or ""
+        err_json = _json.dumps({"kind": str(kind), "message": str(message)})
+    if pdf_bytes is not None or err_json is not None:
+        conn.execute(
+            "UPDATE contracts SET display_pdf = ?, display_pdf_error = ? "
+            "WHERE id = ?",
+            (pdf_bytes, err_json, inserted["id"]),
+        )
+        conn.commit()
     return inserted
 
 
@@ -310,6 +326,7 @@ async def upload_document(file: UploadFile = File(...)):
         from .mock_ai import mock_display_pdf_bytes as _mock_pdf
         display_pdf_b64: str | None = None
         display_pdf_bytes: bytes | None = None
+        display_pdf_error: dict | None = None
         mock_bytes = _mock_pdf()
         if mock_bytes is not None:
             display_pdf_bytes = mock_bytes
@@ -318,13 +335,15 @@ async def upload_document(file: UploadFile = File(...)):
                 display_pdf_bytes = to_display_pdf(tmp_path)
             except (DisplayPdfError, ValueError) as e:
                 import sys as _sys
+                kind = getattr(e, "kind", "error")
                 print(
                     f"[upload] display-PDF failed for {file.filename!r}: "
-                    f"{getattr(e, 'kind', 'error')} — {e}",
+                    f"{kind} — {e}",
                     file=_sys.stderr,
                     flush=True,
                 )
                 display_pdf_bytes = None
+                display_pdf_error = {"kind": kind, "message": str(e)}
         if display_pdf_bytes is not None:
             display_pdf_b64 = _b64.b64encode(display_pdf_bytes).decode("ascii")
 
@@ -334,6 +353,11 @@ async def upload_document(file: UploadFile = File(...)):
             "sections": sections,
             "token_stats": stats,
             "display_pdf_b64": display_pdf_b64,
+            # When soffice fails we still return 200 so the analysis flow
+            # proceeds; the error rides here and the FE forwards it to
+            # POST /api/contracts so it lands in the contracts row alongside
+            # the (NULL) BLOB. Keeps the "why" reachable from the UI.
+            "display_pdf_error": display_pdf_error,
         }
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -433,14 +457,16 @@ def analyze_contract_endpoint(
 
 async def _ingest_upload(
     file: UploadFile, allowed: set[str], role: str,
-) -> tuple[str, str, bytes | None, str]:
+) -> tuple[str, str, bytes | None, dict | None, str]:
     """Reusable: validate + persist to a temp file + convert to MD, HTML, PDF.
 
-    Returns (markdown, html, display_pdf_bytes, original_filename). Markdown
-    feeds Claude; HTML is the source-side fallback; the display PDF is what
-    the FE renders pixel-perfect via PDF.js. The PDF is best-effort: when
-    soffice is missing or crashes we log and return None so analysis still
-    proceeds — the FE shows a "preview unavailable" banner.
+    Returns (markdown, html, display_pdf_bytes, display_pdf_error, original_filename).
+    Markdown feeds Claude; HTML is the source-side fallback; the display PDF
+    is what the FE renders pixel-perfect via PDF.js. The PDF is best-effort:
+    when soffice is missing or crashes we log, return None for the bytes, AND
+    populate display_pdf_error = {"kind": "...", "message": "..."} so the
+    caller can persist the reason — that lets the 404 from the display
+    endpoint tell the user *why* without SSH/journal access.
 
     Raises HTTPException on any validation failure of the input file. The
     temp file is deleted before returning.
@@ -485,6 +511,7 @@ async def _ingest_upload(
         # Display PDF is also best-effort: missing soffice or a crash
         # should not block analysis — the FE just shows a banner.
         display_pdf: bytes | None = None
+        display_pdf_error: dict | None = None
         # Mock-mode short-circuit so e2e never reaches soffice — keeps the
         # test hermetic on hosts where LibreOffice isn't installed.
         from .mock_ai import mock_display_pdf_bytes as _mock_pdf
@@ -496,14 +523,16 @@ async def _ingest_upload(
                 display_pdf = to_display_pdf(tmp_path)
             except (DisplayPdfError, ValueError) as e:
                 import sys as _sys
+                kind = getattr(e, "kind", "error")
                 print(
                     f"[_ingest_upload] display-PDF failed for {role} {file.filename!r}: "
-                    f"{getattr(e, 'kind', 'error')} — {e}",
+                    f"{kind} — {e}",
                     file=_sys.stderr,
                     flush=True,
                 )
                 display_pdf = None
-        return markdown, html, display_pdf, file.filename or ""
+                display_pdf_error = {"kind": kind, "message": str(e)}
+        return markdown, html, display_pdf, display_pdf_error, file.filename or ""
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -521,10 +550,10 @@ async def reconcile_endpoint(
     and handed to Claude with the reconciliation schema. The result is
     persisted to `reconciliations` so it shows up in Library/History.
     """
-    contract_md, contract_html, contract_pdf, contract_name = await _ingest_upload(
+    contract_md, contract_html, contract_pdf, contract_pdf_err, contract_name = await _ingest_upload(
         contract_file, RECONCILE_CONTRACT_EXTS, "contract",
     )
-    handover_md, handover_html, handover_pdf, handover_name = await _ingest_upload(
+    handover_md, handover_html, handover_pdf, handover_pdf_err, handover_name = await _ingest_upload(
         handover_file, RECONCILE_HANDOVER_EXTS, "handover",
     )
 
@@ -566,20 +595,33 @@ async def reconcile_endpoint(
     inserted = insert_row(conn, RECONCILIATIONS, payload)
     # Phase 4.x: write the display PDFs with a direct UPDATE since the
     # BLOB columns are intentionally kept out of RECONCILIATIONS.columns
-    # so the generic CRUD list/get never serializes binary garbage.
+    # so the generic CRUD list/get never serializes binary garbage. The
+    # error columns ride alongside so a later 404 can explain *why* a
+    # BLOB is missing without forcing an SSH/journal trip.
+    import json as _json
     import sys as _sys
-    if contract_pdf is not None or handover_pdf is not None:
+    contract_err_json = _json.dumps(contract_pdf_err) if contract_pdf_err else None
+    handover_err_json = _json.dumps(handover_pdf_err) if handover_pdf_err else None
+    if (contract_pdf is not None or handover_pdf is not None
+            or contract_err_json is not None or handover_err_json is not None):
         conn.execute(
             "UPDATE reconciliations "
-            "SET contract_display_pdf = ?, handover_display_pdf = ? "
+            "SET contract_display_pdf = ?, handover_display_pdf = ?, "
+            "    contract_display_pdf_error = ?, handover_display_pdf_error = ? "
             "WHERE id = ?",
-            (contract_pdf, handover_pdf, inserted["id"]),
+            (
+                contract_pdf, handover_pdf,
+                contract_err_json, handover_err_json,
+                inserted["id"],
+            ),
         )
         conn.commit()
         print(
             f"[/api/reconcile] {inserted['id']}: BLOB saved — "
-            f"contract={len(contract_pdf) if contract_pdf else 0} bytes, "
-            f"handover={len(handover_pdf) if handover_pdf else 0} bytes",
+            f"contract={len(contract_pdf) if contract_pdf else 0} bytes "
+            f"(err={contract_pdf_err.get('kind') if contract_pdf_err else 'none'}), "
+            f"handover={len(handover_pdf) if handover_pdf else 0} bytes "
+            f"(err={handover_pdf_err.get('kind') if handover_pdf_err else 'none'})",
             file=_sys.stderr, flush=True,
         )
     else:
@@ -611,21 +653,44 @@ async def reconcile_endpoint(
 # ---------------------------------------------------------------------------
 
 def _stream_display_pdf(
-    conn: sqlite3.Connection, table: str, blob_col: str, row_id: str,
+    conn: sqlite3.Connection,
+    table: str,
+    blob_col: str,
+    row_id: str,
+    err_col: str | None = None,
 ) -> "Response":
+    """Stream the display PDF, or 404 with the saved soffice failure reason.
+
+    When `err_col` is provided and the BLOB is NULL, we pull the persisted
+    {"kind", "message"} from that column and return it in the 404 body as
+    `{detail, kind, message}` so the FE banner can explain the failure
+    without anyone reading server logs.
+    """
     from fastapi.responses import Response as _Response
+    cols = [blob_col] + ([err_col] if err_col else [])
     row = conn.execute(
-        f"SELECT {blob_col} FROM {table} WHERE id = ?",
+        f"SELECT {', '.join(cols)} FROM {table} WHERE id = ?",
         (row_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"{table[:-1]} not found")
     blob = row[0]
     if not blob:
-        raise HTTPException(
-            status_code=404,
-            detail="display PDF not available for this record",
-        )
+        detail: dict = {"detail": "display PDF not available for this record"}
+        if err_col:
+            err_raw = row[1]
+            if err_raw:
+                import json as _json
+                try:
+                    err_obj = _json.loads(err_raw)
+                    if isinstance(err_obj, dict):
+                        if err_obj.get("kind"):
+                            detail["kind"] = err_obj["kind"]
+                        if err_obj.get("message"):
+                            detail["message"] = err_obj["message"]
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+        raise HTTPException(status_code=404, detail=detail)
     return _Response(
         content=bytes(blob),
         media_type="application/pdf",
@@ -642,7 +707,9 @@ def _stream_display_pdf(
     include_in_schema=False,
 )
 def contract_display_pdf(rid: str, conn: sqlite3.Connection = Depends(get_db)):
-    return _stream_display_pdf(conn, "contracts", "display_pdf", rid)
+    return _stream_display_pdf(
+        conn, "contracts", "display_pdf", rid, err_col="display_pdf_error",
+    )
 
 
 @app.get(
@@ -653,7 +720,10 @@ def contract_display_pdf(rid: str, conn: sqlite3.Connection = Depends(get_db)):
 def reconciliation_contract_display_pdf(
     rid: str, conn: sqlite3.Connection = Depends(get_db),
 ):
-    return _stream_display_pdf(conn, "reconciliations", "contract_display_pdf", rid)
+    return _stream_display_pdf(
+        conn, "reconciliations", "contract_display_pdf", rid,
+        err_col="contract_display_pdf_error",
+    )
 
 
 @app.get(
@@ -664,7 +734,10 @@ def reconciliation_contract_display_pdf(
 def reconciliation_handover_display_pdf(
     rid: str, conn: sqlite3.Connection = Depends(get_db),
 ):
-    return _stream_display_pdf(conn, "reconciliations", "handover_display_pdf", rid)
+    return _stream_display_pdf(
+        conn, "reconciliations", "handover_display_pdf", rid,
+        err_col="handover_display_pdf_error",
+    )
 
 
 # All future API routes go above this line. The static mount below is registered
