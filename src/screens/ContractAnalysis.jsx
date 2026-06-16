@@ -736,6 +736,64 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
   );
 }
 
+/* ---------- Reconcile analyzing overlay ----------
+   Lifted from the deleted src/screens/Reconcile.jsx#AnalyzingStep. Without
+   the animated progress bar + cycling steps + elapsed counter the user
+   stares at a static screen for 15-60s while Claude churns through both
+   docs and assumes the page hung. Mirrors the original behavior 1:1. */
+function ReconcileAnalyzingOverlay({ t }) {
+  const steps = t.cmpSteps || [];
+  const [step, setStep] = useState(0);
+  const [pct, setPct] = useState(6);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const si = steps.length > 0
+      ? setInterval(() => setStep((s) => Math.min(s + 1, steps.length - 1)), 4200)
+      : null;
+    // Progress crawls from 6 → 96 over ~30s of jittery increments; never
+    // reaches 100 — it caps at 96 so the final hop happens when the real
+    // result arrives. Reads as "actively working" without lying about
+    // completion time.
+    const pi = setInterval(() => setPct((p) => Math.min(p + Math.random() * 5 + 1, 96)), 350);
+    const ti = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => {
+      if (si) clearInterval(si);
+      clearInterval(pi);
+      clearInterval(ti);
+    };
+  }, [steps.length]);
+  return (
+    <div className="analysis">
+      <div className="analysis-body">
+        <div className="doc-scroll">
+          <div className="analyzing">
+            <div className="analyzing-card">
+              <div className="analyzing-orb"><Icon name="scan" size={26} /></div>
+              <div style={{ fontSize: 18, fontWeight: 700, marginTop: 16 }}>{t.cmpAnalyzing}</div>
+              <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4 }}>{t.cmpAnalyzingSub}</div>
+              <div className="prog"><div className="prog-bar" style={{ width: pct + '%' }} /></div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+                {elapsed}s
+              </div>
+              {steps.length > 0 ? (
+                <div className="analyzing-steps">
+                  {steps.map((s, i) => (
+                    <div key={i} className={'astep' + (i < step ? ' done' : i === step ? ' now' : '')}>
+                      <span className="astep-dot">{i < step ? <Icon name="check" size={11} stroke={3} /> : null}</span>
+                      {s}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="panel-wrap panel-loading" />
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Reconcile result view ----------
    Lifts the analysis-bar + AnalysisView wiring from the deleted
    src/screens/Reconcile.jsx so the analyze route renders BOTH the
@@ -839,32 +897,7 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
   // Pending state: upload modal has closed and POST /api/reconcile is in
   // flight. Show the analyzing overlay until `run` shows up.
   if (pending || !run) {
-    const steps = t.cmpSteps || [];
-    return (
-      <div className="analysis">
-        <div className="analysis-body">
-          <div className="doc-scroll">
-            <div className="analyzing">
-              <div className="analyzing-card">
-                <div className="analyzing-orb"><Icon name="scan" size={26} /></div>
-                <div style={{ fontSize: 18, fontWeight: 700, marginTop: 16 }}>{t.cmpAnalyzing}</div>
-                <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4 }}>{t.cmpAnalyzingSub}</div>
-                <div className="prog"><div className="prog-bar" style={{ width: '60%' }} /></div>
-                <div className="analyzing-steps">
-                  {steps.map((s, i) => (
-                    <div key={i} className="astep now">
-                      <span className="astep-dot" />
-                      {s}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="panel-wrap panel-loading" />
-        </div>
-      </div>
-    );
+    return <ReconcileAnalyzingOverlay t={t} />;
   }
 
   return (
@@ -1125,12 +1158,17 @@ function ContractAnalysis({ t, incoming }) {
   return <ContractAnalysisMain t={t} incoming={incoming} />;
 }
 
-/** Library handoff for reconcile rows. Mounted ONCE per analyze-route mount;
- *  the consumer renders <ReconcileResult> with the fetched run. Returns null
- *  when no handoff is queued so the single-contract code path takes over. */
-function useReconcileHandoff() {
-  const [run, setRun] = useState(undefined); // undefined = not yet decided
+/** Library handoff for reconcile rows. Only runs when the analyze route
+ *  was opened WITHOUT an incoming payload (i.e. via a Library click that
+ *  set RECON_OPEN_KEY). When `incoming` is truthy, the user came from the
+ *  upload modal — popping the key would briefly flash the reconcile
+ *  overlay on top of an unrelated upload, so we skip it. */
+function useReconcileHandoff(hasIncoming) {
+  // null sentinel = handoff skipped or no key found. undefined = lookup in
+  // flight (only happens when hasIncoming is false AND a key existed).
+  const [run, setRun] = useState(hasIncoming ? null : undefined);
   useEffect(() => {
+    if (hasIncoming) { setRun(null); return; }
     const id = popReconOpenId();
     if (!id) { setRun(null); return; }
     let cancelled = false;
@@ -1148,15 +1186,15 @@ function useReconcileHandoff() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
-  return run; // undefined while pending, null when nothing to handoff, run when ready
+  }, [hasIncoming]);
+  return run; // undefined = looking up, null = nothing to handoff, run = ready
 }
 
 function ContractAnalysisMain({ t, incoming }) {
-  const reconHandoff = useReconcileHandoff();
+  const reconHandoff = useReconcileHandoff(!!incoming);
   if (reconHandoff === undefined) {
-    // We popped a key but the GET is in flight — render the same pending
-    // body the upload-modal path uses.
+    // We popped a key but the GET is in flight — render the analyzing
+    // overlay so the user has feedback while we hydrate the persisted run.
     return <ReconcileResult t={t} run={null} pending />;
   }
   if (reconHandoff) {
