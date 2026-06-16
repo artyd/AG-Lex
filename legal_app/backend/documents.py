@@ -240,6 +240,7 @@ def to_display_pdf(
     Settings are read from `get_settings()` unless overridden via kwargs
     (useful for tests).
     """
+    import os
     import shutil as _shutil
     import subprocess
     import sys
@@ -334,6 +335,22 @@ def to_display_pdf(
             "--outdir", outdir,
             str(src),
         ]
+        # The soffice "binary" on Linux is a /bin/sh wrapper that shells out
+        # to dirname/basename/sed/grep/uname to compute its own install dir.
+        # When the parent process's PATH excludes /usr/bin (e.g. a systemd
+        # unit with Environment="PATH=/app/venv/bin"), the wrapper can't
+        # find coreutils and exits 127 with cryptic "exec: /<workdir>/oosplash:
+        # not found" — because dirname failed, so it fell back to $PWD. Force
+        # /usr/bin and /bin onto the child's PATH so the wrapper Just Works
+        # regardless of how the host configured the parent's PATH.
+        child_env = dict(os.environ)
+        _SYSTEM_BIN_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+        path_segments = (child_env.get("PATH") or "").split(os.pathsep)
+        path_segments = [p for p in path_segments if p]
+        for d in reversed(_SYSTEM_BIN_DIRS):
+            if d not in path_segments:
+                path_segments.insert(0, d)
+        child_env["PATH"] = os.pathsep.join(path_segments)
         t0 = _time.perf_counter()
         try:
             proc = subprocess.run(
@@ -341,6 +358,7 @@ def to_display_pdf(
                 timeout=timeout,
                 capture_output=True,
                 check=False,
+                env=child_env,
             )
         except subprocess.TimeoutExpired as e:
             raise DisplayPdfError(

@@ -210,6 +210,71 @@ def test_fallback_misses_raise_kind_missing(tmp_path, monkeypatch):
     assert "SOFFICE_PATH" in str(exc.value)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX PATH semantics")
+def test_subprocess_env_path_includes_system_bins(tmp_path, monkeypatch):
+    """Reproduces the prod 'exit 127, dirname: not found' failure where the
+    systemd unit set PATH=/app/venv/bin only. The soffice wrapper script
+    needs /usr/bin (dirname/basename/sed/grep/uname) to compute its own
+    install dir. We force-prepend /usr/bin and friends to the child env
+    so the wrapper works regardless of the parent PATH.
+    """
+    src = tmp_path / "doc.docx"
+    src.write_bytes(b"PK\x03\x04 fake")
+
+    # Mimic the prod systemd unit: PATH = venv only, soffice resolves via
+    # the fallback list (since /usr/bin/soffice "exists" but /usr/bin isn't
+    # on PATH for which() — same logic as in prod).
+    monkeypatch.setenv("PATH", "/root/ag-lex/legal_app/venv/bin")
+    monkeypatch.delenv("SOFFICE_PATH", raising=False)
+    get_settings.cache_clear()
+
+    import shutil as _shutil
+    import subprocess as _sp
+
+    # Pretend /usr/bin/soffice resolves (it does on prod — just not via the
+    # stripped PATH). Return None for the bare name so we take the fallback
+    # path; pretend /usr/bin/soffice exists when checked directly.
+    def fake_which(cmd, *args, **kwargs):
+        if cmd == "soffice":
+            return None
+        if cmd == "/usr/bin/soffice":
+            return "/usr/bin/soffice"
+        return None
+
+    monkeypatch.setattr(_shutil, "which", fake_which)
+
+    captured = {}
+
+    def fake_run(cmd, *args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        captured["cmd"] = cmd
+        # Synthesize a valid PDF in --outdir so we get past the empty check.
+        outdir = cmd[cmd.index("--outdir") + 1]
+        src_arg = cmd[-1]
+        pdf_path = Path(outdir) / (Path(src_arg).stem + ".pdf")
+        pdf_path.write_bytes(_tiny_pdf_bytes())
+
+        class _Proc:
+            returncode = 0
+            stdout = b""
+            stderr = b""
+
+        return _Proc()
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+
+    to_display_pdf(src)
+
+    path_dirs = captured["env"]["PATH"].split(":")
+    # /usr/bin must come BEFORE the venv (we prepend) so the wrapper finds
+    # coreutils first.
+    assert "/usr/bin" in path_dirs
+    assert "/bin" in path_dirs
+    assert path_dirs.index("/usr/bin") < path_dirs.index("/root/ag-lex/legal_app/venv/bin")
+    # The original parent PATH is preserved, just augmented.
+    assert "/root/ag-lex/legal_app/venv/bin" in path_dirs
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="bash stub script is POSIX-only")
 def test_stub_soffice_produces_valid_pdf(tmp_path, monkeypatch):
     # Hand-rolled "soffice" shell stub that writes a valid-shaped PDF into
