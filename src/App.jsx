@@ -3,7 +3,7 @@
    ============================================================ */
 import { useState, useEffect, useRef } from 'react';
 import { Icon } from './ui/Icon';
-import { Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
+import { Badge, Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
 import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, TweakToggle, useTweaks } from './ui/tweaks-panel';
 import { HelpTip, seedTrainingMode } from './ui/HelpTip';
 import { roleLabel } from './lib/labels';
@@ -545,16 +545,36 @@ export default function App() {
             ))}
           </div>
         </div>
-        <div className="set-row">
-          <div>
-            <div className="set-label">{L.training}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>{L.trainingSub}</div>
+        <div className={'training-card' + (t.training ? ' on' : '')}>
+          <div className="training-card-glow" aria-hidden="true" />
+          <div className="training-card-ic">
+            <Icon name="sparkle" size={20} fill={true} />
           </div>
-          <label className="hl-toggle">
+          <div className="training-card-body">
+            <div className="training-card-head">
+              <span className="training-card-t">{L.training}</span>
+              {t.training ? <Badge variant="accent">{L.on}</Badge> : null}
+            </div>
+            <div className="training-card-s">{L.trainingSub}</div>
+            <HelpTip text={L.trainingTipExample || L.trainingSub}>
+              <button
+                type="button"
+                className={'training-card-demo' + (t.training ? '' : ' is-off')}
+                disabled={!t.training}
+              >
+                <Icon name="wand" size={13} />
+                {t.training
+                  ? (L.trainingDemoOn || 'Наведіть курсор сюди — побачите підказку')
+                  : (L.trainingDemoOff || 'Увімкніть, щоб спробувати')}
+              </button>
+            </HelpTip>
+          </div>
+          <label className="hl-toggle training-card-toggle">
             <input
               type="checkbox"
               checked={!!t.training}
               onChange={(e) => setTweak('training', e.target.checked)}
+              aria-label={L.training}
             />
             <span className="hl-track"><span className="hl-knob" /></span>
           </label>
