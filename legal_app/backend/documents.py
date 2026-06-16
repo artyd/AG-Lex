@@ -273,12 +273,47 @@ def to_display_pdf(
 
     # DOCX/XLSX → soffice
     soffice_resolved = _shutil.which(soffice) if soffice else None
+    # The fallback applies only to a bare command name like "soffice" (the
+    # default). If the user gave us an explicit path (absolute or relative),
+    # honor it and fail loud — silently rewriting a misconfigured absolute
+    # path would hide bugs. `os.path.isabs` isn't reliable cross-platform
+    # (Python 3.13 changed ntpath behavior for `/foo`), so check for path
+    # separators directly.
+    looks_like_bare_name = bool(soffice and "/" not in soffice and "\\" not in soffice)
+    if not soffice_resolved and looks_like_bare_name:
+        # which() failed for a bare command name. Common cause on prod: the
+        # systemd unit's PATH excludes /usr/bin even though /usr/bin/soffice
+        # exists (or `ProtectSystem=strict`/`PrivateUsers` hides it). Probe a
+        # tight list of canonical install paths before declaring "missing" so
+        # a vanilla install Just Works without forcing every host to set
+        # SOFFICE_PATH. shutil.which() with an absolute path doesn't search
+        # PATH — it only checks if the file exists and is executable.
+        _FALLBACK_SOFFICE_PATHS = (
+            "/usr/bin/soffice",
+            "/usr/lib/libreoffice/program/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        )
+        for cand in _FALLBACK_SOFFICE_PATHS:
+            hit = _shutil.which(cand)
+            if hit:
+                soffice_resolved = hit
+                print(
+                    f"[to_display_pdf] PATH lookup for {soffice!r} failed; "
+                    f"using fallback {hit!r}. Set SOFFICE_PATH={hit} in the "
+                    f"env to silence this lookup on subsequent calls.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                break
     if not soffice_resolved:
         raise DisplayPdfError(
             "missing",
             f"soffice binary not found (looked up {soffice!r}); "
             f"install LibreOffice on the host (apt-get install --no-install-recommends "
-            f"libreoffice-core libreoffice-writer libreoffice-calc).",
+            f"libreoffice-core libreoffice-writer libreoffice-calc) "
+            f"or set SOFFICE_PATH to an absolute path.",
         )
 
     outdir = _tempfile.mkdtemp(prefix="aglex_pdf_")
