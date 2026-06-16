@@ -27,6 +27,11 @@ function useContractRows(t) {
         const dateStr = created && !isNaN(created.getTime())
           ? created.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' })
           : '—';
+        // Bug: legacy rows persisted before the analyzer's score lived in
+        // `analysis.score.value`. `c.score` was stored as `0` for them, which
+        // renders as "0" — looks like a real result but isn't. Treat both 0
+        // and missing as "no score yet" so the UI can show an em-dash.
+        const rawScore = (c.score == null || c.score === 0) ? null : Math.round(c.score);
         return {
           id: c.id,
           name: c.title || c.filename || (t.analyze || 'Договір'),
@@ -35,7 +40,11 @@ function useContractRows(t) {
           status: 'done',
           risk: c.risk || 'low',
           date: dateStr,
-          score: Math.round(c.score || 0),
+          // null score = "не оцінено" — display layer renders "—" + muted tone.
+          score: rawScore,
+          // Sortable epoch the UI orders newest-first on. NaN sinks to bottom.
+          dateMs: created && !isNaN(created.getTime()) ? created.getTime() : 0,
+          findingsCount: c.findingsCount || 0,
           isContract: true,
         };
       });
@@ -80,6 +89,14 @@ function useReconciliationRows(t) {
         const dateStr = created && !isNaN(created.getTime())
           ? created.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' })
           : '—';
+        // Reconciliations don't carry a contract-style score. We synthesise
+        // one from finding counts so the column has *something*, but rows
+        // without any findings analysis (e.g. legacy localStorage entries
+        // without verdict info) get null → rendered as "—" instead of "100".
+        const hasVerdict = r.verdict || must > 0 || should > 0;
+        const synthScore = hasVerdict
+          ? Math.max(0, Math.min(100, 100 - must * 12 - should * 5))
+          : null;
         merged.push({
           id: r.id,
           name: pair.product || t.reconcileTitle,
@@ -88,7 +105,9 @@ function useReconciliationRows(t) {
           status: 'done',
           risk,
           date: dateStr,
-          score: Math.max(0, 100 - must * 12 - should * 5),
+          score: synthScore,
+          dateMs: created && !isNaN(created.getTime()) ? created.getTime() : 0,
+          findingsCount: must + should,
           isRecon: true,
         });
       };
@@ -121,97 +140,259 @@ function Dashboard({ t, setRoute, user }) {
 }
 
 /* ---------- Library ---------- */
-function Library({ t, setRoute, query }) {
+function Library({ t, setRoute, query, clearAnalysisIncoming }) {
   const contractRows = useContractRows(t);
   const reconRows = useReconciliationRows(t);
-  const [filter, setFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [typeOpen, setTypeOpen] = useState(false);
+  const [riskFilter, setRiskFilter] = useState('all');
+  const [kindFilter, setKindFilter] = useState('all'); // all | contract | recon
+  const [sort, setSort] = useState('new');             // new | score | risk
+  const [view, setView] = useState('grid');            // grid | list
+
   // Real data only — saved contracts (POST /api/analyze/contract result)
-  // and reconciliations (POST /api/reconcile result). DEMO.library was a
-  // placeholder for the pre-persistence UI and is no longer mixed in.
+  // and reconciliations (POST /api/reconcile result). Newest first by default.
   const allItems = [...contractRows, ...reconRows];
-  const types = ['all', ...Array.from(new Set(allItems.map(c => c.type)))];
-  const filters = [
-    { id: 'all', label: t.filterAll },
-    { id: 'review', label: t.statusReview },
-    { id: 'done', label: t.statusDone },
-    { id: 'draft', label: t.statusDraft },
-  ];
-  const statusLabel = { review: t.statusReview, done: t.statusDone, draft: t.statusDraft };
-  const statusTone = { review: 'var(--risk-med)', done: 'var(--risk-low)', draft: 'var(--text-3)' };
+
+  // Aggregate KPIs for the header strip — gives the user instant context
+  // ("how big is my library, how risky on average") without scrolling.
+  const stats = {
+    total: allItems.length,
+    contracts: contractRows.length,
+    recons: reconRows.length,
+    high: allItems.filter(c => c.risk === 'high').length,
+    avgScore: (() => {
+      const scored = allItems.filter(c => typeof c.score === 'number');
+      if (!scored.length) return null;
+      return Math.round(scored.reduce((a, c) => a + c.score, 0) / scored.length);
+    })(),
+  };
+
   const q = (query || '').trim().toLowerCase();
-  const rows = allItems.filter(c =>
-    (filter === 'all' || c.status === filter) &&
-    (typeFilter === 'all' || c.type === typeFilter) &&
+  let rows = allItems.filter(c =>
+    (riskFilter === 'all' || c.risk === riskFilter) &&
+    (kindFilter === 'all'
+      || (kindFilter === 'contract' && c.isContract)
+      || (kindFilter === 'recon' && c.isRecon)) &&
     (!q || (c.name + ' ' + c.client + ' ' + c.type).toLowerCase().includes(q))
   );
+  rows = [...rows].sort((a, b) => {
+    if (sort === 'score') {
+      // null scores sink to the bottom regardless of direction — they're
+      // "no data" rather than "low score".
+      const av = typeof a.score === 'number' ? a.score : -1;
+      const bv = typeof b.score === 'number' ? b.score : -1;
+      return bv - av;
+    }
+    if (sort === 'risk') {
+      const order = { high: 0, med: 1, low: 2 };
+      return (order[a.risk] ?? 3) - (order[b.risk] ?? 3);
+    }
+    return (b.dateMs || 0) - (a.dateMs || 0);
+  });
+
   const openRow = (c) => {
+    // Library handoff sets a localStorage key and routes. The bug: App-level
+    // `analysisIncoming` may still hold a payload from the previous upload
+    // session, so ContractAnalysis would re-trigger analysis. Clear it first.
+    if (typeof clearAnalysisIncoming === 'function') clearAnalysisIncoming();
     if (c.isRecon) openReconciliation(c.id, setRoute);
     else if (c.isContract) openContract(c.id, setRoute);
     else setRoute('analyze');
   };
 
+  // Score colour: green / amber / red — matches the rest of the workspace.
+  // Returns CSS custom property so the value tracks the theme tokens.
+  const scoreColor = (v) =>
+    typeof v !== 'number' ? 'var(--text-3)'
+      : v >= 75 ? 'var(--risk-low)'
+      : v >= 55 ? 'var(--risk-med)'
+      : 'var(--risk-high)';
+
+  // Empty state — different copy depending on whether the library is
+  // empty entirely vs the current filter just returned nothing.
+  const emptyMsg = allItems.length === 0
+    ? (t.libEmptyAll || 'Бібліотека поки порожня. Запустіть аналіз договору, щоб додати першу перевірку.')
+    : (t.libEmptyFilter || 'Жодна перевірка не відповідає поточним фільтрам.');
+
   return (
-    <div className="page view-enter">
+    <div className="page view-enter lib-page">
       <div className="page-narrow">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 'var(--s5)', flexWrap: 'wrap' }}>
-          <div className="seg">
-            {filters.map(f => (
-              <button key={f.id} className={filter === f.id ? 'on' : ''} onClick={() => setFilter(f.id)}>{f.label}</button>
-            ))}
+        {/* KPI strip — total · contracts · reconciliations · high risk · avg score */}
+        <div className="lib-kpis">
+          <div className="lib-kpi">
+            <span className="lib-kpi-ic" style={{ color: 'var(--accent)' }}><Icon name="library" size={16} /></span>
+            <span className="lib-kpi-v">{stats.total}</span>
+            <span className="lib-kpi-l">{t.libKpiTotal || 'Усього перевірок'}</span>
           </div>
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setTypeOpen(o => !o)}>
-              <Icon name="filter" size={15} /> {typeFilter === 'all' ? t.colType : typeFilter} <Icon name="chevD" size={14} />
-            </button>
-            {typeOpen && (
-              <div className="menu" style={{ top: 'calc(100% + 6px)', left: 0, minWidth: 180 }} onMouseLeave={() => setTypeOpen(false)}>
-                {types.map(ty => (
-                  <button key={ty} className={'menu-item' + (typeFilter === ty ? ' on' : '')} onClick={() => { setTypeFilter(ty); setTypeOpen(false); }}>
-                    {ty === 'all' ? t.allTypes : ty}
-                    {typeFilter === ty ? <Icon name="check" size={14} /> : null}
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="lib-kpi">
+            <span className="lib-kpi-ic"><Icon name="doc" size={16} /></span>
+            <span className="lib-kpi-v">{stats.contracts}</span>
+            <span className="lib-kpi-l">{t.libKpiContracts || 'Договори'}</span>
           </div>
-          {q ? <span className="chip"><Icon name="search" size={12} /> «{query}»</span> : null}
-          <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setRoute('analyze')}><Icon name="upload" size={15} /> {t.upload}</button>
+          <div className="lib-kpi">
+            <span className="lib-kpi-ic"><Icon name="scan" size={16} /></span>
+            <span className="lib-kpi-v">{stats.recons}</span>
+            <span className="lib-kpi-l">{t.libKpiRecons || 'Звірки'}</span>
+          </div>
+          <div className="lib-kpi">
+            <span className="lib-kpi-ic" style={{ color: 'var(--risk-high)' }}><Icon name="alert" size={16} /></span>
+            <span className="lib-kpi-v" style={{ color: stats.high ? 'var(--risk-high)' : undefined }}>{stats.high}</span>
+            <span className="lib-kpi-l">{t.libKpiHigh || 'Високий ризик'}</span>
+          </div>
+          <div className="lib-kpi">
+            <span className="lib-kpi-ic"><Icon name="sparkle" size={16} fill={true} /></span>
+            <span className="lib-kpi-v" style={{ color: scoreColor(stats.avgScore) }}>
+              {stats.avgScore == null ? '—' : stats.avgScore}
+            </span>
+            <span className="lib-kpi-l">{t.libKpiAvg || 'Середня оцінка'}</span>
+          </div>
         </div>
 
-        <div className="card" style={{ overflow: 'visible' }}>
-          <table className="lib-table">
-            <thead>
-              <tr>
-                <th>{t.colName}</th><th>{t.colClient}</th><th>{t.colType}</th>
-                <th>{t.colStatus}</th><th>{t.colRisk}</th><th style={{ textAlign: 'right' }}>{t.colScore}</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 'var(--s8)', color: 'var(--text-3)' }}>{t.searchEmpty}</td></tr>
-              ) : rows.map(c => (
-                <tr key={c.id} onClick={() => openRow(c)} className={c.current ? 'row-current' : ''}>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span className={'lib-ic' + (c.isHandover ? ' lib-ic-handover' : '')}>
-                        <Icon name={c.isRecon ? 'scan' : c.isHandover ? 'folder' : 'doc'} size={15} />
-                      </span>
-                      <span style={{ fontWeight: 600 }}>{c.name}{c.current ? <span className="now-tag">{t.nowTag}</span> : null}</span>
-                    </div>
-                  </td>
-                  <td style={{ color: 'var(--text-2)' }}>{c.client}</td>
-                  <td><span className="chip">{c.type}</span></td>
-                  <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: statusTone[c.status] }}><span className="chip-dot" style={{ background: statusTone[c.status] }} />{statusLabel[c.status]}</span></td>
-                  <td><RiskBadge level={c.risk} t={t} /></td>
-                  <td style={{ textAlign: 'right', fontWeight: 700, color: c.score >= 75 ? 'var(--risk-low)' : c.score >= 55 ? 'var(--risk-med)' : 'var(--risk-high)' }}>{c.score}</td>
-                  <td><Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Toolbar — kind tabs · risk filter · sort · view · upload */}
+        <div className="lib-toolbar">
+          <div className="seg lib-seg">
+            <button className={kindFilter === 'all' ? 'on' : ''} onClick={() => setKindFilter('all')}>
+              {t.libAll || 'Усі'}
+            </button>
+            <button className={kindFilter === 'contract' ? 'on' : ''} onClick={() => setKindFilter('contract')}>
+              <Icon name="doc" size={13} /> {t.libContracts || 'Договори'}
+            </button>
+            <button className={kindFilter === 'recon' ? 'on' : ''} onClick={() => setKindFilter('recon')}>
+              <Icon name="scan" size={13} /> {t.libRecons || 'Звірки'}
+            </button>
+          </div>
+
+          <div className="seg lib-seg lib-seg-risk">
+            <button className={riskFilter === 'all' ? 'on' : ''} onClick={() => setRiskFilter('all')}>
+              {t.filterAll}
+            </button>
+            <button className={riskFilter === 'high' ? 'on high' : ''} onClick={() => setRiskFilter('high')}>
+              <span className="lib-dot" style={{ background: 'var(--risk-high)' }} /> {t.riskHigh}
+            </button>
+            <button className={riskFilter === 'med' ? 'on med' : ''} onClick={() => setRiskFilter('med')}>
+              <span className="lib-dot" style={{ background: 'var(--risk-med)' }} /> {t.riskMed}
+            </button>
+            <button className={riskFilter === 'low' ? 'on low' : ''} onClick={() => setRiskFilter('low')}>
+              <span className="lib-dot" style={{ background: 'var(--risk-low)' }} /> {t.riskLow}
+            </button>
+          </div>
+
+          {q ? <span className="chip"><Icon name="search" size={12} /> «{query}»</span> : null}
+
+          <div className="lib-toolbar-right">
+            <select className="lib-sort" value={sort} onChange={e => setSort(e.target.value)} aria-label={t.libSort || 'Сортування'}>
+              <option value="new">{t.libSortNew || 'Спочатку нові'}</option>
+              <option value="score">{t.libSortScore || 'За оцінкою'}</option>
+              <option value="risk">{t.libSortRisk || 'За ризиком'}</option>
+            </select>
+            <div className="seg lib-view-toggle">
+              <button className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')} aria-label={t.libGrid || 'Сітка'}>
+                <Icon name="dashboard" size={14} />
+              </button>
+              <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} aria-label={t.libList || 'Список'}>
+                <Icon name="filter" size={14} />
+              </button>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setRoute('analyze')}>
+              <Icon name="upload" size={15} /> {t.upload}
+            </button>
+          </div>
         </div>
+
+        {rows.length === 0 ? (
+          <div className="card lib-empty">
+            <span className="lib-empty-ic"><Icon name="library" size={28} /></span>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+              {t.libEmptyTitle || 'Тут поки нічого немає'}
+            </div>
+            <div style={{ fontSize: 13.5, color: 'var(--text-3)', maxWidth: 380 }}>{emptyMsg}</div>
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={() => setRoute('analyze')}>
+              <Icon name="upload" size={15} /> {t.upload}
+            </button>
+          </div>
+        ) : view === 'grid' ? (
+          <div className="lib-grid">
+            {rows.map(c => (
+              <button key={c.id} className={'lib-card lib-card-' + c.risk + (c.isRecon ? ' lib-card-recon' : '')} onClick={() => openRow(c)}>
+                <span className="lib-stripe" />
+                <div className="lib-card-head">
+                  <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
+                    <Icon name={c.isRecon ? 'scan' : 'doc'} size={16} />
+                  </span>
+                  <span className="lib-kind-chip">
+                    {c.isRecon ? (t.libRecons || 'Звірка') : (t.libContracts || 'Договір')}
+                  </span>
+                  <RiskBadge level={c.risk} t={t} />
+                </div>
+                <div className="lib-card-title">{c.name}</div>
+                <div className="lib-card-sub">{c.client}</div>
+                <div className="lib-card-foot">
+                  <div className="lib-score" style={{ color: scoreColor(c.score) }}>
+                    {typeof c.score === 'number' ? (
+                      <>
+                        <span className="lib-score-v">{c.score}</span>
+                        <span className="lib-score-l">{t.colScore || 'Оцінка'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="lib-score-v lib-score-na">—</span>
+                        <span className="lib-score-l">{t.libNoScore || 'Без оцінки'}</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="lib-meta">
+                    {c.findingsCount ? (
+                      <span className="lib-meta-bit" title={t.libFindings || 'Зауваження'}>
+                        <Icon name="alert" size={11} /> {c.findingsCount}
+                      </span>
+                    ) : null}
+                    <span className="lib-meta-bit lib-meta-date">
+                      <Icon name="calendar" size={11} /> {c.date}
+                    </span>
+                  </div>
+                </div>
+                <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="card lib-list-card">
+            <table className="lib-table lib-table-pretty">
+              <thead>
+                <tr>
+                  <th>{t.colName}</th>
+                  <th>{t.colClient}</th>
+                  <th>{t.colType}</th>
+                  <th>{t.colDate || 'Дата'}</th>
+                  <th>{t.colRisk}</th>
+                  <th style={{ textAlign: 'right' }}>{t.colScore}</th>
+                  <th aria-hidden="true"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(c => (
+                  <tr key={c.id} onClick={() => openRow(c)} className={'lib-row lib-row-' + c.risk}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
+                          <Icon name={c.isRecon ? 'scan' : 'doc'} size={15} />
+                        </span>
+                        <span style={{ fontWeight: 600 }}>{c.name}</span>
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-2)' }}>{c.client}</td>
+                    <td><span className="chip">{c.type}</span></td>
+                    <td style={{ color: 'var(--text-3)', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{c.date}</td>
+                    <td><RiskBadge level={c.risk} t={t} /></td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: scoreColor(c.score) }}>
+                      {typeof c.score === 'number' ? c.score : <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>—</span>}
+                    </td>
+                    <td><Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
