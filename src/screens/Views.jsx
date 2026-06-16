@@ -7,7 +7,7 @@ import { Icon } from '../ui/Icon';
 import { RiskBadge, SectionTitle, riskDot, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
 import { api } from '../lib/api';
-import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from './Reconcile';
+import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from '../lib/reconcileStorage';
 import { WidgetGrid } from './WidgetGrid';
 
 /* ---------- Persisted contract analyses → library rows ----------
@@ -103,7 +103,10 @@ function useReconciliationRows(t) {
 
 function openReconciliation(id, setRoute) {
   try { localStorage.setItem(RECON_OPEN_KEY, id); } catch (_e) {}
-  setRoute('reconcile');
+  // PR-1 of the analyze-unification work: reconcile no longer has its own
+  // route; the analyze screen pops RECON_OPEN_KEY and hydrates a run via
+  // api.reconciliations.get(id).
+  setRoute('analyze');
 }
 
 /* ---------- Dashboard ----------

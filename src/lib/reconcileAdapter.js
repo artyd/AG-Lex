@@ -23,25 +23,66 @@ const ROW_STATUS_TO_NOTE = {
   positive: 'ok',
 };
 
+/** Pick the longest inline-highlight fragment from `docs.contract` whose
+ *  category matches `cat` and whose status isn't `ok`. This is the text
+ *  the backend already emitted as the actionable highlight target inside
+ *  `docs.contract.sections[].uaP[]` / `enP[]` (per the reconciliation
+ *  prompt: each fragment carries `{t, cat, st}`).
+ *
+ *  We prefer the longest fragment because short tokens like "CIF" or
+ *  numeric clauses collide with the table-of-contents or page header
+ *  when `pdfHighlight.findSpan` does its `indexOf`. A longer fragment
+ *  like "CIF Гданськ, MSC/Maersk до 12.04.2026" is essentially unique
+ *  on the page, so the overlay lands on the actual disputed phrase.
+ *
+ *  Returns `null` when no suitable fragment exists — the caller falls
+ *  back to the clause-number anchor in `findSpan`. */
+export function snippetForCat(docs, cat) {
+  if (!docs || !cat) return null;
+  const contract = docs.contract || {};
+  const sections = Array.isArray(contract.sections) ? contract.sections : [];
+  let best = '';
+  for (const s of sections) {
+    for (const arr of [s.uaP, s.enP]) {
+      if (!Array.isArray(arr)) continue;
+      for (const p of arr) {
+        if (!p || typeof p.t !== 'string') continue;
+        if (p.cat !== cat) continue;
+        if (p.st === 'ok' || p.st == null) continue;
+        if (p.t.length > best.length) best = p.t;
+      }
+    }
+  }
+  return best || null;
+}
+
 /** Convert reconcile findings to the analyze-contract finding shape so the
  *  existing AiPanel / FindingCard / overlay code paths Just Work. */
 export function reconcileToFindings(run) {
   const list = (run && run.findings) || [];
-  return list.map((f) => ({
-    id: String(f.cat || f.id || ''),
-    level: SEV_TO_LEVEL[f.severity] || 'info',
-    clause: f.location || '',
-    weight: 1,
-    title: f.issue || '',
-    desc: f.rec || '',
-    severity: f.severity,
-    law: null,
-    // No rewrite suggestion in the reconcile schema; AnalysisView's overlay
-    // still anchors via clause-number fallback when needed.
-    suggest: null,
-    _source: f.source || null,
-    _verified: f.verified || null,
-  }));
+  const docs = (run && run.docs) || null;
+  return list.map((f) => {
+    // Derive an inline snippet from docs.contract so findingsToHighlights has
+    // something concrete to grep for. When no snippet exists (e.g. category
+    // wasn't highlighted in docs), suggest stays null and the highlighter
+    // falls back to the clause-number anchor.
+    const snippet = snippetForCat(docs, f.cat);
+    return {
+      id: String(f.cat || f.id || ''),
+      level: SEV_TO_LEVEL[f.severity] || 'info',
+      clause: f.location || '',
+      weight: 1,
+      title: f.issue || '',
+      desc: f.rec || '',
+      severity: f.severity,
+      law: null,
+      // `to` stays empty — reconcile doesn't propose rewrites; we only use
+      // `from` as a text anchor for the PDF overlay.
+      suggest: snippet ? { from: snippet, to: '' } : null,
+      _source: f.source || null,
+      _verified: f.verified || null,
+    };
+  });
 }
 
 /** Reduce reconcile rows → the analyze-shaped `comparison[]` AiPanel renders

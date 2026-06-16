@@ -153,6 +153,32 @@
 .analysis-fallback-retry {
   margin-top: 14px;
 }
+
+/* PR-1 of analyze-unification: surface the "highlights resolved zero spans"
+   failure mode so a clean-looking PDF doesn't fool the user into thinking
+   the analyzer found nothing. Inline at the top of the PDF pane, doesn't
+   block scrolling/zoom. */
+.analysis-highlights-miss {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100% - 24px));
+  padding: 8px 12px;
+  background: var(--risk-med-soft);
+  color: var(--risk-med);
+  border: 1px solid color-mix(in oklab, var(--risk-med) 30%, transparent);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-shadow: 0 2px 10px color-mix(in oklab, var(--risk-med) 18%, transparent);
+}
+.analysis-highlights-miss .icon { flex-shrink: 0; }
+
 .analysis-doc-pane { position: relative; }
 
 /* Floating zoom toolbar — bottom-right of the PdfViewer pane. */
