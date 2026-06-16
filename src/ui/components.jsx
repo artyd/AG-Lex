@@ -62,12 +62,10 @@ export function riskDot(level) {
 /* ---- Sidebar ---- */
 export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, user }) {
   const work = [
+    { id: 'lawyer', icon: 'scales', label: t.lawNav || 'AI-адвокат' },
     { id: 'dashboard', icon: 'dashboard', label: t.dashboard },
     { id: 'builder', icon: 'wand', label: t.builder },
-    { id: 'copilot', icon: 'chat', label: t.copilot },
-    { id: 'esign', icon: 'pen', label: t.esign },
     { id: 'library', icon: 'library', label: t.library, badge: riskCount },
-    { id: 'batch', icon: 'sparkle', label: t.batch },
   ];
   const practice = [
     { id: 'matters', icon: 'folder', label: t.matters },
@@ -78,7 +76,6 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
     { id: 'review', icon: 'filter', label: t.review },
   ];
   const knowledge = [
-    { id: 'lawyer', icon: 'sparkle', label: t.lawNav || 'AI-адвокат' },
     { id: 'clauses', icon: 'book', label: t.clauseLib },
     { id: 'legal', icon: 'scales', label: t.legalSearch },
     { id: 'counterparty', icon: 'building', label: t.counterparty },

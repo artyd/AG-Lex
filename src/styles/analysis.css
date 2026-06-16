@@ -310,8 +310,182 @@
 .lib-table tbody tr:last-child td { border-bottom: none; }
 .lib-ic { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
 .lib-ic-handover { background: var(--risk-med-soft); color: var(--risk-med); }
+.lib-ic-recon { background: var(--risk-med-soft); color: var(--risk-med); }
 .row-current { background: var(--accent-softer); }
 .now-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; margin-left: 8px; }
+
+/* ---------- Library: redesigned (KPI strip + cards + toolbar) ---------- */
+.lib-page .page-narrow { max-width: 1200px; padding-top: var(--s4); }
+
+/* KPI strip */
+.lib-kpis {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 10px; margin-bottom: var(--s5);
+}
+.lib-kpi {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 4px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface);
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
+}
+.lib-kpi:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.lib-kpi-ic {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: grid; place-items: center; color: var(--text-3);
+  background: var(--bg-2); margin-bottom: 2px;
+}
+.lib-kpi-v {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.lib-kpi-l {
+  font-size: 11.5px; color: var(--text-3); font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+@media (max-width: 820px) {
+  .lib-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Toolbar */
+.lib-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-bottom: var(--s4);
+}
+.lib-seg button { display: inline-flex; align-items: center; gap: 6px; }
+.lib-seg-risk button.on.high { background: var(--risk-high-soft); color: var(--risk-high); }
+.lib-seg-risk button.on.med  { background: var(--risk-med-soft);  color: var(--risk-med); }
+.lib-seg-risk button.on.low  { background: var(--risk-low-soft);  color: var(--risk-low); }
+.lib-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+.lib-toolbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.lib-sort {
+  height: 32px; padding: 0 28px 0 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  font-family: inherit; font-size: 13px; color: var(--text-2);
+  appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 12px;
+}
+.lib-sort:hover { border-color: var(--border-strong); }
+.lib-view-toggle { padding: 2px; }
+.lib-view-toggle button { padding: 6px 10px; }
+
+/* Card grid */
+.lib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.lib-card {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 18px 18px 16px 22px; padding-right: 38px;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); cursor: pointer; text-align: left;
+  font-family: inherit; color: var(--text);
+  transition: transform 0.18s cubic-bezier(.22,.61,.36,1),
+              box-shadow 0.18s, border-color 0.18s;
+  animation: libCardIn 0.32s ease-out backwards;
+}
+.lib-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent), 0 4px 10px rgba(0,0,0,0.04); }
+.lib-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lib-card:active { transform: translateY(-1px); }
+.lib-card:nth-child(1) { animation-delay: 0.02s; }
+.lib-card:nth-child(2) { animation-delay: 0.05s; }
+.lib-card:nth-child(3) { animation-delay: 0.08s; }
+.lib-card:nth-child(4) { animation-delay: 0.11s; }
+.lib-card:nth-child(5) { animation-delay: 0.14s; }
+.lib-card:nth-child(6) { animation-delay: 0.17s; }
+@keyframes libCardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Risk stripe on the left edge of every card */
+.lib-stripe {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--text-3);
+}
+.lib-card-high .lib-stripe { background: var(--risk-high); }
+.lib-card-med  .lib-stripe { background: var(--risk-med); }
+.lib-card-low  .lib-stripe { background: var(--risk-low); }
+.lib-card-recon { background: linear-gradient(180deg, var(--surface), color-mix(in oklab, var(--risk-med-soft) 30%, var(--surface))); }
+
+.lib-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lib-kind-chip {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-3);
+  background: var(--bg-2); border-radius: 999px;
+  padding: 3px 9px; margin-right: auto;
+}
+.lib-card-recon .lib-kind-chip { background: var(--risk-med-soft); color: var(--risk-med); }
+
+.lib-card-title {
+  font-weight: 700; font-size: 15px; line-height: 1.35;
+  color: var(--text); letter-spacing: -0.005em;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+  min-height: 41px;
+}
+.lib-card-sub {
+  font-size: 12.5px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.lib-card-foot {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 12px; margin-top: auto; padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.lib-score { display: flex; flex-direction: column; line-height: 1; }
+.lib-score-v {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.lib-score-na { color: var(--text-3); font-weight: 600; }
+.lib-score-l { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; font-weight: 600; }
+
+.lib-meta {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+.lib-meta-bit {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--text-3); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.lib-meta-bit svg { color: var(--text-3); }
+
+.lib-card-arrow {
+  position: absolute; right: 14px; top: 20px;
+  color: var(--text-3); transition: transform 0.18s, color 0.18s;
+}
+.lib-card:hover .lib-card-arrow { transform: translateX(3px); color: var(--accent); }
+
+/* Empty state */
+.lib-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: clamp(40px, 8vh, 80px) 20px; text-align: center;
+}
+.lib-empty-ic {
+  width: 56px; height: 56px; border-radius: 16px;
+  display: grid; place-items: center; color: var(--accent);
+  background: var(--accent-softer); margin-bottom: 14px;
+}
+
+/* List view — denser table than the legacy one */
+.lib-list-card { overflow: hidden; }
+.lib-table-pretty tbody tr.lib-row { position: relative; }
+.lib-table-pretty tbody tr.lib-row td:first-child { position: relative; padding-left: 22px; }
+.lib-table-pretty tbody tr.lib-row td:first-child::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--text-3); opacity: 0.5;
+}
+.lib-table-pretty tbody tr.lib-row-high td:first-child::before { background: var(--risk-high); opacity: 1; }
+.lib-table-pretty tbody tr.lib-row-med  td:first-child::before { background: var(--risk-med);  opacity: 1; }
+.lib-table-pretty tbody tr.lib-row-low  td:first-child::before { background: var(--risk-low);  opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lib-card, .lib-kpi, .lib-card-arrow { animation: none !important; transition: none !important; }
+}
 
 /* ============================================================
    Clients
