@@ -681,10 +681,10 @@ button:focus-visible, a:focus-visible, .nav-item:focus-visible, .nav-group-head:
 }
 
 /* ============================================================
-   PR-3: Training-mode HelpTip tooltips. Bubble is rendered at the
-   document root via the same React tree (no portal); position is set
-   from getBoundingClientRect() in HelpTip. The wrap defaults to
-   display:contents so layout never shifts when the feature is on.
+   Training-mode HelpTip tooltips. Bubble follows the cursor (default
+   placement="cursor"), or anchors to the wrapped element on keyboard
+   focus. Wrap uses display:contents so layout never shifts; HelpTip
+   measures the FIRST CHILD element's rect for element-anchored modes.
    ============================================================ */
 .helptip-wrap {
   display: contents;
@@ -693,29 +693,139 @@ button:focus-visible, a:focus-visible, .nav-item:focus-visible, .nav-group-head:
   position: fixed;
   z-index: 9000;
   max-width: 320px;
-  padding: 8px 12px;
-  background: var(--text);
-  color: var(--bg);
-  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, var(--border));
+  border-radius: var(--r-md);
   font-size: 12.5px;
   line-height: 1.5;
   font-weight: 500;
-  box-shadow: 0 4px 16px rgba(20,18,30,0.18), 0 2px 4px rgba(20,18,30,0.10);
+  box-shadow:
+    0 12px 32px -8px color-mix(in oklab, var(--accent) 22%, transparent),
+    0 4px 10px rgba(20,18,30,0.10),
+    0 1px 2px rgba(20,18,30,0.06);
   pointer-events: none;
-  animation: helptip-in 0.12s ease-out;
+  animation: helptip-in 0.14s cubic-bezier(.22,.61,.36,1);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
-.helptip-bubble::after {
+[data-theme="dark"] .helptip-bubble {
+  background: color-mix(in oklab, var(--surface) 92%, var(--accent));
+}
+.helptip-bubble::before {
+  /* small accent rail on the leading edge for visual identity */
   content: "";
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 6px solid transparent;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
 }
-.helptip-top::after  { bottom: -12px; border-top-color: var(--text); }
-.helptip-bottom::after { top: -12px; border-bottom-color: var(--text); }
+.helptip-bubble {
+  padding-left: 16px;
+}
 @keyframes helptip-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+
+/* Training-mode settings card. Replaces the plain set-row with an
+   accent-tinted panel that explains the feature, shows current state
+   via a badge, and offers a one-click "try it" demo zone right inside
+   the settings modal so the user doesn't have to leave to discover
+   the behavior. */
+.training-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s4);
+  margin-top: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
+  overflow: hidden;
+}
+.training-card.on {
+  border-color: color-mix(in oklab, var(--accent) 38%, transparent);
+  background: color-mix(in oklab, var(--accent) 4%, var(--surface));
+  box-shadow: 0 4px 14px -8px color-mix(in oklab, var(--accent) 50%, transparent);
+}
+.training-card-glow {
+  position: absolute;
+  inset: -40% -10% auto auto;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--accent) 22%, transparent) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.training-card.on .training-card-glow { opacity: 1; }
+.training-card-ic {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.training-card-body {
+  flex: 1;
+  min-width: 0;
+}
+.training-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.training-card-t {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.training-card-s {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.training-card-demo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  border: 1px dashed color-mix(in oklab, var(--accent) 40%, transparent);
+  border-radius: var(--r-sm);
+  cursor: help;
+  transition: background 0.15s, border-color 0.15s;
+}
+.training-card-demo:not(.is-off):hover {
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+}
+.training-card-demo.is-off {
+  color: var(--text-3);
+  background: var(--bg-2);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+.training-card-toggle {
+  flex-shrink: 0;
+  align-self: center;
 }
 
 /* PR-3: Shared <Badge> primitive replacing the inline-styled `demo` badge
