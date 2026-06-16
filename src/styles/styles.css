@@ -680,4 +680,66 @@ button:focus-visible, a:focus-visible, .nav-item:focus-visible, .nav-group-head:
   letter-spacing: 0.02em;
 }
 
-@media (prefers-reduced-motion: reduce) { .modal, .toast, .menu, .modal-overlay { animation: none; } }
+/* ============================================================
+   PR-3: Training-mode HelpTip tooltips. Bubble is rendered at the
+   document root via the same React tree (no portal); position is set
+   from getBoundingClientRect() in HelpTip. The wrap defaults to
+   display:contents so layout never shifts when the feature is on.
+   ============================================================ */
+.helptip-wrap {
+  display: contents;
+}
+.helptip-bubble {
+  position: fixed;
+  z-index: 9000;
+  max-width: 320px;
+  padding: 8px 12px;
+  background: var(--text);
+  color: var(--bg);
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(20,18,30,0.18), 0 2px 4px rgba(20,18,30,0.10);
+  pointer-events: none;
+  animation: helptip-in 0.12s ease-out;
+}
+.helptip-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+}
+.helptip-top::after  { bottom: -12px; border-top-color: var(--text); }
+.helptip-bottom::after { top: -12px; border-bottom-color: var(--text); }
+@keyframes helptip-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* PR-3: Shared <Badge> primitive replacing the inline-styled `demo` badge
+   in ContractAnalysis. Variants stay deliberately minimal — add more only
+   when there's a real second consumer. */
+.ag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-3);
+  background: var(--surface);
+  white-space: nowrap;
+}
+.ag-badge.ag-badge-muted   { color: var(--text-3); }
+.ag-badge.ag-badge-accent  { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 40%, transparent); }
+.ag-badge.ag-badge-warn    { color: var(--risk-med); border-color: color-mix(in oklab, var(--risk-med) 40%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .modal, .toast, .menu, .modal-overlay, .helptip-bubble { animation: none; }
+}

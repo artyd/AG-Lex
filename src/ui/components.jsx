@@ -6,6 +6,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Icon } from './Icon';
 export { Icon };
+import { HelpTip } from './HelpTip';
+export { HelpTip };
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { hueOf, initialsOf } from '../lib/auth';
@@ -30,6 +32,19 @@ export function ScoreRing({ value, size = 72, stroke = 7, color }) {
         <div style={{ fontSize: size * 0.30, fontWeight: 700, lineHeight: 1, color: col }}>{value}</div>
       </div>
     </div>
+  );
+}
+
+/** Lightweight rounded badge with optional variant + icon. Promoted from
+ *  the inline-styled `demo` chip in ContractAnalysis (PR-3). Add a
+ *  variant in styles.css → expand the union here.
+ *  variant ∈ 'muted' (default) | 'accent' | 'warn' */
+export function Badge({ variant = 'muted', icon, children, title }) {
+  return (
+    <span className={'ag-badge ag-badge-' + variant} title={title}>
+      {icon ? <Icon name={icon} size={11} /> : null}
+      {children}
+    </span>
   );
 }
 
@@ -74,13 +89,27 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
     { id: 'templates', icon: 'templates', label: t.templates },
     { id: 'team', icon: 'settings', label: t.team },
   ];
-  const NavItem = (it) => (
-    <button key={it.id} className={'nav-item' + (route === it.id ? ' active' : '')} onClick={() => setRoute(it.id)}>
-      <Icon name={it.icon} size={19} stroke={route === it.id ? 2.2 : 1.9} />
-      <span>{it.label}</span>
-      {it.badge ? <span className="nav-badge">{it.badge}</span> : null}
-    </button>
-  );
+  const tipsByNav = (t.tips || {});
+  const navTipKey = (id) => ({
+    dashboard: 'navDashboard', analyze: 'navAnalyze', builder: 'navBuilder',
+    copilot: 'navCopilot', library: 'navLibrary', matters: 'navMatters',
+    team: 'navTeam',
+  })[id];
+  const NavItem = (it) => {
+    const tipKey = navTipKey(it.id);
+    const btn = (
+      <button className={'nav-item' + (route === it.id ? ' active' : '')} onClick={() => setRoute(it.id)}>
+        <Icon name={it.icon} size={19} stroke={route === it.id ? 2.2 : 1.9} />
+        <span>{it.label}</span>
+        {it.badge ? <span className="nav-badge">{it.badge}</span> : null}
+      </button>
+    );
+    return (
+      <HelpTip key={it.id} text={tipKey ? tipsByNav[tipKey] : ''} placement="right">
+        {btn}
+      </HelpTip>
+    );
+  };
   const groups = [
     { id: 'work', label: t.navWork, items: work },
     { id: 'practice', label: t.navPractice, items: practice },
@@ -109,9 +138,11 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
         </div>
       </div>
 
-      <button className="btn btn-primary" style={{ justifyContent: 'center', margin: '0 6px 4px' }} onClick={onUpload}>
-        <Icon name="upload" size={17} /> {t.upload}
-      </button>
+      <HelpTip text={tipsByNav.hubContract} placement="right">
+        <button className="btn btn-primary" style={{ justifyContent: 'center', margin: '0 6px 4px' }} onClick={onUpload}>
+          <Icon name="upload" size={17} /> {t.upload}
+        </button>
+      </HelpTip>
 
       <div className="nav-scroll">
         {groups.map(g => (
@@ -126,9 +157,11 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
       </div>
 
       <div className="sidebar-foot">
-        <button className="nav-item" onClick={onSettings}>
-          <Icon name="settings" size={19} stroke={1.9} /> <span>{t.settings}</span>
-        </button>
+        <HelpTip text={tipsByNav.settingsBtn} placement="right">
+          <button className="nav-item" onClick={onSettings}>
+            <Icon name="settings" size={19} stroke={1.9} /> <span>{t.settings}</span>
+          </button>
+        </HelpTip>
         <div className="user-chip" onClick={onSettings}>
           <div className="avatar" style={{ background: user ? `oklch(0.58 0.14 ${hueOf(user.email)})` : undefined }}>{user ? initialsOf(user.name) : '?'}</div>
           <div style={{ minWidth: 0 }}>

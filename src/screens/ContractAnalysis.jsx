@@ -4,7 +4,7 @@
    ============================================================ */
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Icon } from '../ui/Icon';
-import { Modal, ScoreRing, toast } from '../ui/components';
+import { Badge, HelpTip, Modal, ScoreRing, toast } from '../ui/components';
 import { UserAvatar } from '../lib/labels';
 import { api } from '../lib/api';
 import { DEMO } from '../data/demo';
@@ -556,11 +556,9 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, marginBottom: 12 }}>
           <Icon name="sparkle" size={16} fill={true} /> {t.aiAnalysis}
           {isDemo ? (
-            <span title={t.demoBadgeSub || ''} style={{
-              marginLeft: 'auto', fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em',
-              textTransform: 'uppercase', color: 'var(--text-3)',
-              border: '1px solid var(--border)', borderRadius: 999, padding: '2px 8px',
-            }}>{t.demoBadge || 'demo'}</span>
+            <span style={{ marginLeft: 'auto' }}>
+              <Badge variant="muted" title={t.demoBadgeSub || ''}>{t.demoBadge || 'demo'}</Badge>
+            </span>
           ) : null}
         </div>
         {warnings.length > 0 ? (
@@ -575,7 +573,9 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
           </div>
         ) : null}
         <div className="score-block">
-          <ScoreRing value={liveScore} size={66} />
+          <HelpTip text={(t.tips && t.tips.scoreRing) || ''} placement="bottom">
+            <span><ScoreRing value={liveScore} size={66} /></span>
+          </HelpTip>
           <div>
             <div style={{ fontSize: 12.5, color: 'var(--text-3)', fontWeight: 600 }}>{t.riskScore}</div>
             <div style={{ fontSize: 17, fontWeight: 700, color: scoreColor }}>{scoreLabel}</div>
@@ -589,12 +589,23 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
       </div>
 
       <div className="aitabs">
-        {tabs.map(tb => (
-          <button key={tb.id} className={'aitab' + (tab === tb.id ? ' on' : '')} onClick={() => setTab(tb.id)}>
-            {tb.icon ? <Icon name={tb.icon} size={13} fill={true} /> : null}
-            {tb.label}{tb.n != null ? <span className="aitab-n">{tb.n}</span> : null}
-          </button>
-        ))}
+        {tabs.map(tb => {
+          const tipKey = ({
+            risks: 'aiTabRisks', chat: 'aiTabChat', summary: 'aiTabSummary',
+            data: 'aiTabData', missing: 'aiTabMissing', compare: 'aiTabCompare',
+          })[tb.id];
+          const btn = (
+            <button className={'aitab' + (tab === tb.id ? ' on' : '')} onClick={() => setTab(tb.id)}>
+              {tb.icon ? <Icon name={tb.icon} size={13} fill={true} /> : null}
+              {tb.label}{tb.n != null ? <span className="aitab-n">{tb.n}</span> : null}
+            </button>
+          );
+          return (
+            <HelpTip key={tb.id} text={tipKey && t.tips ? t.tips[tipKey] : ''} placement="bottom">
+              {btn}
+            </HelpTip>
+          );
+        })}
       </div>
 
       {tab === 'chat'
@@ -611,10 +622,12 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
                   ))}
                 </div>
               </div>
-              <button className={'btn ' + (allFixed ? 'btn-ghost' : 'btn-primary')} disabled={allFixed}
-                onClick={onApplyAll} style={{ justifyContent: 'center', width: '100%' }}>
-                {allFixed ? <><Icon name="check" size={15} /> {t.allApplied}</> : <><Icon name="wand" size={15} /> {t.applyAll} ({fixable.filter(f => !applied[f.id]).length})</>}
-              </button>
+              <HelpTip text={(t.tips && t.tips.aiApplyAll) || ''} placement="top">
+                <button className={'btn ' + (allFixed ? 'btn-ghost' : 'btn-primary')} disabled={allFixed}
+                  onClick={onApplyAll} style={{ justifyContent: 'center', width: '100%' }}>
+                  {allFixed ? <><Icon name="check" size={15} /> {t.allApplied}</> : <><Icon name="wand" size={15} /> {t.applyAll} ({fixable.filter(f => !applied[f.id]).length})</>}
+                </button>
+              </HelpTip>
               {filtered.map(f => (
                 <FindingCard key={f.id} f={f} t={t} applied={applied}
                   active={active === f.id}
