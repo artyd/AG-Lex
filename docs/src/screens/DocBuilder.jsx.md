@@ -36,7 +36,7 @@ BuildOverlay({ t })
 
 ---------- Generation overlay ----------
 
-_Defined at line 279._
+_Defined at line 363._
 
 ### `DocSheet`
 
@@ -46,7 +46,37 @@ DocSheet({ doc, v })
 
 ---------- Document sheet ----------
 
-_Defined at line 300._
+_Defined at line 384._
+
+### `DraftReviewBanner`
+
+```
+DraftReviewBanner({ t })
+```
+
+---------- "Draft — needs lawyer review" banner ----------
+Shown on every server-generated doc. Phase F1 just plants the visible
+flag; Phase F2 implements the real approval workflow that the E-sign
+flow has to gate against. The badge is intentionally loud so a junior
+user doesn't try to ship an AI draft without a senior signing off.
+
+_Defined at line 431._
+
+### `BilingualDocSheet`
+
+```
+BilingualDocSheet({ apiDoc, t })
+```
+
+---------- Bilingual UA/EN renderer (international supply, Phase F1) ----
+Two columns side by side; sections render in lockstep so the user can
+scroll one and visually align with the other. Each section gets a
+numbered heading on both sides; the body text is rendered as
+pre-wrapped markdown so the numbered sub-clauses Claude emits (1.1,
+1.2, …) stay aligned. Appendix #1 specification renders as an actual
+<table>.
+
+_Defined at line 455._
 
 ### `ApiDocSheet`
 
@@ -56,7 +86,7 @@ ApiDocSheet({ apiDoc })
 
 ---------- API document renderer (Phase 3.3) ----------
 
-_Defined at line 343._
+_Defined at line 549._
 
 ### `DocBuilder`
 
@@ -66,7 +96,7 @@ DocBuilder({ t, setRoute, user })
 
 _No description provided._
 
-_Defined at line 385._
+_Defined at line 592._
 
 ## Internal
 
@@ -152,6 +182,16 @@ _No description provided._
 
 _Defined at line 182._
 
+### `renderField`
+
+```
+renderField(f, v, set)
+```
+
+---------- Field renderer (shared between flat + intake-block forms) -----
+
+_Defined at line 324._
+
 ### `dbToday`
 
 ```
@@ -160,7 +200,7 @@ dbToday()
 
 ---------- Helpers ----------
 
-_Defined at line 258._
+_Defined at line 342._
 
 ### `dbDefaults`
 
@@ -170,7 +210,7 @@ dbDefaults(type)
 
 _No description provided._
 
-_Defined at line 259._
+_Defined at line 343._
 
 ### `dbDocToText`
 
@@ -180,7 +220,7 @@ dbDocToText(doc, v)
 
 _No description provided._
 
-_Defined at line 260._
+_Defined at line 344._
 
 ### `refreshDrafts`
 
@@ -192,7 +232,7 @@ Fix 1: hydrate drafts from the API on mount. The backend already filters
 to (mine OR is_shared = TRUE), so the client just needs to bucket them
 into the two tabs.
 
-_Defined at line 400._
+_Defined at line 607._
 
 ### `pick`
 
@@ -202,7 +242,7 @@ pick(d)
 
 _No description provided._
 
-_Defined at line 443._
+_Defined at line 650._
 
 ### `set`
 
@@ -212,7 +252,7 @@ set(k, val)
 
 _No description provided._
 
-_Defined at line 448._
+_Defined at line 655._
 
 ### `generate` · async
 
@@ -222,7 +262,7 @@ async generate()
 
 _No description provided._
 
-_Defined at line 450._
+_Defined at line 657._
 
 ### `restart`
 
@@ -232,7 +272,7 @@ restart()
 
 _No description provided._
 
-_Defined at line 479._
+_Defined at line 695._
 
 ### `copy`
 
@@ -242,7 +282,7 @@ copy()
 
 _No description provided._
 
-_Defined at line 484._
+_Defined at line 700._
 
 ### `save` · async
 
@@ -252,7 +292,7 @@ async save()
 
 _No description provided._
 
-_Defined at line 490._
+_Defined at line 706._
 
 ### `openInAnalysis`
 
@@ -262,7 +302,7 @@ openInAnalysis()
 
 _No description provided._
 
-_Defined at line 528._
+_Defined at line 744._
 
 ### `shareDraft` · async
 
@@ -272,7 +312,7 @@ async shareDraft(e, dr)
 
 _No description provided._
 
-_Defined at line 541._
+_Defined at line 757._
 
 ### `openDraft`
 
@@ -282,4 +322,4 @@ openDraft(dr)
 
 _No description provided._
 
-_Defined at line 553._
+_Defined at line 769._

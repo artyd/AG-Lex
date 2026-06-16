@@ -19,7 +19,7 @@ This folder documents the source tree at `docs/src/screens/`.
 - [`ConflictCheck.jsx`](ConflictCheck.jsx.md) — 1 public, 1 internal. ============================================================
 - [`ContractAnalysis.jsx`](ContractAnalysis.jsx.md) — 19 public, 29 internal. ============================================================
 - [`Copilot.jsx`](Copilot.jsx.md) — 2 public, 6 internal. ============================================================
-- [`DocBuilder.jsx`](DocBuilder.jsx.md) — 5 public, 21 internal. ============================================================
+- [`DocBuilder.jsx`](DocBuilder.jsx.md) — 7 public, 22 internal. ============================================================
 - [`DocReview.jsx`](DocReview.jsx.md) — 1 public, 1 internal. ============================================================
 - [`ESign.jsx`](ESign.jsx.md) — 3 public, 1 internal. ============================================================
 - [`Knowledge.jsx`](Knowledge.jsx.md) — 8 public, 20 internal. ============================================================

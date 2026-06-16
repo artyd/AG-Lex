@@ -13,7 +13,7 @@ This folder documents the source tree at `docs/legal_app/backend/`.
 - [`assist.py`](assist.py.md) — 6 public, 5 internal. Lawyer-assist endpoints: summary + translation (Phase 3.2).
 - [`audit.py`](audit.py.md) — 3 public. Audit log for RBAC + team-management actions (Phase 2.3, spec §5.3).
 - [`auth.py`](auth.py.md) — 16 public, 4 internal. Authentication for AG Lex — bcrypt + JWT.
-- [`builder.py`](builder.py.md) — 4 public, 6 internal. Document builder: Claude generates a real Ukrainian legal document
+- [`builder.py`](builder.py.md) — 4 public, 7 internal. Document builder: Claude generates a real Ukrainian legal document
 - [`calendar_routes.py`](calendar_routes.py.md) — 1 public. Phase 2.4 — calendar aggregator.
 - [`cases_acl.py`](cases_acl.py.md) — 10 public, 1 internal. Phase 2.4 — row-level access control for Matters.
 - [`claude_client.py`](claude_client.py.md) — 3 public, 2 internal. Anthropic SDK wrapper for AG Lex.

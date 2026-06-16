@@ -82,7 +82,7 @@ Full module index:
 - [`src/screens/ConflictCheck.jsx`](src/screens/ConflictCheck.jsx.md) — 1 public
 - [`src/screens/ContractAnalysis.jsx`](src/screens/ContractAnalysis.jsx.md) — 19 public
 - [`src/screens/Copilot.jsx`](src/screens/Copilot.jsx.md) — 2 public
-- [`src/screens/DocBuilder.jsx`](src/screens/DocBuilder.jsx.md) — 5 public
+- [`src/screens/DocBuilder.jsx`](src/screens/DocBuilder.jsx.md) — 7 public
 - [`src/screens/DocReview.jsx`](src/screens/DocReview.jsx.md) — 1 public
 - [`src/screens/ESign.jsx`](src/screens/ESign.jsx.md) — 3 public
 - [`src/screens/Knowledge.jsx`](src/screens/Knowledge.jsx.md) — 8 public

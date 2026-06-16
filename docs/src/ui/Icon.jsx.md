@@ -31,7 +31,7 @@ export Icon({ name, size = 20, style, className })
 
 _No description provided._
 
-_Defined at line 137._
+_Defined at line 185._
 
 ## Internal
 
@@ -45,4 +45,4 @@ parseRaw(raw)
 
 _No description provided._
 
-_Defined at line 118._
+_Defined at line 166._

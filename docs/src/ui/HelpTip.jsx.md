@@ -17,20 +17,27 @@ unmodified with ZERO listeners attached — true no-op so we can sprinkle
 <HelpTip> across the app without paying the runtime cost when the user
 hasn't opted in.
 
-When ON, attaches mouseenter/mouseleave + focusin/focusout to a
-<span class="helptip-wrap"> wrapper. After `delayMs` (default 250),
-shows a positioned <span class="helptip-bubble"> reading
-`ref.current.getBoundingClientRect()`. Auto-flips top → bottom when
-the bubble would clip the viewport.
+When ON:
+- Hover → after `delayMs` shows a positioned bubble.
+- DEFAULT placement="cursor" — bubble follows the mouse pointer with
+a small offset. Re-aimed on every mouse move so the explanation
+stays right where the user is looking instead of pinned to a corner.
+- placement="below"/"above" anchors the bubble to the FIRST CHILD
+element's bounding rect — used for keyboard focus and for layouts
+where cursor-following would feel jittery (e.g. dense nav items).
+- Auto-flips top↔bottom + clamps to the viewport on both axes so the
+bubble never goes off-screen.
 
-The wrap span uses display: contents by default so layout doesn't
-shift — children render in the parent's flex/grid context.
+Why measure firstElementChild and not the wrap span:
+- The wrap uses `display: contents` so its own bounding rect is
+effectively zero (the spec leaves the value implementation-defined
+but every major engine returns ~0 here). Reading the wrap's rect
+was the original "tooltip flies to the corner" bug. The actual
+visible element is `wrapRef.current.firstElementChild`.
 
-Reads `t.training` via window.localStorage so the tooltip primitive
-doesn't need a prop drill through every screen. The TweaksPanel
-updates that value via useTweaks (which writes to the EDITMODE block);
-the panel also dispatches a `tweakchange` CustomEvent we listen to so
-the toggle takes effect without a remount.
+Reads `t.training` via a shared cache + a `tweakchange` window event
+the TweaksPanel hook dispatches when setTweak fires — so the toggle
+takes effect instantly without prop-drilling through every screen.
 ============================================================
 
 ## Public API
@@ -43,7 +50,7 @@ useTrainingMode()
 
 _No description provided._
 
-_Defined at line 55._
+_Defined at line 47._
 
 ### `seedTrainingMode`
 
@@ -51,34 +58,38 @@ _Defined at line 55._
 export seedTrainingMode(value)
 ```
 
-Public helper for parents that want to seed the training state (e.g.
-App.jsx initializing from TWEAK_DEFAULTS at mount). One-call, idempotent.
+Public helper for parents that want to seed the training state at
+startup (e.g. App.jsx hydrating from persisted TWEAK_DEFAULTS).
+Idempotent; subscribers re-render with the new value.
 
-_Defined at line 66._
+_Defined at line 62._
 
 ### `HelpTip`
 
 ```
-export HelpTip({ text, placement = 'top', delayMs = 250, children })
+export HelpTip({ text, placement = 'cursor', delayMs = 220, children })
 ```
 
 _No description provided._
 
-_Defined at line 73._
+_Defined at line 76._
 
 ## Internal
 
 _Helpers used inside this module. Document them so a later refactor doesn't lose the why._
 
-### `_readTrainingFromTweaks`
+### `childRect`
 
 ```
-_readTrainingFromTweaks()
+childRect()
 ```
 
-_No description provided._
+Resolve the actual visible bounding rect. Falls back through:
+1. firstElementChild's rect (works with display:contents wrap)
+2. wrap's own rect (in case child is a text node)
+3. null (caller falls back to cursor)
 
-_Defined at line 33._
+_Defined at line 89._
 
 ### `onResize`
 
@@ -88,17 +99,27 @@ onResize()
 
 _No description provided._
 
-_Defined at line 99._
+_Defined at line 144._
 
 ### `onEnter`
 
 ```
-onEnter()
+onEnter(e)
 ```
 
 _No description provided._
 
-_Defined at line 113._
+_Defined at line 157._
+
+### `onMove`
+
+```
+onMove(e)
+```
+
+_No description provided._
+
+_Defined at line 162._
 
 ### `onLeave`
 
@@ -108,4 +129,14 @@ onLeave()
 
 _No description provided._
 
-_Defined at line 117._
+_Defined at line 166._
+
+### `onFocus`
+
+```
+onFocus()
+```
+
+_No description provided._
+
+_Defined at line 171._
