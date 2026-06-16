@@ -6,7 +6,7 @@
    ============================================================ */
 import { useState, useEffect } from 'react';
 import { Icon } from '../ui/Icon';
-import { SectionTitle, toast } from '../ui/components';
+import { Badge, SectionTitle, toast } from '../ui/components';
 import { api } from '../lib/api';
 
 // Phase 3.3: handoff key the ContractAnalysis screen reads on mount when
@@ -202,7 +202,7 @@ function genLawsuit(v) {
 /* ---------- Document type registry ---------- */
 const F = (key, label, opt = {}) => ({ key, label, ...opt });
 const DOC_TYPES = [
-  { id: 'services', icon: 'doc', name: 'Договір про надання послуг', desc: 'Виконавець надає послуги Замовнику', gen: genServices,
+  { id: 'services', icon: 'handshake', name: 'Договір про надання послуг', desc: 'Виконавець надає послуги Замовнику', gen: genServices,
     fields: [
       F('partyA', 'Замовник (повна назва)'), F('partyB', 'Виконавець (повна назва)'),
       F('subject', 'Предмет послуг', { full: true }),
@@ -211,7 +211,7 @@ const DOC_TYPES = [
       F('payment', 'Порядок оплати', { type: 'select', options: [['pre', '100% передоплата'], ['stage', 'Поетапно 30/70'], ['post', 'Післяплата']], def: 'stage' }),
     ],
     toggles: [F('penalty', 'Неустойка (пеня 0,1%/день)', { def: true }), F('liability', 'Обмеження відповідальності', { def: true }), F('nda', 'Умова конфіденційності')] },
-  { id: 'supply', icon: 'building', name: 'Договір постачання', desc: 'Постачання товару покупцю', gen: genSupply,
+  { id: 'supply', icon: 'boxes', name: 'Договір постачання', desc: 'Постачання товару покупцю', gen: genSupply,
     fields: [
       F('partyA', 'Покупець'), F('partyB', 'Постачальник'),
       F('subject', 'Найменування товару', { full: true }),
@@ -220,7 +220,7 @@ const DOC_TYPES = [
       F('payment', 'Порядок оплати', { type: 'select', options: [['pre', '100% передоплата'], ['stage', 'Поетапно 30/70'], ['post', 'Післяплата']], def: 'post' }),
     ],
     toggles: [F('warranty', 'Гарантія якості', { def: true }), F('penalty', 'Неустойка за прострочення', { def: true })] },
-  { id: 'lease', icon: 'folder', name: 'Договір оренди', desc: 'Оренда нежитлового приміщення', gen: genLease,
+  { id: 'lease', icon: 'warehouse', name: 'Договір оренди', desc: 'Оренда нежитлового приміщення', gen: genLease,
     fields: [
       F('partyA', 'Орендар'), F('partyB', 'Орендодавець'),
       F('object', 'Адреса приміщення', { full: true }),
@@ -228,7 +228,7 @@ const DOC_TYPES = [
       F('months', 'Строк, місяців', { type: 'num', def: '12' }), F('city', 'Місто', { def: 'м. Київ' }),
     ],
     toggles: [F('index', 'Індексація плати'), F('penalty', 'Неустойка за прострочення', { def: true })] },
-  { id: 'nda', icon: 'book', name: 'Угода про нерозголошення (NDA)', desc: 'Захист конфіденційної інформації', gen: genNda,
+  { id: 'nda', icon: 'lock', name: 'Угода про нерозголошення (NDA)', desc: 'Захист конфіденційної інформації', gen: genNda,
     fields: [
       F('partyA', 'Сторона 1'), F('partyB', 'Сторона 2'),
       F('subject', 'Мета розкриття інформації', { full: true }),
@@ -244,7 +244,7 @@ const DOC_TYPES = [
       F('amount', 'Сума вимоги, грн', { type: 'num' }), F('respDays', 'Строк відповіді, днів', { type: 'num', def: '7' }),
       F('city', 'Місто', { def: 'м. Київ' }),
     ], toggles: [] },
-  { id: 'lawsuit', icon: 'scales', name: 'Позовна заява', desc: 'Звернення до господарського суду', gen: genLawsuit,
+  { id: 'lawsuit', icon: 'gavel', name: 'Позовна заява', desc: 'Звернення до господарського суду', gen: genLawsuit,
     fields: [
       F('court', 'Найменування суду', { full: true, def: 'Господарський суд міста Києва' }),
       F('partyA', 'Позивач'), F('partyB', 'Відповідач'),
@@ -259,8 +259,9 @@ const DOC_TYPES = [
   // re-validated server-side; missing essentials become warnings in the
   // response so direct API callers can't bypass.
   {
-    id: 'international_supply', icon: 'globe',
+    id: 'international_supply', icon: 'contract',
     name: 'Міжнародний контракт постачання (UA/EN)',
+    featured: true,  // gets the accent ring + "Нове" pill in the picker
     desc: '15-розділовий двомовний контракт з intake-форми «Передача справ»',
     gen: null,   // server-only — no local fallback; the prompt + RAG do the work
     bilingual: true,
@@ -430,7 +431,7 @@ function DocSheet({ doc, v }) {
 function DraftReviewBanner({ t }) {
   return (
     <div className="dbuild-draft-banner" role="status">
-      <span className="dbuild-draft-ic"><Icon name="alert" size={16} /></span>
+      <span className="dbuild-draft-ic"><Icon name="stamp" size={18} /></span>
       <div className="dbuild-draft-body">
         <div className="dbuild-draft-t">{t?.builderDraftTitle || 'ПРОЄКТ — потребує перевірки юристом'}</div>
         <div className="dbuild-draft-s">
@@ -793,8 +794,17 @@ function DocBuilder({ t, setRoute, user }) {
         <div style={{ color: 'var(--text-2)', fontSize: 14, marginBottom: 'var(--s5)' }}>{t.builderSub}</div>
         <div className="dbuild-types">
           {DOC_TYPES.map(d => (
-            <button key={d.id} className="card dbuild-type" onClick={() => pick(d)}>
-              <span className="dbuild-type-ic"><Icon name={d.icon} size={20} /></span>
+            <button
+              key={d.id}
+              className={'card dbuild-type' + (d.featured ? ' dbuild-type-featured' : '')}
+              onClick={() => pick(d)}
+            >
+              {d.featured ? (
+                <span className="dbuild-type-pill">
+                  <Badge variant="accent">Нове</Badge>
+                </span>
+              ) : null}
+              <span className="dbuild-type-ic"><Icon name={d.icon} size={22} /></span>
               <span className="dbuild-type-name">{d.name}</span>
               <span className="dbuild-type-desc">{d.desc}</span>
               <span className="dbuild-type-go"><Icon name="arrowR" size={16} /></span>
@@ -879,11 +889,16 @@ function DocBuilder({ t, setRoute, user }) {
               // Intake mode: render fields grouped into blocks (Передача справ
               // form: sales-direct / procurement). Each block has a heading
               // + a sub-line so the user sees the intent of each group.
-              type.blocks.map((blk) => (
+              type.blocks.map((blk, idx) => (
                 <div key={blk.id} className="dbuild-intake-block">
                   <div className="dbuild-intake-h">
-                    <div className="dbuild-intake-t">{blk.title}</div>
-                    {blk.sub ? <div className="dbuild-intake-s">{blk.sub}</div> : null}
+                    <span className="dbuild-intake-ic">
+                      <Icon name={idx === 0 ? 'clipboard' : 'warehouse'} size={16} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="dbuild-intake-t">{blk.title}</div>
+                      {blk.sub ? <div className="dbuild-intake-s">{blk.sub}</div> : null}
+                    </div>
                   </div>
                   <div className="dbuild-form">
                     {blk.fields.map((f) => renderField(f, v, set))}

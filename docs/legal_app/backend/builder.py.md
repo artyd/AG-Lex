@@ -37,7 +37,7 @@ __init__(self, *, label: str, layout: str, seed_query: str, default_heading: str
 
 _No description provided._
 
-_Defined at line 52._
+_Defined at line 58._
 
 ### `generate_document`
 
@@ -47,7 +47,12 @@ generate_document(doc_type: str, params: dict, options: dict | None, *, conn: sq
 
 Generate a full document via Claude with grounded codex citations.
 
-_Defined at line 206._
+For `international_supply`: uses the bilingual prompt/schema and emits
+`sections_bilingual` (parallel UA/EN sections) + `specification` for the
+Appendix #1 goods table. Other types still get a flat
+`document_markdown` per the original wire contract.
+
+_Defined at line 325._
 
 ### `GenerateDocumentRequest` · class
 
@@ -57,7 +62,7 @@ class GenerateDocumentRequest
 
 _No description provided._
 
-_Defined at line 276._
+_Defined at line 427._
 
 ### `generate_document_endpoint`
 
@@ -71,7 +76,7 @@ generate_document_endpoint(req: GenerateDocumentRequest, conn: sqlite3.Connectio
 
 _No description provided._
 
-_Defined at line 297._
+_Defined at line 448._
 
 ## Internal
 
@@ -85,7 +90,21 @@ class _Type
 
 _No description provided._
 
-_Defined at line 49._
+_Defined at line 55._
+
+### `_check_intake_required`
+
+```
+_check_intake_required(params: dict, required_keys: tuple[str, ...]) -> list[str]
+```
+
+Essential-conditions validator: emit a warning per missing required key.
+The intake form should refuse to submit when any of these are blank, but
+we double-check on the server so direct API callers can't bypass it
+silently. Warnings flow into the response so the FE can highlight the
+intake field that needs attention.
+
+_Defined at line 217._
 
 ### `_format_articles_block`
 
@@ -95,7 +114,7 @@ _format_articles_block(articles: list[dict]) -> str
 
 _No description provided._
 
-_Defined at line 122._
+_Defined at line 241._
 
 ### `_build_user_turn`
 
@@ -105,7 +124,7 @@ _build_user_turn(doc_type: str, params: dict, options: dict, articles: list[dict
 
 _No description provided._
 
-_Defined at line 133._
+_Defined at line 252._
 
 ### `_retrieve_articles`
 
@@ -115,7 +134,7 @@ _retrieve_articles(conn: sqlite3.Connection, doc_type: str, params: dict) -> lis
 
 RAG retrieval: build a query from type seed + params and hybrid-search the codex.
 
-_Defined at line 148._
+_Defined at line 267._
 
 ### `_validate_cited_articles`
 
@@ -128,7 +147,7 @@ Warn for each citation whose article number isn't in the codex.
 Mirrors `contract_analysis.validate_law_citations` but operates on the
 `articles_cited` array Claude returns rather than scraping a markdown body.
 
-_Defined at line 165._
+_Defined at line 284._
 
 ### `GenerateDocumentRequest._cap_dict_size` · method
 
@@ -143,4 +162,4 @@ _cap_dict_size(cls, v)
 
 _No description provided._
 
-_Defined at line 286._
+_Defined at line 437._

@@ -9,7 +9,7 @@ This folder documents the source tree at `docs/src/ui/`.
 
 ## Modules
 
-- [`HelpTip.jsx`](HelpTip.jsx.md) — 3 public, 4 internal. ============================================================
+- [`HelpTip.jsx`](HelpTip.jsx.md) — 3 public, 6 internal. ============================================================
 - [`Icon.jsx`](Icon.jsx.md) — 1 public, 1 internal. ============================================================
 - [`components.jsx`](components.jsx.md) — 12 public, 9 internal. ============================================================
 - [`tweaks-panel.jsx`](tweaks-panel.jsx.md) — 12 public, 18 internal. @ds-adherence-ignore -- omelette starter scaffold (raw elements/hex/px by design)

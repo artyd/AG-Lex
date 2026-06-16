@@ -57,6 +57,32 @@ import uploadSvg from '@fortawesome/fontawesome-free/svgs/solid/cloud-arrow-up.s
 import wandSvg from '@fortawesome/fontawesome-free/svgs/solid/wand-magic-sparkles.svg?raw';
 import xSvg from '@fortawesome/fontawesome-free/svgs/solid/xmark.svg?raw';
 
+// Expanded set for the contract-builder / intake / international supply
+// flows. Each new key has a specific semantic role — we don't just dump
+// the whole FA pack to keep the bundle small. Pick the right name when
+// adding a new call-site; if you need a glyph that isn't here, add ONE
+// import + ONE RAW entry below rather than reaching for a generic.
+import contractSvg from '@fortawesome/fontawesome-free/svgs/solid/file-signature.svg?raw';
+import handshakeSvg from '@fortawesome/fontawesome-free/svgs/solid/handshake.svg?raw';
+import invoiceSvg from '@fortawesome/fontawesome-free/svgs/solid/file-invoice-dollar.svg?raw';
+import warehouseSvg from '@fortawesome/fontawesome-free/svgs/solid/warehouse.svg?raw';
+import truckSvg from '@fortawesome/fontawesome-free/svgs/solid/truck-fast.svg?raw';
+import shipSvg from '@fortawesome/fontawesome-free/svgs/solid/ship.svg?raw';
+import boxesSvg from '@fortawesome/fontawesome-free/svgs/solid/boxes-stacked.svg?raw';
+import bankSvg from '@fortawesome/fontawesome-free/svgs/solid/building-columns.svg?raw';
+import certificateSvg from '@fortawesome/fontawesome-free/svgs/solid/award.svg?raw';
+import stampSvg from '@fortawesome/fontawesome-free/svgs/solid/stamp.svg?raw';
+import clipboardSvg from '@fortawesome/fontawesome-free/svgs/solid/clipboard-list.svg?raw';
+import passportSvg from '@fortawesome/fontawesome-free/svgs/solid/passport.svg?raw';
+import infoSvg from '@fortawesome/fontawesome-free/svgs/solid/circle-info.svg?raw';
+import sparkleAltSvg from '@fortawesome/fontawesome-free/svgs/solid/wand-sparkles.svg?raw';
+import minusSvg from '@fortawesome/fontawesome-free/svgs/solid/minus.svg?raw';
+import lockSvg from '@fortawesome/fontawesome-free/svgs/solid/lock.svg?raw';
+import keySvg from '@fortawesome/fontawesome-free/svgs/solid/key.svg?raw';
+import receiptSvg from '@fortawesome/fontawesome-free/svgs/solid/receipt.svg?raw';
+import briefcaseSvg from '@fortawesome/fontawesome-free/svgs/solid/briefcase.svg?raw';
+import barcodeSvg from '@fortawesome/fontawesome-free/svgs/solid/barcode.svg?raw';
+
 import appleSvg from '@fortawesome/fontawesome-free/svgs/brands/apple.svg?raw';
 import linuxSvg from '@fortawesome/fontawesome-free/svgs/brands/linux.svg?raw';
 import windowsSvg from '@fortawesome/fontawesome-free/svgs/brands/windows.svg?raw';
@@ -113,6 +139,28 @@ const RAW = {
   apple: appleSvg,
   linux: linuxSvg,
   windows: windowsSvg,
+
+  // Expanded set (Phase polish)
+  contract:    contractSvg,    // signed-doc — better than `doc` for contracts
+  handshake:   handshakeSvg,   // negotiation / parties / B2B
+  invoice:     invoiceSvg,     // money + doc
+  warehouse:   warehouseSvg,   // supply chain / consignee
+  truck:       truckSvg,       // delivery (Incoterms)
+  ship:        shipSvg,        // CIF/FOB shipping
+  boxes:       boxesSvg,       // goods / quantity
+  bank:        bankSvg,        // banking details
+  certificate: certificateSvg, // certificates of analysis / quality
+  stamp:       stampSvg,       // approval / official seal
+  clipboard:   clipboardSvg,   // intake form / checklist
+  passport:    passportSvg,    // signatories / identity
+  info:        infoSvg,        // info hint
+  sparkleAlt:  sparkleAltSvg,  // alternative AI/wand glyph
+  minus:       minusSvg,
+  lock:        lockSvg,        // confidentiality / NDA
+  key:         keySvg,         // access / permissions
+  receipt:     receiptSvg,     // payment terms
+  briefcase:   briefcaseSvg,   // professional / role
+  barcode:     barcodeSvg,     // HS code / SKU
 };
 
 function parseRaw(raw) {
