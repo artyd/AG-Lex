@@ -80,6 +80,31 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await expect(page.locator('.finding').first()).toBeVisible({ timeout: 30_000 });
 });
 
+test('Litigation portfolio renders KPI row, filters and an empty state on a clean DB', async ({ page }) => {
+  // The litigation screen is the new portfolio view (commit on
+  // feat/litigation-portfolio): KPI tiles, instance + status segments,
+  // search, and a card grid derived from `useMatters()` via selectDisputes.
+  // On a wiped e2e DB the seeded test user has zero matters → we should
+  // see the empty-state card, not a crashed page.
+  await login(page);
+  await page.evaluate(() => { localStorage.setItem('lx_route', 'litigation'); });
+  await page.reload();
+
+  // Static shell: KPI row + two filter segments + search field. These
+  // render regardless of whether any disputes exist.
+  await expect(page.locator('.lit-kpi-row')).toBeVisible({ timeout: 15_000 });
+  // Four KPI tiles by spec (In progress / Won / Claims total / Hearings ≤ 14d).
+  await expect(page.locator('.lit-kpi-row .kpi-tile')).toHaveCount(4);
+  // Two filter segments: instance and status.
+  await expect(page.locator('.lit-toolbar .seg')).toHaveCount(2);
+  // Search input.
+  await expect(page.locator('.lit-search input')).toBeVisible();
+
+  // Empty state on a clean DB — useMatters returns [] from /api/matters.
+  // The empty card shows lit_empty text and a gavel glyph.
+  await expect(page.locator('.mt-empty-lg')).toBeVisible();
+});
+
 test('Library shows the persisted contract AND reconciliation as separate rows', async ({ page }) => {
   await login(page);
   // The Library nav item label is the only stable hook; the icon button
