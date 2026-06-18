@@ -116,7 +116,7 @@ def ask_claude(
     # block (stable per-search-result-set). Sonnet 4.6 minimum cacheable prefix
     # is 2048 tokens; Opus 4.7/4.6 is 4096. Small synthetic article sets in
     # tests will silently skip caching — that's expected.
-    system_blocks = [
+    system_blocks: list[anthropic.types.TextBlockParam] = [
         {
             "type": "text",
             "text": LEGAL_SYSTEM_PROMPT,
@@ -154,7 +154,7 @@ def ask_claude(
     except anthropic.APIStatusError as e:
         raise ClaudeError(f"Anthropic API error ({e.status_code}): {e.message}") from e
 
-    answer = "\n".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+    answer = "\n".join(getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text")
     usage = response.usage
     return {
         "answer": answer,

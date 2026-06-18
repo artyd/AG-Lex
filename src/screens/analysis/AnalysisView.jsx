@@ -16,7 +16,7 @@
    ============================================================ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../ui/Icon';
-import { authHeaders, lxLogout } from '../../lib/auth';
+import { authHeaders, lxSessionExpired } from '../../lib/auth';
 import { findingsToHighlights } from '../../lib/pdfHighlight';
 import { PdfViewer } from './PdfViewer';
 
@@ -98,7 +98,7 @@ export function AnalysisView({
           // with a clear "session expired" message and a hint to re-login;
           // they don't lose context (route + reconcile row stay).
           console.warn('[AnalysisView] 401 from', url, '— session expired, clearing.');
-          try { lxLogout(); } catch (_) { /* best-effort */ }
+          try { lxSessionExpired(); } catch (_) { /* best-effort */ }
           setStateByIdx((m) => ({ ...m, [docIdx]: LOAD.error }));
           setDiagByIdx((m) => ({ ...m, [docIdx]: { kind: 'http', status: 401, url } }));
           return;

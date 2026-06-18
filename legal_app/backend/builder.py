@@ -380,7 +380,7 @@ def generate_document(
         },
     ))
 
-    raw = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+    raw = "".join(getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text")
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:

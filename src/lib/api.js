@@ -3,7 +3,7 @@
    Phase 2.2: workspace entities live behind /api/<entity> and
    require the Bearer token from auth.js.
    ============================================================ */
-import { authHeaders, lxLogout } from './auth';
+import { authHeaders, lxSessionExpired } from './auth';
 
 class ApiError extends Error {
   constructor(message, { status, body } = {}) {
@@ -28,7 +28,7 @@ async function request(path, { method = 'GET', body, signal } = {}) {
 
   // A stale token invalidates the local session. Caller can decide whether
   // to redirect to /auth; we just clear so the next render reflects reality.
-  if (r.status === 401) lxLogout();
+  if (r.status === 401) lxSessionExpired();
 
   let payload = null;
   if (r.status !== 204) {
@@ -64,7 +64,7 @@ async function multipart(path, formData) {
     headers: { ...authHeaders() },
     body: formData,
   });
-  if (r.status === 401) lxLogout();
+  if (r.status === 401) lxSessionExpired();
   let payload = null;
   if (r.status !== 204) {
     try { payload = await r.json(); } catch (_e) { /* non-JSON */ }

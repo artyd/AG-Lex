@@ -8,7 +8,7 @@
    "realtime:reconnected" event so views can refetch and close the
    gap of any missed broadcasts.
    ============================================================ */
-import { getToken, lxLogout } from './auth';
+import { getToken, lxSessionExpired } from './auth';
 
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
 const HEARTBEAT_MS = 25000;
@@ -128,7 +128,7 @@ export function connect() {
     // 1008 = JWT rejected (see backend WS endpoint). Don't churn the
     // reconnect loop against a permanently invalid token.
     if (ev.code === 1008) {
-      lxLogout();
+      lxSessionExpired();
       return;
     }
     if (!intentionallyClosed) scheduleReconnect();

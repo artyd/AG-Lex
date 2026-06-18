@@ -446,7 +446,9 @@ def create_matter(
             user_text_id=notif["user_id"], type_="notification.new",
             case_id=case_id, data=notif,
         )
-    return _hydrate_case(conn, case_id)
+    hydrated = _hydrate_case(conn, case_id)
+    assert hydrated is not None  # we just inserted this case
+    return hydrated
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +502,9 @@ def patch_matter(
         changes[k] = (old_val, new_val)
 
     if not changes:
-        return _hydrate_case(conn, case_id)
+        unchanged = _hydrate_case(conn, case_id)
+        assert unchanged is not None  # row existed above
+        return unchanged
 
     # Single UPDATE for all changes + per-field activity_log rows.
     set_clause = ", ".join(f"{k} = ?" for k in changes) + ", updated_at = ?"
@@ -518,7 +522,9 @@ def patch_matter(
     schedule_broadcast(conn, case_id=case_id, type_="case.updated",
                        actor_id=user_text_id,
                        data={"fields": {k: v[1] for k, v in changes.items()}})
-    return _hydrate_case(conn, case_id)
+    updated = _hydrate_case(conn, case_id)
+    assert updated is not None  # row existed above
+    return updated
 
 
 # ---------------------------------------------------------------------------
