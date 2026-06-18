@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -660,7 +660,7 @@ def _stream_display_pdf(
     blob_col: str,
     row_id: str,
     err_col: str | None = None,
-) -> "Response":
+) -> Response:
     """Stream the display PDF, or 404 with the saved soffice failure reason.
 
     When `err_col` is provided and the BLOB is NULL, we pull the persisted
@@ -668,7 +668,6 @@ def _stream_display_pdf(
     `{detail, kind, message}` so the FE banner can explain the failure
     without anyone reading server logs.
     """
-    from fastapi.responses import Response as _Response
     cols = [blob_col] + ([err_col] if err_col else [])
     row = conn.execute(
         f"SELECT {', '.join(cols)} FROM {table} WHERE id = ?",
@@ -693,7 +692,7 @@ def _stream_display_pdf(
                 except (_json.JSONDecodeError, TypeError):
                     pass
         raise HTTPException(status_code=404, detail=detail)
-    return _Response(
+    return Response(
         content=bytes(blob),
         media_type="application/pdf",
         headers={

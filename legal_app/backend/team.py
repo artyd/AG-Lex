@@ -146,6 +146,7 @@ def change_role(
         )
 
     updated = get_user_by_id(conn, member_id)
+    assert updated is not None  # member existed above (role was just updated)
     audit_module.log(
         conn, actor=user, action=audit_module.ACTION_ROLE_CHANGE,
         target=f"{target['name']} → {change.role}",

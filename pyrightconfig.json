@@ -1,0 +1,17 @@
+{
+  "venvPath": "legal_app",
+  "venv": "venv",
+  "pythonVersion": "3.14",
+  "include": ["legal_app/backend", "legal_app/scripts"],
+  "exclude": [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "legal_app/venv",
+    "legal_app/tests",
+    "node_modules",
+    "dist",
+    "test-results"
+  ],
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

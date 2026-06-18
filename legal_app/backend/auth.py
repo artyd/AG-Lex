@@ -36,7 +36,11 @@ from .database import get_db
 # ---------------------------------------------------------------------------
 
 JWT_ALGORITHM = "HS256"
-TOKEN_TTL_HOURS = 24
+# Long TTL on purpose: this is an internal workspace tool, not a public web
+# service. Pairing the long TTL with a rolling /api/auth/refresh call on every
+# app open means a user who keeps using the app effectively never has to log in
+# again, while we still get JWT signature verification on every request.
+TOKEN_TTL_HOURS = 24 * 365
 TEST_USER_EMAIL = "test@aglex.ua"
 TEST_USER_PASSWORD = "test1234"  # nosec — demo seed, see Phase 2.1 doc
 TEST_USER_NAME = "Тестовий Користувач"
@@ -181,7 +185,11 @@ def create_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered.",
         ) from e
-    return get_user_by_id(conn, cur.lastrowid)
+    new_id = cur.lastrowid
+    assert new_id is not None  # sqlite3 sets lastrowid after a successful INSERT
+    user = get_user_by_id(conn, new_id)
+    assert user is not None  # row was just inserted in the same connection
+    return user
 
 
 def seed_test_user(conn: sqlite3.Connection) -> None:
@@ -284,3 +292,15 @@ def login(req: LoginRequest, conn: sqlite3.Connection = Depends(get_db)) -> Toke
 @router.get("/me", response_model=UserOut)
 def me(user: dict = Depends(current_user)) -> UserOut:
     return _user_out(user)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(user: dict = Depends(current_user)) -> TokenResponse:
+    """Mint a fresh token for the currently authenticated user.
+
+    The FE calls this on app startup so the cached token's `exp` keeps
+    rolling forward — as long as the user opens the app within the TTL, the
+    session effectively never expires and no re-login is ever required.
+    """
+    token = create_access_token(user["id"], user["role"])
+    return TokenResponse(access_token=token, user=_user_out(user))

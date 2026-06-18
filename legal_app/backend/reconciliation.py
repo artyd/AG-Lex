@@ -292,7 +292,7 @@ def reconcile(
     except anthropic.APIStatusError as e:
         raise ClaudeError(f"Anthropic API error ({e.status_code}): {e.message}") from e
 
-    raw = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+    raw = "".join(getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text")
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:

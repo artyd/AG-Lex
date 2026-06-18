@@ -13,6 +13,12 @@
 
 const SESSION_KEY = 'aglex_session_v2';
 
+// Event name fired whenever the cached session is cleared. App.jsx listens so
+// it can reset its React `user` state — without this, lxLogout() from a 401
+// handler leaves the UI rendering the protected app while every subsequent
+// request fails with "Missing bearer token".
+export const AUTH_LOGOUT_EVENT = 'aglex:auth:logout';
+
 // JWT TTL is 24h per backend config; we also clear locally on any 401.
 function readSession() {
   try {
@@ -20,6 +26,7 @@ function readSession() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !parsed.token || !parsed.user) return null;
+    if (isJwtExpired(parsed.token)) return null;
     return parsed;
   } catch (e) {
     return null;
@@ -32,6 +39,30 @@ function writeSession(token, user) {
 
 function clearSession() {
   localStorage.removeItem(SESSION_KEY);
+}
+
+function emitLogout() {
+  if (typeof window === 'undefined') return;
+  try { window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT)); } catch (_e) { /* noop */ }
+}
+
+// Best-effort client-side JWT expiry check. Decodes the payload's `exp` claim
+// without verifying the signature — server is still authoritative. Used so a
+// stale token cached in localStorage doesn't pretend the user is logged in.
+function isJwtExpired(token) {
+  if (typeof token !== 'string') return true;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false; // unknown shape — let the server decide
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const json = JSON.parse(atob(b64 + pad));
+    if (typeof json.exp !== 'number') return false;
+    // 30s skew so a token that just expired doesn't bounce mid-request.
+    return json.exp * 1000 <= Date.now() - 30_000;
+  } catch (_e) {
+    return false; // can't decode → defer to the server
+  }
 }
 
 export function getToken() {
@@ -51,6 +82,16 @@ export function lxLoadSession() {
 
 export function lxLogout() {
   clearSession();
+}
+
+// Same effect as lxLogout() but also notifies the app that the session was
+// dropped *unexpectedly* (token expired, 401 from a protected endpoint, …).
+// App.jsx listens on AUTH_LOGOUT_EVENT and resets React state so the user
+// lands on /auth instead of staring at a broken protected screen.
+export function lxSessionExpired() {
+  const had = (typeof localStorage !== 'undefined') && localStorage.getItem(SESSION_KEY) != null;
+  clearSession();
+  if (had) emitLogout();
 }
 
 async function postJSON(path, body) {
@@ -85,19 +126,31 @@ export async function apiLogin({ email, password }) {
   return data.user;
 }
 
-// Optional: refresh the cached user from /api/auth/me. Clears the session if
-// the token is no longer valid. App.jsx doesn't need to call this for MVP;
-// kept exported so screens that hit the API can revalidate cheaply.
+// Rolling refresh: hit POST /api/auth/refresh to get a fresh JWT for the
+// current user and overwrite the cached one. Called on every App.jsx mount
+// (and opportunistically when the token is older than half its TTL) so the
+// cached token's `exp` keeps moving forward — the session effectively never
+// expires as long as the user keeps opening the app.
 export async function refreshSession() {
   const token = getToken();
   if (!token) return null;
-  const r = await fetch('/api/auth/me', { headers: authHeaders() });
+  let r;
+  try {
+    r = await fetch('/api/auth/refresh', { method: 'POST', headers: authHeaders() });
+  } catch (_e) {
+    // Network error — keep the existing cached session.
+    return readSession()?.user || null;
+  }
   if (r.status === 401) { clearSession(); return null; }
   if (!r.ok) return readSession()?.user || null;
-  const user = await r.json();
-  const s = readSession();
-  if (s) writeSession(s.token, user);
-  return user;
+  try {
+    const data = await r.json();
+    if (data && data.access_token && data.user) {
+      writeSession(data.access_token, data.user);
+      return data.user;
+    }
+  } catch (_e) { /* non-JSON — fall through */ }
+  return readSession()?.user || null;
 }
 
 // ---- pure UI helpers (no auth state, just kept here to preserve imports) ----

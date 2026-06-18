@@ -125,7 +125,7 @@ def list_drafts(
                       "ORDER BY datetime(d.created_at) DESC",
         (user["id"],),
     ).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    return [d for r in rows if (d := _row_to_dict(r)) is not None]
 
 
 @router.get("/{draft_id}")
@@ -174,7 +174,9 @@ def create_draft(
     )
     conn.commit()
     row = conn.execute(_SELECT_SQL + "WHERE d.id = ?", (draft_id,)).fetchone()
-    return _row_to_dict(row)
+    draft = _row_to_dict(row)
+    assert draft is not None  # we just inserted this id
+    return draft
 
 
 @router.patch("/{draft_id}")
@@ -212,7 +214,9 @@ def update_draft(
         conn.commit()
 
     row = conn.execute(_SELECT_SQL + "WHERE d.id = ?", (draft_id,)).fetchone()
-    return _row_to_dict(row)
+    draft = _row_to_dict(row)
+    assert draft is not None  # we just confirmed it exists above
+    return draft
 
 
 @router.delete("/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -255,4 +259,6 @@ def share_draft(
     conn.execute("UPDATE drafts SET is_shared = ? WHERE id = ?", (new_value, draft_id))
     conn.commit()
     row = conn.execute(_SELECT_SQL + "WHERE d.id = ?", (draft_id,)).fetchone()
-    return _row_to_dict(row)
+    refreshed = _row_to_dict(row)
+    assert refreshed is not None  # we just confirmed it exists above
+    return refreshed

@@ -168,7 +168,7 @@ def generate_summary(
     ))
 
     summary_text = "".join(
-        b.text for b in response.content if getattr(b, "type", None) == "text"
+        getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text"
     ).strip()
     return {
         "summary": summary_text,
@@ -220,7 +220,7 @@ def generate_translation(
         },
     ))
 
-    raw = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
+    raw = "".join(getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text")
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:

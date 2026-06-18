@@ -7,8 +7,8 @@ import { Badge, Sidebar, TopBar, Modal, Toaster, toast } from './ui/components';
 import { TweaksPanel, TweakSection, TweakColor, TweakSelect, TweakRadio, TweakToggle, useTweaks } from './ui/tweaks-panel';
 import { HelpTip, seedTrainingMode } from './ui/HelpTip';
 import { roleLabel } from './lib/labels';
-import { lxLoadSession, lxLogout, initialsOf, hueOf } from './lib/auth';
-import { api } from './lib/api';
+import { lxLoadSession, lxLogout, initialsOf, hueOf, AUTH_LOGOUT_EVENT, refreshSession } from './lib/auth';
+import { api, ApiError } from './lib/api';
 import { connect as realtimeConnect, disconnect as realtimeDisconnect, subscribe as realtimeSubscribe } from './lib/realtime';
 import { DEMO } from './data/demo';
 import { LX } from './data/lx';
@@ -104,6 +104,36 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('lx_route', route); }, [route]);
   useEffect(() => { localStorage.setItem('lx_lang', lang); }, [lang]);
+  // Session-clear handler: api.js calls lxSessionExpired() on any 401, which
+  // dispatches AUTH_LOGOUT_EVENT. Without this listener the React `user` state
+  // stays sticky after the token expires and every retry surfaces the raw
+  // "Missing bearer token" backend message instead of returning to /auth.
+  useEffect(() => {
+    const onLogout = () => {
+      setUser(null);
+      setAnalysisIncoming(null);
+      setSettingsOpen(false);
+      setUploadOpen(false);
+      setContractUploadOpen(false);
+      setPairUploadOpen(false);
+      toast(L.sessionExpired || 'Сесія завершилась — увійдіть знову.', 'alert');
+    };
+    window.addEventListener(AUTH_LOGOUT_EVENT, onLogout);
+    return () => window.removeEventListener(AUTH_LOGOUT_EVENT, onLogout);
+  }, [L]);
+  // Rolling JWT refresh: on every app open, ask the backend for a fresh token
+  // for the current user. The new token comes with a full 1-year TTL, so any
+  // user who opens the app at least once a year never sees a re-login screen.
+  // Failures are silent — the cached token still works until it actually expires.
+  useEffect(() => {
+    if (!user) return;
+    refreshSession().then((u) => {
+      if (u) setUser(u);
+    }).catch(() => { /* network noise — keep the cached session */ });
+    // Intentionally only on mount: re-running on every `user` change would
+    // spam /api/auth/refresh after every login.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // PR-3: keep HelpTip's local cache in sync with the training tweak.
   // useTweaks' setTweak already dispatches a 'tweakchange' event, but on
   // initial mount the cache is false-defaulted; seed it here so a refresh
@@ -239,7 +269,12 @@ export default function App() {
       });
       toast(L.uploadDone, 'sparkle');
     } catch (err) {
-      toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      // 401 from /api/upload routes through lxSessionExpired() → AUTH_LOGOUT_EVENT,
+      // which shows the "session expired" toast and routes back to /auth. The raw
+      // "Missing bearer token" string would just confuse the user, so skip it here.
+      if (!(err instanceof ApiError && err.status === 401)) {
+        toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      }
       setAnalysisIncoming(null);
       setRoute('dashboard');
     } finally {
@@ -301,7 +336,10 @@ export default function App() {
       setAnalysisIncoming({ reconcileRun: run });
       toast(L.uploadDone, 'sparkle');
     } catch (err) {
-      toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      // Mirror startUpload: 401 already surfaces via the session-expired toast.
+      if (!(err instanceof ApiError && err.status === 401)) {
+        toast((L.uploadError || 'Upload failed') + ': ' + (err?.message || ''), 'alert');
+      }
       setAnalysisIncoming(null);
       setRoute('dashboard');
     } finally {

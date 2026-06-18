@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +21,9 @@ def pdf_raw_text(path: str | Path) -> str:
     import pymupdf
     doc = pymupdf.open(str(path))
     try:
-        return "\n".join(page.get_text() for page in doc)
+        # page.get_text() in plain mode returns str; PyMuPDF's stubs declare
+        # the full overload union so we narrow back to str for the join.
+        return "\n".join(cast(str, page.get_text()) for page in doc)
     finally:
         doc.close()
 
@@ -55,7 +57,8 @@ def xlsx_raw_text(path: str | Path) -> str:
 def pdf_to_markdown(path: str | Path) -> str:
     """PyMuPDF4LLM produces a Markdown rendering with headings + tables."""
     import pymupdf4llm
-    return pymupdf4llm.to_markdown(str(path))
+    # Default mode returns str; page_chunks=True would return List[Dict].
+    return cast(str, pymupdf4llm.to_markdown(str(path)))
 
 
 def docx_to_markdown(path: str | Path) -> str:

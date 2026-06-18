@@ -108,7 +108,9 @@ def _wire_to_db(entity: Entity, payload: dict) -> dict:
 def list_rows(conn: sqlite3.Connection, entity: Entity) -> list[dict]:
     cols = ", ".join(entity.all_columns)
     rows = conn.execute(f"SELECT {cols} FROM {entity.table}").fetchall()
-    return [_row_to_dict(entity, r) for r in rows]
+    # fetchall() never yields None entries — _row_to_dict only returns None
+    # when given None, which doesn't happen here. Filter satisfies the type.
+    return [d for r in rows if (d := _row_to_dict(entity, r)) is not None]
 
 
 def get_row(conn: sqlite3.Connection, entity: Entity, pk_value: str) -> dict | None:
@@ -133,7 +135,9 @@ def insert_row(conn: sqlite3.Connection, entity: Entity, payload: dict) -> dict:
         conn.commit()
     except sqlite3.IntegrityError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
-    return get_row(conn, entity, db_payload[entity.pk])
+    row = get_row(conn, entity, db_payload[entity.pk])
+    assert row is not None  # we just inserted this PK in the same connection
+    return row
 
 
 def update_row(conn: sqlite3.Connection, entity: Entity, pk_value: str, payload: dict) -> dict | None:

@@ -115,7 +115,7 @@ LAWYER_CHAT_SYSTEM_PROMPT = """Ти — старший адвокат із 30-р
 
 # --- Helpers -----------------------------------------------------------------
 
-def _format_history(history: list[dict]) -> list[dict]:
+def _format_history(history: list[dict]) -> list[anthropic.types.MessageParam]:
     """Trim + sanitise history to the last N turns, alternating user/assistant.
 
     Anthropic requires the messages array to start with a user turn and
@@ -124,7 +124,7 @@ def _format_history(history: list[dict]) -> list[dict]:
     """
     if not history:
         return []
-    cleaned: list[dict] = []
+    cleaned: list[anthropic.types.MessageParam] = []
     last_role: str | None = None
     for m in history:
         role = m.get("role")
@@ -227,7 +227,7 @@ def chat(
 
     # System: prompt + grounded article block. BOTH cached — the bulk of
     # request cost survives session-to-session inside the 5-minute window.
-    system_blocks = [
+    system_blocks: list[anthropic.types.TextBlockParam] = [
         {
             "type": "text",
             "text": LAWYER_CHAT_SYSTEM_PROMPT,
@@ -266,7 +266,7 @@ def chat(
         raise ClaudeError(f"Anthropic API error ({e.status_code}): {e.message}") from e
 
     answer = "\n".join(
-        b.text for b in response.content if getattr(b, "type", None) == "text"
+        getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text"
     ).strip()
     usage = response.usage
 
