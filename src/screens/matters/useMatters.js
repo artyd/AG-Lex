@@ -95,6 +95,56 @@ function deriveParties(rows, fallbackClient) {
   return out;
 }
 
+// Stages a litigation moves through. Index is what dispute cards highlight
+// in the progress strip — 0 done, 1 done, 2 = current, 3 = future, etc.
+export const LIT_STAGES = ['open', 'prep', 'trial', 'decision'];
+
+function defaultStageFromStatus(m) {
+  if (m.status === 'closed') return 3;        // Decision
+  if (m.status === 'court') return 2;         // Trial
+  if (m.status === 'waiting' || m.status === 'stuck') return 1; // Preparatory
+  return 0;                                   // Filing
+}
+
+/** Matter → dispute card model. Safe defaults so a freshly-routed-to-court
+ *  case (no court fields yet) still renders — with a CTA to fill them in. */
+export function adaptDispute(m) {
+  if (!m) return null;
+  return {
+    id: m.id,
+    code: m.code,
+    title: m.title,
+    client: m.client,
+    lead: m.lead,
+    matterStatus: m.status,
+    caseNumber:  m.caseNumber || m.number || null,
+    court:       m.court || (m.parties && m.parties.court) || null,
+    judge:       m.judge || null,
+    opponent:    m.opponent || (m.parties && m.parties.opponent) || null,
+    role:        m.role || 'Відповідач',
+    instance:    m.instance || 'first',
+    claimAmount: m.claimAmount ?? m.amount ?? null,
+    nextHearing: m.nextHearing
+      || (m.next && m.next.date)
+      || (m.nextDeadline && m.nextDeadline.kind === 'court' && m.nextDeadline.date)
+      || null,
+    stageIndex:  Number.isInteger(m.litStage) ? m.litStage : defaultStageFromStatus(m),
+    outcome:     m.outcome || m.result || null,
+    closedAt:    m.closedAt || null,
+    hearings:    m.hearings || [],
+  };
+}
+
+/** A dispute is any matter that is currently in court or whose type is
+ *  litigation (so freshly-created litigation cases also surface here even
+ *  before the lawyer flips the status). Pure derivation — no side effects. */
+export function selectDisputes(matters) {
+  if (!Array.isArray(matters)) return [];
+  return matters
+    .filter(m => m.status === 'court' || m.type === 'litigation' || m.status === 'closed' && m.type === 'litigation')
+    .map(adaptDispute);
+}
+
 /** Hook: list of matters scoped to the current user (server-enforced). */
 export function useMatters() {
   const [matters, setMatters] = useState([]);
