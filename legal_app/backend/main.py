@@ -217,6 +217,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# Mirrored under /api/health so the docker-compose / Hetzner deploy probe
+# can hit it through the same nginx /api/ proxy as the rest of the API.
+@app.get("/api/health")
+def api_health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Phase 2.4: realtime WebSocket. Browsers can't set Authorization headers on
 # `new WebSocket()`, so the token comes in via the query string. Validates

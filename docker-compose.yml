@@ -1,0 +1,75 @@
+# AG Lex — production-style stack: FastAPI backend + Vite SPA + nginx edge.
+#
+# Run:    docker compose up -d --build
+# Health: curl http://localhost:8002/api/health
+#
+# Volumes:
+#   aglex_db    — SQLite (legal_app/database/legal.sqlite). Never delete by hand.
+#   aglex_data  — codex sources / runtime data (legal_app/data/).
+#
+# The compose file is the source of truth for ports and networking; the host
+# only ever exposes 8002 via the nginx service. Backend and frontend stay on
+# the internal `aglex_net` bridge.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: aglex-backend:latest
+    container_name: aglex-backend
+    restart: unless-stopped
+    environment:
+      API_KEY: ${API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-claude-sonnet-4-6}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      EMBED_MODEL: ${EMBED_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
+      # Inside the container the DB lives on the named volume.
+      DB_PATH: /app/legal_app/database/legal.sqlite
+      # Backend doesn't serve the SPA in this stack (nginx does), but the
+      # static mount in main.py still expects a readable folder.
+      FRONTEND_DIR: /app/dist_placeholder
+      SOFFICE_PATH: /usr/bin/soffice
+      DISPLAY_PDF_TIMEOUT: ${DISPLAY_PDF_TIMEOUT:-30}
+      MAX_DISPLAY_PDF_BYTES: ${MAX_DISPLAY_PDF_BYTES:-41943040}
+    volumes:
+      - aglex_db:/app/legal_app/database
+      - aglex_data:/app/legal_app/data
+    expose:
+      - "8000"
+    networks:
+      - aglex_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    image: aglex-frontend:latest
+    container_name: aglex-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - aglex_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: aglex-edge
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "8002:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - aglex_net
+
+volumes:
+  aglex_db:
+  aglex_data:
+
+networks:
+  aglex_net:
+    driver: bridge
