@@ -1357,4 +1357,10 @@ function Billing({ t }) {
   );
 }
 
-export { Matters, Tasks, Billing };
+// DEPRECATED — Tasks and Billing removed from navigation per refactor 2026-06.
+// Kanban tasks are now hosted inside the merged Calendar tab
+// (see screens/practice/CalendarTasks). Billing is no longer surfaced in the UI.
+// The component functions are kept in this file for reference only and are not
+// exported anymore — drop them once nothing else references the names.
+// export { Matters, Tasks, Billing };
+export { Matters };

@@ -155,7 +155,7 @@ function Copilot({ t, setRoute }) {
     { icon: 'alert', label: t.digHighRisk, n: hiRisk, route: 'library', risk: 'high' },
     { icon: 'calendar', label: t.digWeek, n: week, route: 'calendar', risk: 'med' },
     { icon: 'checkCircle', label: t.digApproval, n: 1, route: 'analyze', risk: 'med' },
-    { icon: 'check', label: t.digOverdue, n: overdue, route: 'tasks', risk: 'high' },
+    { icon: 'check', label: t.digOverdue, n: overdue, route: 'calendar', risk: 'high' },
   ];
 
   const empty = msgs.length === 0;

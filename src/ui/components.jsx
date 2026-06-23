@@ -70,10 +70,7 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
   const practice = [
     { id: 'matters', icon: 'folder', label: t.matters },
     { id: 'litigation', icon: 'flag', label: t.litigation },
-    { id: 'tasks', icon: 'check', label: t.mTasks, badge: 9 },
     { id: 'calendar', icon: 'calendar', label: t.calendar, badge: 2 },
-    { id: 'billing', icon: 'clock', label: t.billing },
-    { id: 'review', icon: 'filter', label: t.review },
   ];
   const knowledge = [
     { id: 'clauses', icon: 'book', label: t.clauseLib },
@@ -179,7 +176,7 @@ function buildSearchIndex(t) {
   (D.library || []).forEach(c => idx.push({ type: 'contract', label: c.name, sub: c.client + ' · ' + c.date, route: 'library', risk: c.risk }));
   (LX.matters || []).forEach(m => idx.push({ type: 'matter', label: m.title, sub: m.code + ' · ' + m.client, route: 'matters' }));
   (D.clients || []).forEach(c => idx.push({ type: 'client', label: c.name, sub: c.sector, route: 'clients' }));
-  (LX.tasks || []).forEach(k => idx.push({ type: 'task', label: k.title, sub: k.matter, route: 'tasks' }));
+  (LX.tasks || []).forEach(k => idx.push({ type: 'task', label: k.title, sub: k.matter, route: 'calendar' }));
   (LX.clauseLib || []).forEach(cat => (cat.items || []).forEach(it => idx.push({ type: 'clause', label: it.title, sub: cat.cat, route: 'clauses' })));
   (LX.laws || []).forEach(l => idx.push({ type: 'law', label: l.ref, sub: l.title, route: 'legal' }));
   (LX.team || []).forEach(u => idx.push({ type: 'person', label: u.name, sub: roleLabel(t, u.role), route: 'team' }));
