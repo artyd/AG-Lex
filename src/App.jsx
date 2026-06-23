@@ -14,17 +14,17 @@ import { DEMO } from './data/demo';
 import { LX } from './data/lx';
 import { I18N } from './data/i18n';
 import { Auth } from './screens/Auth';
-import { Dashboard, Library, Clients, Templates, Calendar } from './screens/Views';
+import { Dashboard, Library, Clients, Templates } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
 import { LawyerChat } from './screens/LawyerChat';
 import { Litigation } from './screens/Litigation';
-import { DocReview } from './screens/DocReview';
 import { ConflictCheck } from './screens/ConflictCheck';
 import { ClientPortal } from './screens/ClientPortal';
 import { ESign } from './screens/ESign';
-import { Matters, Tasks, Billing } from './screens/Practice';
+import { Matters } from './screens/Practice';
+import { CalendarTasks } from './screens/practice/CalendarTasks/CalendarTasks';
 import { ClauseLib, LegalSearch, Counterparty, Team, Batch } from './screens/Knowledge';
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -49,17 +49,23 @@ const FONT_OPTIONS = [
 const PAGE_TITLES = {
   dashboard: 'dashboard', analyze: 'analyze',
   builder: 'builderTitle', copilot: 'copilotTitle', library: 'libTitle', batch: 'batchTitle',
-  matters: 'mattersTitle', tasks: 'tasksTitle', calendar: 'calendarTitle', billing: 'billingTitle',
-  litigation: 'litTitle', review: 'reviewTitle',
+  matters: 'mattersTitle', calendar: 'calendarTitle',
+  litigation: 'litTitle',
   clauses: 'clauseLibTitle', legal: 'legalTitle', counterparty: 'cpTitle',
   clients: 'clientsTitle', templates: 'templatesTitle', team: 'teamTitle',
   esign: 'esignTitle', conflict: 'conflictTitle', portal: 'portalTitle',
   lawyer: 'lawTitle',
 };
 
+const DEPRECATED_ROUTES = new Set(['tasks', 'billing', 'review']);
+
 export default function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [route, setRoute] = useState(() => localStorage.getItem('lx_route') || 'dashboard');
+  const [route, setRoute] = useState(() => {
+    const stored = localStorage.getItem('lx_route');
+    if (!stored || DEPRECATED_ROUTES.has(stored)) return 'dashboard';
+    return stored;
+  });
   const [lang, setLang] = useState(() => {
     const s = localStorage.getItem('lx_lang');
     return (s === 'uk' || s === 'en') ? s : 'uk';
@@ -377,19 +383,16 @@ export default function App() {
   else if (route === 'batch') body = <Batch t={L} setRoute={setRoute} />;
   else if (route === 'matters') body = <Matters t={L} setRoute={setRoute} />;
   else if (route === 'litigation') body = <Litigation t={L} setRoute={setRoute} />;
-  else if (route === 'review') body = <DocReview t={L} />;
   else if (route === 'esign') body = <ESign t={L} />;
   else if (route === 'conflict') body = <ConflictCheck t={L} />;
   else if (route === 'portal') body = <ClientPortal t={L} />;
-  else if (route === 'tasks') body = <Tasks t={L} />;
-  else if (route === 'billing') body = <Billing t={L} />;
   else if (route === 'clauses') body = <ClauseLib t={L} />;
   else if (route === 'legal') body = <LegalSearch t={L} />;
   else if (route === 'counterparty') body = <Counterparty t={L} />;
   else if (route === 'team') body = <Team t={L} user={user} />;
   else if (route === 'clients') body = <Clients t={L} setRoute={setRoute} />;
   else if (route === 'templates') body = <Templates t={L} />;
-  else if (route === 'calendar') body = <Calendar t={L} />;
+  else if (route === 'calendar') body = <CalendarTasks t={L} />;
 
   if (!user) {
     return (

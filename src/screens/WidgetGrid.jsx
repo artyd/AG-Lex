@@ -22,19 +22,17 @@ const NOTES_KEY = 'aglex_dashboard_widget_notes';
 
 const WIDGETS = [
   { type: 'court_calendar', icon: 'calendar', tone: 'high', route: 'calendar' },
-  { type: 'tasks',          icon: 'check',    tone: 'med',  route: 'tasks' },
-  { type: 'timer',          icon: 'clock',    tone: 'accent', route: 'billing' },
+  { type: 'tasks',          icon: 'check',    tone: 'med',  route: 'calendar' },
   { type: 'matters',        icon: 'folder',   tone: 'info', route: 'matters' },
   { type: 'statutes',       icon: 'alert',    tone: 'high', route: 'litigation' },
   { type: 'docs',           icon: 'doc',      tone: 'accent', route: 'library' },
   { type: 'clients',        icon: 'clients',  tone: 'info', route: 'clients' },
-  { type: 'invoices',       icon: 'pay',      tone: 'med',  route: 'billing' },
   { type: 'notes',          icon: 'pen',      tone: 'accent', route: null },
   { type: 'legal_search',   icon: 'scales',   tone: 'info', route: 'legal' },
   { type: 'templates',      icon: 'templates', tone: 'accent', route: 'templates' },
   { type: 'meetings',       icon: 'chat',     tone: 'info', route: 'calendar' },
   { type: 'analytics',      icon: 'sparkle',  tone: 'accent', route: 'matters' },
-  { type: 'reminders',      icon: 'bell',     tone: 'med',  route: 'tasks' },
+  { type: 'reminders',      icon: 'bell',     tone: 'med',  route: 'calendar' },
   { type: 'legal_feed',     icon: 'book',     tone: 'info', route: 'legal' },
 ];
 

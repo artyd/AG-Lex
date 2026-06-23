@@ -1,3 +1,4 @@
+// DEPRECATED — removed from navigation per refactor 2026-06
 /* ============================================================
    AG Lex — Document review / e-discovery (Перегляд)
    AI-tagged document set: relevance, privilege, responsiveness.
@@ -73,4 +74,5 @@ function DocReview({ t }) {
   );
 }
 
-export { DocReview };
+// DEPRECATED — removed from navigation per refactor 2026-06
+// export { DocReview };

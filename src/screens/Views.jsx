@@ -453,6 +453,7 @@ function Templates({ t }) {
 }
 
 /* ---------- Calendar ---------- */
+// DEPRECATED — replaced by screens/practice/CalendarTasks per refactor 2026-06
 function Calendar({ t }) {
   const D = DEMO;
   const baseYear = 2026, baseMonth = 5; // June (0-idx)
@@ -563,4 +564,6 @@ function Calendar({ t }) {
   );
 }
 
-export { Dashboard, Library, Clients, Templates, Calendar };
+// Calendar is deprecated as a standalone view per refactor 2026-06
+// — the merged Calendar+Tasks lives in screens/practice/CalendarTasks.
+export { Dashboard, Library, Clients, Templates };
