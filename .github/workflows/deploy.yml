@@ -1,0 +1,97 @@
+name: build-check + deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-check:
+    name: Smoke-test backend import + frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Backend smoke test -------------------------------------------------
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: legal_app/requirements.txt
+
+      - name: Install system deps for native wheels
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+
+      - name: Install backend requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r legal_app/requirements.txt
+
+      - name: Import FastAPI app (smoke test)
+        env:
+          # Minimal env so config.Settings() doesn't fail in CI.
+          API_KEY: ci-noop
+          JWT_SECRET: ci-noop-secret
+        run: |
+          python -c "from legal_app.backend.main import app; assert app.title == 'AG Lex'"
+
+      # --- Frontend build -----------------------------------------------------
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Vite build
+        run: npm run build
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: build-check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that deploy secrets are present
+        id: secrets
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_USER }}
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          if [ -z "$HETZNER_HOST" ] || [ -z "$HETZNER_USER" ] || [ -z "$HETZNER_SSH_KEY" ]; then
+            echo "::notice::Deploy secrets are not set — skipping deploy step."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure SSH
+        if: steps.secrets.outputs.skip == 'false'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Pull, rebuild containers, verify health
+        if: steps.secrets.outputs.skip == 'false'
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          USER: ${{ secrets.HETZNER_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "$USER@$HOST" bash -se <<'REMOTE'
+          set -euo pipefail
+          cd /opt/aglex
+          git pull origin main
+          docker compose up -d --build --no-deps backend frontend nginx
+          sleep 10
+          curl -fsS http://localhost:8002/api/health
+          REMOTE
