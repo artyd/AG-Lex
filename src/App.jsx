@@ -18,7 +18,7 @@ import { Dashboard, Library, Clients, Templates } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
-import { LawyerChat } from './screens/LawyerChat';
+import { ChatPage } from './screens/chat/ChatPage';
 import { Litigation } from './screens/Litigation';
 import { ConflictCheck } from './screens/ConflictCheck';
 import { ClientPortal } from './screens/ClientPortal';
@@ -377,7 +377,7 @@ export default function App() {
   else if (route === 'analyze') body = <ContractAnalysis t={L} key={'an' + analyzeNonce} incoming={analysisIncoming} />;
   else if (route === 'builder') body = <DocBuilder t={L} setRoute={setRoute} user={user} />;
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
-  else if (route === 'lawyer') body = <LawyerChat t={L} setRoute={setRoute} lang={lang} />;
+  else if (route === 'lawyer') body = <ChatPage t={L} setRoute={setRoute} lang={lang} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query}
     clearAnalysisIncoming={() => { setAnalysisIncoming(null); setAnalyzeNonce(n => n + 1); }} />;
   else if (route === 'batch') body = <Batch t={L} setRoute={setRoute} />;

@@ -82,6 +82,7 @@ import keySvg from '@fortawesome/fontawesome-free/svgs/solid/key.svg?raw';
 import receiptSvg from '@fortawesome/fontawesome-free/svgs/solid/receipt.svg?raw';
 import briefcaseSvg from '@fortawesome/fontawesome-free/svgs/solid/briefcase.svg?raw';
 import barcodeSvg from '@fortawesome/fontawesome-free/svgs/solid/barcode.svg?raw';
+import trashSvg from '@fortawesome/fontawesome-free/svgs/solid/trash-can.svg?raw';
 
 import appleSvg from '@fortawesome/fontawesome-free/svgs/brands/apple.svg?raw';
 import linuxSvg from '@fortawesome/fontawesome-free/svgs/brands/linux.svg?raw';
@@ -161,6 +162,7 @@ const RAW = {
   receipt:     receiptSvg,     // payment terms
   briefcase:   briefcaseSvg,   // professional / role
   barcode:     barcodeSvg,     // HS code / SKU
+  trash:       trashSvg,       // delete (chat session row, etc.)
 };
 
 function parseRaw(raw) {

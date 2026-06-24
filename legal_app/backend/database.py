@@ -85,6 +85,34 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 """
 
 
+# AI-lawyer chat history (sessions + messages). Cascade on session delete
+# wipes the message rows in one shot — requires PRAGMA foreign_keys = ON,
+# which `get_connection` already sets.
+CHAT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id          TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL DEFAULT 'Новий чат',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_updated
+    ON chat_sessions(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    role        TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id
+    ON chat_messages(session_id, id);
+"""
+
+
 def get_connection(
     db_path: str | Path | None = None,
     *,
@@ -126,6 +154,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
 def init_user_schema(conn: sqlite3.Connection) -> None:
     """Create the `users` table + index. Idempotent. Phase 2.1."""
     conn.executescript(USER_SCHEMA)
+    conn.commit()
+
+
+def init_chat_schema(conn: sqlite3.Connection) -> None:
+    """Create `chat_sessions` + `chat_messages` for the AI lawyer history.
+
+    Idempotent. Depends on `users` existing, so call after `init_user_schema`.
+    """
+    conn.executescript(CHAT_SCHEMA)
     conn.commit()
 
 

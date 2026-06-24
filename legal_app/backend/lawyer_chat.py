@@ -27,14 +27,18 @@ practitioner taking a call from a junior — short, opinionated, ends with
 """
 from __future__ import annotations
 
+import sqlite3
 from typing import Literal, Optional
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .auth import current_user
+from .chat_sessions import load_history as load_session_history, persist_turn
 from .claude_client import ClaudeError, _client, format_articles
 from .config import get_settings
+from .database import get_db
 from .rbac import require
 from .search import hybrid_search
 
@@ -241,9 +245,23 @@ def chat(
     ]
 
     # User/assistant turns: the trimmed conversation history + the new
-    # user question at the end. Not cached — small relative to system.
-    messages = _format_history(history or [])
-    messages.append({"role": "user", "content": question.strip()})
+    # user question at the end. The TAIL of the prior conversation gets a
+    # 3rd cache breakpoint so the next turn cache-reads everything up to
+    # and including the last assistant reply — only the new user message
+    # (small + always-new) stays uncached. Anthropic allows up to 4 markers
+    # per request; we use 3 (system + context + conversation prefix).
+    prior = _format_history(history or [])
+    if prior:
+        last = prior[-1]
+        prior[-1] = {
+            "role": last["role"],
+            "content": [{
+                "type": "text",
+                "text": last["content"],
+                "cache_control": {"type": "ephemeral"},
+            }],
+        }
+    messages = prior + [{"role": "user", "content": question.strip()}]
 
     try:
         response = cli.messages.create(
@@ -310,21 +328,62 @@ class LawyerChatRequest(BaseModel):
     history: Optional[list[_HistoryTurn]] = Field(
         default=None,
         max_length=20,
-        description="Earlier conversation turns — server clips to last 6.",
+        description=(
+            "Deprecated: pass `session_id` instead. When `session_id` is "
+            "present the server loads history from the DB and ignores this "
+            "field. Kept for back-compat with the legacy in-memory client."
+        ),
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Existing chat_sessions.id. When provided, the server loads "
+            "history from DB, persists the new user + assistant turns, and "
+            "auto-titles the session from the first user message."
+        ),
     )
 
 
 @router.post("/lawyer-chat", dependencies=[Depends(require("ai"))])
-def lawyer_chat_endpoint(req: LawyerChatRequest):
+def lawyer_chat_endpoint(
+    req: LawyerChatRequest,
+    user: dict = Depends(current_user),
+    conn: sqlite3.Connection = Depends(get_db),
+):
     """Conversational legal assistant grounded in the codex.
 
     Gated by the `ai` capability — same gate as /api/analyze. Errors from
     the SDK surface as HTTP 502 with a single readable line.
+
+    When `session_id` is set, the call becomes stateful: server-loaded
+    history, persisted turn, auto-titled session. When absent, the legacy
+    client-history contract still works (one release deprecation window).
     """
-    try:
-        return chat(
-            question=req.question,
-            history=[t.model_dump() for t in (req.history or [])],
+    history_for_chat: list[dict]
+    if req.session_id:
+        # Local import keeps the in-memory legacy path from booting the
+        # chat_sessions module unnecessarily.
+        from .chat_sessions import assert_owns_session
+
+        assert_owns_session(conn, req.session_id, user["id"])
+        history_for_chat = load_session_history(
+            conn, req.session_id, limit=MAX_HISTORY_TURNS * 2,
         )
+    else:
+        history_for_chat = [t.model_dump() for t in (req.history or [])]
+
+    try:
+        result = chat(question=req.question, history=history_for_chat)
     except ClaudeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    if req.session_id:
+        new_title = persist_turn(
+            conn, req.session_id,
+            user_message=req.question,
+            assistant_message=result["answer"],
+        )
+        result["session_id"] = req.session_id
+        result["session_title"] = new_title
+
+    return result
