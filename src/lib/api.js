@@ -124,6 +124,31 @@ const team = {
   members: () => request('/api/team/members'),
 };
 
+// AI-lawyer chat sessions (Phase: chat history). Sessions are per-user;
+// messages cascade on delete server-side. The actual "send a message" call
+// stays on /api/lawyer-chat with an added `session_id` field — see
+// useChatSessions for that wire-up.
+const chat = {
+  sessions: {
+    list: () => request('/api/chat/sessions'),
+    create: () => request('/api/chat/sessions', { method: 'POST' }),
+    remove: (id) => request(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    rename: (id, title) =>
+      request(`/api/chat/sessions/${encodeURIComponent(id)}`, {
+        method: 'PATCH', body: { title },
+      }),
+  },
+  messages: {
+    list: (sessionId) =>
+      request(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
+  },
+  send: ({ question, sessionId }) =>
+    request('/api/lawyer-chat', {
+      method: 'POST',
+      body: { question, session_id: sessionId },
+    }),
+};
+
 // Single-document pipeline (Phase 3.1 — see legal_app/backend/main.py).
 // `upload` turns a real PDF/DOCX into markdown + section list + token-stats.
 // `analyzeContract` then turns the markdown (or sections) into the findings /
@@ -142,6 +167,7 @@ export const api = {
   matters,
   notifications,
   calendar,
+  chat,
   team,
   tasks: entity('tasks'),
   clients: entity('clients'),

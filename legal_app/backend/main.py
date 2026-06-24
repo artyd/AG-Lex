@@ -18,6 +18,7 @@ from . import assist as assist_module
 from . import auth as auth_module
 from . import builder as builder_module
 from . import calendar_routes as calendar_module
+from . import chat_sessions as chat_sessions_module
 from . import drafts as drafts_module
 from . import lawyer_chat as lawyer_chat_module
 from . import matters_routes as matters_module
@@ -30,7 +31,7 @@ from .codex import get_codex_stats
 from .config import get_settings
 from .contract_analysis import analyze_contract
 from .crud import ALL_ENTITIES, CONTRACTS, RECONCILIATIONS, build_router, insert_row
-from .database import get_connection, get_db, init_schema, init_user_schema
+from .database import get_connection, get_db, init_chat_schema, init_schema, init_user_schema
 from .documents import (
     DisplayPdfError,
     detect_type_and_convert,
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI):
     try:
         init_schema(conn)             # articles + FTS5 (Phases 1.1/1.2)
         init_user_schema(conn)        # users (Phase 2.1)
+        init_chat_schema(conn)        # AI-lawyer chat sessions + messages
         init_entity_schema(conn)      # workspace entities (Phase 2.2)
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
@@ -107,6 +109,7 @@ app.include_router(team_module.router)
 app.include_router(assist_module.router)
 app.include_router(builder_module.router)
 app.include_router(lawyer_chat_module.router)
+app.include_router(chat_sessions_module.router)
 app.include_router(drafts_module.router)  # Fix 1: custom router replaces generic CRUD
 # Phase 2.4: custom routers for /api/matters, /api/notifications, /api/calendar.
 # The matters router enforces row-level access via case_members; the generic

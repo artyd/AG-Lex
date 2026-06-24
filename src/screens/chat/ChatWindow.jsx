@@ -1,34 +1,22 @@
 /* ============================================================
-   AG Lex — Lawyer Chat (AI-адвокат).
-   Conversational legal assistant grounded in the codex via
-   /api/lawyer-chat. Persona: 30-year senior lawyer. Each bot
-   reply streams character-by-character and ends with clickable
-   citation cards that jump to the Legal Search screen.
+   ChatWindow — message thread + composer for the AI Lawyer.
+
+   Hydrates from /api/chat/sessions/{id}/messages on session switch
+   and sends via /api/lawyer-chat with the session id, so the server
+   loads + persists the conversation. Optimistic local-append keeps
+   the UI snappy.
+
+   Helpers (renderAnswer, useTypewriter, BotBubble, sourceMeta) are
+   lifted verbatim from the legacy screens/LawyerChat.jsx to keep
+   the citation rendering identical.
    ============================================================ */
-import { useState, useRef, useEffect } from 'react';
-import { Icon } from '../ui/Icon';
-import { api, ApiError } from '../lib/api';
-import { toast } from '../ui/components';
+import { useEffect, useRef, useState } from 'react';
+import { Icon } from '../../ui/Icon';
+import { api, ApiError } from '../../lib/api';
+import { toast } from '../../ui/components';
 
-// Suggestion chips, surfaced on the welcome state. Tuned to questions where
-// the codex actually has good UA + ЦК coverage so a cold-start demo lands.
-const LAW_SUGGEST_UK = [
-  'Як одностороннє розірвання договору регулюється ЦКУ?',
-  'Який строк позовної давності за договірними зобовʼязаннями?',
-  'Що робити, якщо контрагент прострочив оплату на 60 днів?',
-  'Які підстави для зменшення неустойки судом?',
-  'Чи можна стягнути моральну шкоду за порушення договору?',
-];
-const LAW_SUGGEST_EN = [
-  'How is unilateral contract termination regulated under the Civil Code?',
-  'What is the statute of limitations for contractual obligations?',
-  'What if the counterparty is 60 days late on payment?',
-  'On what grounds can a court reduce a contractual penalty?',
-  'Can moral damages be recovered for breach of contract?',
-];
-
-// Source → human label + Legal Search filter id. Keep this stable with the
-// `LegalSearch` screen filter values so jumps land in the right tab.
+// Source → human label + Legal Search filter id. Must stay in sync with the
+// LegalSearch screen filter values so citation jumps land on the right tab.
 const SOURCE_LABEL = {
   'ЦКУ': { label: 'ЦКУ', tone: 'accent', filter: 'code' },
   'ГКУ': { label: 'ГКУ', tone: 'accent', filter: 'code' },
@@ -40,19 +28,10 @@ function sourceMeta(source) {
   return SOURCE_LABEL[source] || { label: source || '—', tone: 'muted', filter: 'all' };
 }
 
-// Light markdown-ish renderer.
-// The system prompt asks for:
-//   1) **bold** on the lead sentence,
-//   2) plain paragraphs,
-//   3) a numbered list at the end ("1. ...", "2. ...").
-// We split on blank lines, then per paragraph either render a <ol> (when
-// every line starts with "N. ") or a <p> with **bold** segments turned into
-// <strong>. Citations like "(ст. 651 ЦКУ)" become a styled chip via regex.
 const _CITE_RE = /\(((?:ст\.?\s*)\d+[\w\-.]*\s+[Ѐ-ӿ]+|art\.?\s*\d+[\w\-.]*\s+\w+)\)/gi;
 const _BOLD_RE = /\*\*([^*\n]+)\*\*/g;
 
 function renderInline(text) {
-  // First wrap citations, then bolds. Output is a flat array of strings + nodes.
   const parts = [];
   let last = 0;
   let key = 0;
@@ -63,7 +42,6 @@ function renderInline(text) {
     last = m.index + m[0].length;
   });
   if (last < text.length) parts.push(text.slice(last));
-  // Now bold-walk the string segments only.
   return parts.flatMap((p, i) => {
     if (typeof p !== 'string') return [p];
     const segs = [];
@@ -80,7 +58,6 @@ function renderInline(text) {
 }
 
 function renderAnswer(text) {
-  // Split into paragraphs on blank lines.
   const paras = text.replace(/\r/g, '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
   return paras.map((p, i) => {
     const lines = p.split('\n').map(l => l.trim()).filter(Boolean);
@@ -98,10 +75,6 @@ function renderAnswer(text) {
   });
 }
 
-// Character-by-character reveal. We expose a hook that returns the
-// currently-visible substring + a `done` flag so the parent can swap to
-// the fully-rendered version once the animation completes (otherwise we'd
-// re-parse markdown on every frame).
 function useTypewriter(full, enabled, speed = 14) {
   const [shown, setShown] = useState(enabled ? '' : full);
   const [done, setDone] = useState(!enabled);
@@ -114,7 +87,6 @@ function useTypewriter(full, enabled, speed = 14) {
     let last = performance.now();
     const step = (now) => {
       const dt = now - last;
-      // chars to advance this frame — speed is "chars per ~16ms tick"
       const inc = Math.max(1, Math.floor((dt / 16) * (speed / 6)));
       i = Math.min(full.length, i + inc);
       setShown(full.slice(0, i));
@@ -132,8 +104,6 @@ function useTypewriter(full, enabled, speed = 14) {
 }
 
 function BotBubble({ msg, t, onJumpToLaw }) {
-  // Animate only the most recent bot reply (msg.fresh). Older replies in
-  // history re-render fully so scrolling back doesn't replay the typewriter.
   const { shown, done } = useTypewriter(msg.text, !!msg.fresh, 14);
   const showCards = done && Array.isArray(msg.cited) && msg.cited.length > 0;
   return (
@@ -182,58 +152,113 @@ function BotBubble({ msg, t, onJumpToLaw }) {
   );
 }
 
-function LawyerChat({ t, setRoute, lang }) {
+export function ChatWindow({
+  sessionId,
+  ensureSession,
+  onSessionPatched,
+  onSessionMissing,
+  onOpenSidebar,
+  showMenuButton,
+  t,
+  setRoute,
+}) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const [usage, setUsage] = useState(null);
+  const [hydrating, setHydrating] = useState(false);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Hydrate the thread whenever the active session changes. A null
+  // sessionId means "empty state" — clear the window.
+  useEffect(() => {
+    if (!sessionId) {
+      setMsgs([]);
+      setUsage(null);
+      return;
+    }
+    // Skip the fetch for optimistic temp ids — there's nothing on the
+    // server yet, and the row is moments away from being swapped.
+    if (sessionId.startsWith('tmp-')) {
+      setMsgs([]);
+      setUsage(null);
+      return;
+    }
+    let cancelled = false;
+    setHydrating(true);
+    api.chat.messages.list(sessionId)
+      .then(rows => {
+        if (cancelled) return;
+        const mapped = (rows || []).map(r => (
+          r.role === 'user'
+            ? { role: 'user', text: r.content }
+            // Historical assistant turns lost their citations on persist —
+            // render plain text without the source-card section.
+            : { role: 'bot', text: r.content, cited: [], warnings: [], fresh: false }
+        ));
+        setMsgs(mapped);
+        setUsage(null);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 404) {
+          // Stale id (deleted on another device). Surface to parent so
+          // the sidebar can drop us to the next session / empty state.
+          onSessionMissing?.(sessionId);
+          return;
+        }
+        toast(t.lawErrNet || 'Не вдалося завантажити історію.', 'alert');
+      })
+      .finally(() => { if (!cancelled) setHydrating(false); });
+    return () => { cancelled = true; };
+  }, [sessionId, onSessionMissing, t]);
+
+  // Keep the thread scrolled to the latest turn.
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [msgs, thinking]);
+  }, [msgs, thinking, hydrating]);
 
-  // Auto-focus on mount so the user can start typing immediately.
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const suggest = (lang === 'en' ? LAW_SUGGEST_EN : LAW_SUGGEST_UK);
+  // Auto-focus on mount + after session switch.
+  useEffect(() => { inputRef.current?.focus(); }, [sessionId]);
 
   const jumpToLaw = (cited, meta) => {
-    // Stash a hint for LegalSearch so it can pre-filter on open. Best-effort
-    // — if the screen ignores the hint, the user still lands on the right tab.
     try {
       localStorage.setItem('aglex_legal_jump', JSON.stringify({
         articleNumber: cited.article_number,
         filter: meta.filter,
         ts: Date.now(),
       }));
-    } catch (_e) { /* private mode — fine */ }
+    } catch { /* private mode — fine */ }
     setRoute('legal');
   };
 
-  const send = async (q) => {
-    const text = (q == null ? input : q).trim();
+  const send = async () => {
+    const text = input.trim();
     if (!text || thinking) return;
-    // Push user turn + clear input optimistically.
-    const newUser = { role: 'user', text };
-    // Mark prior bot messages as "not fresh" so only the upcoming reply types out.
-    setMsgs(m => [...m.map(x => x.role === 'bot' ? { ...x, fresh: false } : x), newUser]);
+
+    // Ensure an active session exists (auto-create if user typed before
+    // clicking "+ Новий чат"). The parent owns session creation; we just
+    // ask for an id.
+    let sid = sessionId;
+    if (!sid || sid.startsWith('tmp-')) {
+      try {
+        sid = await ensureSession();
+      } catch {
+        toast(t.lawErrNet || 'Не вдалося створити чат.', 'alert');
+        return;
+      }
+      if (!sid) return;
+    }
+
+    const userMsg = { role: 'user', text };
+    setMsgs(m => [...m.map(x => x.role === 'bot' ? { ...x, fresh: false } : x), userMsg]);
     setInput('');
     setThinking(true);
-    // Build the history snapshot we send: every prior msg with role mapped.
-    // (We compute against the previous `msgs` value via a stale closure on
-    // purpose — the user turn we just pushed becomes `question`, not history.)
-    const history = msgs.map(m => ({
-      role: m.role === 'bot' ? 'assistant' : 'user',
-      text: m.text,
-    }));
+
     try {
-      const res = await api.request('/api/lawyer-chat', {
-        method: 'POST',
-        body: { question: text, history },
-      });
+      const res = await api.chat.send({ question: text, sessionId: sid });
       setMsgs(m => [...m, {
         role: 'bot',
         text: res.answer || '',
@@ -242,64 +267,73 @@ function LawyerChat({ t, setRoute, lang }) {
         fresh: true,
       }]);
       setUsage(res.usage || null);
+      // Refresh the sidebar row (title may have changed on first turn,
+      // updated_at always bumps).
+      onSessionPatched?.(sid, {
+        title: res.session_title,
+        updated_at: new Date().toISOString(),
+      });
     } catch (e) {
-      const detail = e instanceof ApiError
-        ? (e.status === 502 ? (t.lawErrUpstream || 'Сервіс ШІ тимчасово недоступний.')
-            : e.status === 403 ? (t.lawErrForbidden || 'У вас немає доступу до ШІ-відповідей.')
-            : e.message)
-        : (t.lawErrNet || 'Не вдалося відправити запит — перевірте звʼязок.');
-      setMsgs(m => [...m, {
-        role: 'bot',
-        text: '**' + (t.lawErrTitle || 'Не вийшло отримати відповідь.') + '** ' + detail,
-        cited: [],
-        warnings: [],
-        fresh: true,
-        error: true,
-      }]);
-      toast(detail, 'alert');
+      if (e instanceof ApiError && e.status === 404) {
+        // Session vanished mid-flight (deleted in another tab). Drop the
+        // optimistic user message and notify the parent.
+        setMsgs(m => m.slice(0, -1));
+        onSessionMissing?.(sid);
+        toast(t.lawErrMissing || 'Чат було видалено.', 'alert');
+      } else {
+        const detail = e instanceof ApiError
+          ? (e.status === 502 ? (t.lawErrUpstream || 'Сервіс ШІ тимчасово недоступний.')
+              : e.status === 403 ? (t.lawErrForbidden || 'У вас немає доступу до ШІ-відповідей.')
+              : e.message)
+          : (t.lawErrNet || 'Не вдалося відправити запит — перевірте звʼязок.');
+        setMsgs(m => [...m, {
+          role: 'bot',
+          text: '**' + (t.lawErrTitle || 'Не вийшло отримати відповідь.') + '** ' + detail,
+          cited: [],
+          warnings: [],
+          fresh: true,
+          error: true,
+        }]);
+        toast(detail, 'alert');
+      }
     } finally {
       setThinking(false);
     }
   };
 
-  const empty = msgs.length === 0;
-  // Token-saved hint for the composer.
+  const empty = msgs.length === 0 && !thinking && !hydrating;
   const cacheHint = usage && usage.cache_read_input_tokens
     ? (t.lawCachedHint || 'Кеш заощадив') + ' ' + usage.cache_read_input_tokens.toLocaleString() + ' ' + (t.lawTokens || 'токенів')
     : null;
 
   return (
-    <div className="page cop-page lc-page">
-      <div className="cop-scroll" ref={scrollRef}>
-        <div className="cop-inner">
+    <div className="cl-window">
+      {showMenuButton ? (
+        <button
+          type="button"
+          className="cl-window-menu"
+          onClick={onOpenSidebar}
+          aria-label={t.lawOpenSidebar || 'Історія чатів'}
+        >
+          <Icon name="menu" size={17} />
+        </button>
+      ) : null}
+
+      <div className="cop-scroll cl-scroll" ref={scrollRef}>
+        <div className="cop-inner cl-inner">
           {empty ? (
-            <div className="cop-welcome view-enter lc-welcome">
-              <div className="lc-hero-av" aria-hidden="true">
-                <Icon name="scales" size={28} />
+            <div className="cl-welcome view-enter">
+              <div className="lc-hero-av cl-hero-av" aria-hidden="true">
+                <Icon name="scales" size={26} />
                 <span className="lc-hero-glow" />
               </div>
-              <h1 className="cop-greet">{t.lawTitle || 'AI-адвокат'}</h1>
-              <p className="cop-greet-sub">
-                {t.lawSub || '30 років практики, договірне й господарське право. Запитуйте — відповім коротко й по суті, з посиланнями на статті.'}
+              <h1 className="cl-hero-t">{t.lawTitle || 'AI-адвокат'}</h1>
+              <p className="cl-hero-s">
+                {t.lawHeroSub || 'Юридичний асистент · Claude. Поставте питання — відповім коротко, з посиланнями на статті.'}
               </p>
-
-              <div className="lc-creds">
-                <span className="lc-cred"><Icon name="scales" size={13} /> {t.lawCred1 || 'Цивільне та господарське право'}</span>
-                <span className="lc-cred"><Icon name="book" size={13} /> {t.lawCred2 || 'Грунтується на ЦКУ, ГКУ, ГДПР'}</span>
-                <span className="lc-cred"><Icon name="sparkle" size={13} fill={true} /> {t.lawCred3 || 'Економний режим — кеш токенів'}</span>
-              </div>
-
-              <div className="cop-try lc-try">{t.lawTry || 'Спробуйте запитати'}</div>
-              <div className="cop-chips lc-chips">
-                {suggest.map((q, i) => (
-                  <button key={i} className="cop-chip lc-chip" onClick={() => send(q)}>
-                    {q}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
-            <div className="cop-thread">
+            <div className="cop-thread cl-thread">
               {msgs.map((m, i) => (
                 m.role === 'user' ? (
                   <div key={i} className="cop-msg cop-user lc-msg-enter">
@@ -329,34 +363,40 @@ function LawyerChat({ t, setRoute, lang }) {
         </div>
       </div>
 
-      <div className="cop-composer lc-composer">
+      <div className="cop-composer lc-composer cl-composer">
         <div className="cop-composer-inner">
-          {!empty ? (
-            <div className="cop-chips cop-chips-row lc-chips">
-              {suggest.slice(0, 4).map((q, i) => (
-                <button key={i} className="cop-chip lc-chip" onClick={() => send(q)}>{q}</button>
-              ))}
-            </div>
-          ) : null}
           <div className="cop-input lc-input">
             <Icon name="scales" size={16} style={{ color: 'var(--accent)' }} />
-            <input ref={inputRef} value={input}
-              placeholder={t.lawPlaceholder || 'Запитайте адвоката…'}
+            <input
+              ref={inputRef}
+              value={input}
+              placeholder={t.lawPlaceholder || 'Поставте питання…'}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-            <button className="cop-send" disabled={!input.trim() || thinking} onClick={() => send()}
-              aria-label={t.lawSend || 'Надіслати'}>
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
+            />
+            <button
+              className="cop-send"
+              disabled={!input.trim() || thinking}
+              onClick={send}
+              aria-label={t.lawSend || 'Надіслати'}
+            >
               <Icon name="send" size={17} />
             </button>
           </div>
           <div className="lc-foot">
-            <span className="lc-disc">{t.lawDisclaimer || 'Відповіді ШІ — рекомендаційні, не замінюють юридичну консультацію.'}</span>
-            {cacheHint ? <span className="lc-cache"><Icon name="sparkle" size={11} fill={true} /> {cacheHint}</span> : null}
+            <span className="lc-disc">
+              {t.lawDisclaimer || 'Відповіді ШІ — рекомендаційні, не замінюють юридичну консультацію.'}
+            </span>
+            {cacheHint ? (
+              <span className="lc-cache">
+                <Icon name="sparkle" size={11} fill={true} /> {cacheHint}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-export { LawyerChat };
