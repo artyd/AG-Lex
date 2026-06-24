@@ -109,6 +109,7 @@ jobs:
           cd /opt/aglex
           git pull origin main
           docker compose up -d --build backend frontend nginx
-          sleep 30
+          docker compose restart nginx
+          sleep 15
           curl -fsS http://localhost:8002/api/health
           REMOTE
