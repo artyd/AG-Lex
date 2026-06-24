@@ -1,3 +1,4 @@
+// DEPRECATED — removed from navigation per refactor 2026-06
 /* ============================================================
    AG Lex — Conflict of interest check (Конфлікт інтересів)
    ============================================================ */
@@ -74,4 +75,5 @@ function ConflictCheck({ t }) {
   );
 }
 
-export { ConflictCheck };
+// DEPRECATED — removed from navigation per refactor 2026-06
+// export { ConflictCheck };

@@ -51,6 +51,7 @@ from .models import (
     migrate_users,
 )
 from .pipeline import analyze
+from .search import hybrid_search
 from .rbac import (
     init_permissions_schema,
     require,
@@ -397,6 +398,104 @@ def codex_stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     that's everyone in the default permissions matrix.
     """
     return get_codex_stats(conn)
+
+
+# ---------------------------------------------------------------------------
+# Legislation library — browsable codex over the existing `articles` table.
+# Three endpoints: source list (sidebar), paginated article list (middle
+# column), single article (reading pane). Same `view` gate as /stats.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/codex/sources", dependencies=[Depends(require("view"))])
+def codex_sources(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
+    """Thin wrapper over stats.by_source — what the library sidebar needs."""
+    rows = conn.execute(
+        "SELECT source, COUNT(*) FROM articles "
+        "GROUP BY source ORDER BY COUNT(*) DESC, source"
+    ).fetchall()
+    return [{"source": r[0], "count": r[1]} for r in rows]
+
+
+@app.get("/api/codex/articles", dependencies=[Depends(require("view"))])
+def codex_articles(
+    source: str,
+    q: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    """Browse or search articles within a single codex source.
+
+    Two modes:
+      - `q` empty  → raw paginated SELECT, ordered for browsing (mode=list).
+      - `q` set    → hybrid_search filtered by source (mode=search), snippet
+                     included for the result-row preview.
+
+    Article-number ordering uses LENGTH(article_number), article_number —
+    a deliberate "good enough" lexical sort that puts "5" before "500"
+    without needing a generated sort_key column. Sub-numbered articles
+    ("1.2") still group correctly inside their decade.
+    """
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    q_clean = (q or "").strip()
+
+    if q_clean:
+        # Search mode: hybrid_search returns ranked hits with content; we
+        # trim to a 180-char snippet for the wire payload and drop content
+        # itself (the reader fetches the full row on click). Pass `conn`
+        # so test fixtures (dependency overrides) hit the same DB as the
+        # outer list query.
+        hits = hybrid_search(q_clean, source=source, limit=limit, conn=conn)
+        items = [
+            {
+                "id": h["id"],
+                "article_number": h["article_number"],
+                "title": h.get("title"),
+                "source": h["source"],
+                "snippet": (h.get("content") or "")[:180].strip(),
+            }
+            for h in hits
+        ]
+        return {"items": items, "total": len(items), "mode": "search"}
+
+    total = conn.execute(
+        "SELECT COUNT(*) FROM articles WHERE source = ?", (source,),
+    ).fetchone()[0]
+    rows = conn.execute(
+        "SELECT id, article_number, title, source FROM articles "
+        "WHERE source = ? "
+        "ORDER BY LENGTH(article_number), article_number "
+        "LIMIT ? OFFSET ?",
+        (source, limit, offset),
+    ).fetchall()
+    items = [
+        {"id": r[0], "article_number": r[1], "title": r[2], "source": r[3]}
+        for r in rows
+    ]
+    return {"items": items, "total": total, "mode": "list"}
+
+
+@app.get("/api/codex/articles/{article_id}", dependencies=[Depends(require("view"))])
+def codex_article(
+    article_id: int,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict:
+    """Single article row — what the reading pane renders."""
+    row = conn.execute(
+        "SELECT id, article_number, title, content, source "
+        "FROM articles WHERE id = ?",
+        (article_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return {
+        "id": row[0],
+        "article_number": row[1],
+        "title": row[2],
+        "content": row[3],
+        "source": row[4],
+    }
 
 
 @app.post("/api/analyze", dependencies=[Depends(require("ai"))])

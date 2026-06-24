@@ -185,7 +185,15 @@ export const I18N = {
     navPractice: 'Практика', navKnowledge: 'Знання',
     matters: 'Справи', mTasks: 'Задачі', billing: 'Час і білінг',
     clauseLib: 'Бібліотека пунктів', legalSearch: 'Законодавство', counterparty: 'Перевірка контрагента',
-    team: 'Команда і доступи', batch: 'Пакетний аналіз',
+    team: 'Команда', access: 'Доступ', accessTitle: 'Доступ і права', accessSub: 'Матриця можливостей по ролях. Зміни застосовуються миттєво.',
+    legalTitle: 'Законодавство', legalSub: 'Повна база кодексів і регламентів',
+    legalSources: 'Джерела', legalArticles: 'Статті', legalSearchPh: 'Пошук по статтях…',
+    legalSearchResults: 'Результати пошуку', legalNoMatches: 'Нічого не знайдено за запитом',
+    legalNoArticles: 'Жодної статті в цьому джерелі.', legalNoSources: 'База кодексів порожня.',
+    legalNoTitle: 'Без назви', legalLoadMore: 'Завантажити ще',
+    legalPickArticle: 'Оберіть статтю', legalPickArticleSub: 'Виберіть джерело зліва і натисніть на статтю, щоб прочитати повний текст.',
+    back: 'Назад',
+    batch: 'Пакетний аналіз',
 
     rolePartner: 'Партнер', roleSenior: 'Старший юрист', roleLawyer: 'Юрист', roleParalegal: 'Помічник', roleAdmin: 'Адміністратор',
 
@@ -766,7 +774,15 @@ export const I18N = {
     navPractice: 'Practice', navKnowledge: 'Knowledge',
     matters: 'Matters', mTasks: 'Tasks', billing: 'Time & billing',
     clauseLib: 'Clause library', legalSearch: 'Legislation', counterparty: 'Counterparty check',
-    team: 'Team & access', batch: 'Batch analysis',
+    team: 'Team', access: 'Access', accessTitle: 'Access & permissions', accessSub: 'Capability matrix by role. Changes take effect immediately.',
+    legalTitle: 'Legislation', legalSub: 'Full base of codes and regulations',
+    legalSources: 'Sources', legalArticles: 'Articles', legalSearchPh: 'Search articles…',
+    legalSearchResults: 'Search results', legalNoMatches: 'No matches for query',
+    legalNoArticles: 'No articles in this source.', legalNoSources: 'Codex database is empty.',
+    legalNoTitle: 'No title', legalLoadMore: 'Load more',
+    legalPickArticle: 'Pick an article', legalPickArticleSub: 'Choose a source on the left, then tap an article to read the full text.',
+    back: 'Back',
+    batch: 'Batch analysis',
 
     rolePartner: 'Partner', roleSenior: 'Senior lawyer', roleLawyer: 'Lawyer', roleParalegal: 'Paralegal', roleAdmin: 'Administrator',
 

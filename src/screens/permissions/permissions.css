@@ -1,0 +1,192 @@
+/* ============================================================
+   «Доступ» (Access) — RBAC matrix page.
+   Visual family with .lex-* (library): same card surface, same
+   header strip, same accent-tinted icon tile. Prefix: .acc-*
+   ============================================================ */
+
+.acc-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  overflow: auto;
+  background: var(--bg, var(--surface-2));
+}
+
+.acc-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.acc-head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.acc-head-title > svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.acc-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.acc-head-sub {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.acc-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.acc-reset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+}
+
+.acc-banner {
+  margin: var(--s4) var(--s5) 0;
+  padding: 10px var(--s3);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--risk-med) 12%, transparent);
+  color: oklch(0.45 0.12 70);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.acc-card {
+  margin: var(--s4) var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: auto;
+}
+
+.acc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.acc-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: var(--s3) var(--s2);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+.acc-table thead th.acc-col-cap { text-align: left; padding-left: var(--s4); }
+.acc-col-role { width: 96px; }
+
+.acc-table tbody tr { transition: background 0.1s; }
+.acc-table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--text-3) 3%, transparent);
+}
+.acc-table tbody tr:hover {
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+}
+
+.acc-cap-cell {
+  padding: 12px var(--s2) 12px var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.acc-cap-key {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  text-transform: lowercase;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.acc-cap-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.acc-cell {
+  padding: 8px var(--s2);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.acc-toggle {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2, var(--surface-2));
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--on-accent);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.acc-toggle:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.acc-toggle-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--accent) 36%, transparent);
+}
+
+.acc-yes {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--risk-low) 18%, transparent);
+  color: var(--risk-low);
+}
+.acc-no {
+  display: inline-block;
+  color: var(--text-3);
+  font-weight: 700;
+  font-feature-settings: 'tnum' 1;
+}
+
+@media (max-width: 767px) {
+  .acc-head { padding: var(--s3) var(--s4); flex-direction: column; align-items: flex-start; gap: var(--s2); }
+  .acc-card { margin: var(--s3); }
+  .acc-cap-cell { padding-left: var(--s3); }
+  .acc-col-role { width: 64px; }
+  .acc-table thead th { font-size: 10px; padding: var(--s2) 4px; }
+}

@@ -124,6 +124,22 @@ const team = {
   members: () => request('/api/team/members'),
 };
 
+// Codex library — browse + read every article in the loaded codex DB.
+// Backed by /api/codex/{sources,articles,articles/:id,stats}. Authorised
+// by the `view` capability on the server.
+const codex = {
+  sources: () => request('/api/codex/sources'),
+  articles: ({ source, q = '', limit = 50, offset = 0 } = {}) => {
+    const qs = new URLSearchParams({ source });
+    if (q) qs.set('q', q);
+    qs.set('limit', String(limit));
+    qs.set('offset', String(offset));
+    return request('/api/codex/articles?' + qs.toString());
+  },
+  article: (id) => request(`/api/codex/articles/${encodeURIComponent(id)}`),
+  stats: () => request('/api/codex/stats'),
+};
+
 // AI-lawyer chat sessions (Phase: chat history). Sessions are per-user;
 // messages cascade on delete server-side. The actual "send a message" call
 // stays on /api/lawyer-chat with an added `session_id` field — see
@@ -168,6 +184,7 @@ export const api = {
   notifications,
   calendar,
   chat,
+  codex,
   team,
   tasks: entity('tasks'),
   clients: entity('clients'),

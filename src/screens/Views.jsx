@@ -566,4 +566,6 @@ function Calendar({ t }) {
 
 // Calendar is deprecated as a standalone view per refactor 2026-06
 // — the merged Calendar+Tasks lives in screens/practice/CalendarTasks.
-export { Dashboard, Library, Clients, Templates };
+// DEPRECATED — Clients and Templates removed from navigation per refactor 2026-06
+export { Dashboard, Library };
+// export { Clients, Templates };

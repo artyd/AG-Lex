@@ -1,0 +1,445 @@
+/* ============================================================
+   «Законодавство» library — three-column shelf layout.
+   Prefix: .lex-*. Reuses design tokens (--s*, --r-*, --accent,
+   --surface, --border) so it sits inside the existing visual
+   language of Practice and Chat without inventing new colors.
+   ============================================================ */
+
+.lex-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg, var(--surface-2));
+}
+
+/* --- Header bar (title + search) --- */
+.lex-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s5);
+  padding: var(--s4) var(--s5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.lex-head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.lex-head-title > svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.lex-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.lex-head-sub {
+  font-size: 12.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lex-search {
+  flex: 0 1 360px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-2, var(--surface-2));
+  color: var(--text-3);
+  transition: border-color 0.12s;
+}
+.lex-search:focus-within {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lex-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* --- Three-column grid --- */
+.lex-grid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 240px 380px minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* === Source rail === */
+.lex-sources {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: var(--s4) var(--s3);
+}
+.lex-rail-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 var(--s2) var(--s2);
+}
+.lex-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lex-tile {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 10px var(--s2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  transition: background 0.12s, border-color 0.12s;
+}
+.lex-tile:hover {
+  background: color-mix(in oklab, var(--text-3) 6%, transparent);
+}
+.lex-tile-on {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border-color: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.lex-tile-on .lex-tile-code { color: var(--accent); }
+.lex-tile-ic {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-radius: 9px;
+}
+.lex-tile-on .lex-tile-ic {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 4px 14px color-mix(in oklab, var(--accent) 36%, transparent);
+}
+.lex-tile-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lex-tile-code {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.lex-tile-title {
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lex-tile-n {
+  font-size: 11.5px;
+  font-weight: 600;
+  font-feature-settings: 'tnum' 1;
+  color: var(--text-3);
+  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+.lex-tile-on .lex-tile-n {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* === Article list === */
+.lex-articles {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.lex-list-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.lex-list-h-n {
+  font-weight: 600;
+  font-feature-settings: 'tnum' 1;
+  background: color-mix(in oklab, var(--text-3) 10%, transparent);
+  color: var(--text-2);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.lex-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s2);
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.lex-list li { margin: 0; }
+
+.lex-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding: 10px var(--s2);
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 0.12s;
+}
+.lex-row:hover {
+  background: color-mix(in oklab, var(--text-3) 6%, transparent);
+}
+.lex-row-on {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+.lex-row-on .lex-row-num { color: var(--accent); }
+.lex-row-on .lex-row-title { color: var(--accent); }
+
+.lex-row-num {
+  flex: 0 0 56px;
+  font-size: 12px;
+  font-weight: 700;
+  font-feature-settings: 'tnum' 1;
+  color: var(--text-3);
+  padding-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lex-row-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.lex-row-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lex-row-snippet {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lex-row-chev {
+  color: var(--text-3);
+  margin-top: 4px;
+  flex: 0 0 auto;
+}
+.lex-more {
+  flex: 0 0 auto;
+  padding: var(--s3) var(--s3) var(--s4);
+  display: flex;
+  justify-content: center;
+}
+.lex-more-btn {
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.lex-more-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+}
+.lex-more-btn:disabled { opacity: 0.6; cursor: progress; }
+
+/* === Reading pane === */
+.lex-reader {
+  background: var(--surface);
+  overflow-y: auto;
+  padding: var(--s6) var(--s7);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.lex-reader-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--text-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s8) var(--s4);
+}
+.lex-reader-empty > svg { color: var(--text-3); }
+.lex-reader-empty-t {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.lex-reader-empty-s {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 320px;
+}
+.lex-reader-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.lex-reader-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.lex-reader-num {
+  font-size: 12px;
+  font-weight: 600;
+  font-feature-settings: 'tnum' 1;
+  color: var(--text-3);
+}
+.lex-reader-t {
+  margin: 0 0 var(--s4);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  max-width: 760px;
+}
+.lex-reader-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text-2);
+  max-width: 760px;
+}
+.lex-read-p {
+  margin: 0 0 var(--s3);
+  white-space: pre-line;
+}
+
+/* === Mobile drill-down === */
+.lex-mobile-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.lex-back {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.lex-back-placeholder { border-color: transparent; cursor: default; }
+.lex-mobile-t {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lex-search-mobile {
+  flex: 0 0 auto;
+  margin: var(--s3) var(--s4) 0;
+}
+
+/* === Shared utility === */
+.lex-empty {
+  padding: var(--s5) var(--s4);
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+@media (max-width: 899px) {
+  .lex-page-mobile { display: flex; flex-direction: column; }
+  .lex-page-mobile .lex-sources,
+  .lex-page-mobile .lex-articles,
+  .lex-page-mobile .lex-reader {
+    border: none;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 1180px) and (min-width: 900px) {
+  .lex-grid { grid-template-columns: 220px 320px minmax(0, 1fr); }
+  .lex-reader { padding: var(--s5) var(--s5); }
+}

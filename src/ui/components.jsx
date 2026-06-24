@@ -73,16 +73,11 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
     { id: 'calendar', icon: 'calendar', label: t.calendar, badge: 2 },
   ];
   const knowledge = [
-    { id: 'clauses', icon: 'book', label: t.clauseLib },
-    { id: 'legal', icon: 'scales', label: t.legalSearch },
-    { id: 'counterparty', icon: 'building', label: t.counterparty },
+    { id: 'legal', icon: 'library', label: t.legalSearch },
   ];
   const manage = [
-    { id: 'clients', icon: 'clients', label: t.clients },
-    { id: 'conflict', icon: 'shield', label: t.conflict },
-    { id: 'portal', icon: 'globe', label: t.portal },
-    { id: 'templates', icon: 'templates', label: t.templates },
-    { id: 'team', icon: 'settings', label: t.team },
+    { id: 'team', icon: 'clients', label: t.team },
+    { id: 'access', icon: 'key', label: t.access },
   ];
   const tipsByNav = (t.tips || {});
   const navTipKey = (id) => ({
@@ -175,23 +170,22 @@ function buildSearchIndex(t) {
   const idx = [];
   (D.library || []).forEach(c => idx.push({ type: 'contract', label: c.name, sub: c.client + ' · ' + c.date, route: 'library', risk: c.risk }));
   (LX.matters || []).forEach(m => idx.push({ type: 'matter', label: m.title, sub: m.code + ' · ' + m.client, route: 'matters' }));
-  (D.clients || []).forEach(c => idx.push({ type: 'client', label: c.name, sub: c.sector, route: 'clients' }));
   (LX.tasks || []).forEach(k => idx.push({ type: 'task', label: k.title, sub: k.matter, route: 'calendar' }));
-  (LX.clauseLib || []).forEach(cat => (cat.items || []).forEach(it => idx.push({ type: 'clause', label: it.title, sub: cat.cat, route: 'clauses' })));
+  // Codex laws stay in the index — they now route to the new Legislation
+  // library at the same `legal` route id, so the hint still lands correctly.
   (LX.laws || []).forEach(l => idx.push({ type: 'law', label: l.ref, sub: l.title, route: 'legal' }));
   (LX.team || []).forEach(u => idx.push({ type: 'person', label: u.name, sub: roleLabel(t, u.role), route: 'team' }));
-  (D.templates || []).forEach(tp => idx.push({ type: 'template', label: tp.name, sub: tp.cat, route: 'templates' }));
   return idx;
 }
-const SEARCH_TYPE_ICON = { contract: 'doc', matter: 'folder', client: 'building', task: 'check', clause: 'book', law: 'scales', person: 'clients', template: 'templates' };
-const SEARCH_TYPE_ORDER = ['contract', 'matter', 'client', 'task', 'clause', 'law', 'person', 'template'];
+const SEARCH_TYPE_ICON = { contract: 'doc', matter: 'folder', task: 'check', law: 'scales', person: 'clients' };
+const SEARCH_TYPE_ORDER = ['contract', 'matter', 'task', 'law', 'person'];
 
 function GlobalSearch({ t, value, onChange, onNavigate, onSearchEnter }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const wrapRef = useRef(null);
   const index = useMemo(() => buildSearchIndex(t), [t.library, t.matters]);
-  const typeLabel = { contract: t.library, matter: t.matters, client: t.clients, task: t.mTasks, clause: t.clauseLib, law: t.legalSearch, person: t.team, template: t.templates };
+  const typeLabel = { contract: t.library, matter: t.matters, task: t.mTasks, law: t.legalSearch, person: t.team };
 
   const lc = (value || '').trim().toLowerCase();
   const results = useMemo(() => {
