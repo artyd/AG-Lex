@@ -108,7 +108,7 @@ jobs:
           git config --global --add safe.directory /opt/aglex
           cd /opt/aglex
           git pull origin main
-          docker compose up -d --build --no-deps backend frontend nginx
+          docker compose up -d --build backend frontend nginx
           sleep 10
           curl -fsS http://localhost:8002/api/health
           REMOTE
