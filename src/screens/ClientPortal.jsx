@@ -1,3 +1,4 @@
+// DEPRECATED — removed from navigation per refactor 2026-06
 /* ============================================================
    AG Lex — Client portal (Клієнтський портал) — client-side view
    ============================================================ */
@@ -92,4 +93,5 @@ function ClientPortal({ t }) {
   );
 }
 
-export { ClientPortal };
+// DEPRECATED — removed from navigation per refactor 2026-06
+// export { ClientPortal };

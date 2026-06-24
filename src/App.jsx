@@ -14,18 +14,18 @@ import { DEMO } from './data/demo';
 import { LX } from './data/lx';
 import { I18N } from './data/i18n';
 import { Auth } from './screens/Auth';
-import { Dashboard, Library, Clients, Templates } from './screens/Views';
+import { Dashboard, Library } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
 import { Copilot } from './screens/Copilot';
 import { ChatPage } from './screens/chat/ChatPage';
 import { Litigation } from './screens/Litigation';
-import { ConflictCheck } from './screens/ConflictCheck';
-import { ClientPortal } from './screens/ClientPortal';
 import { ESign } from './screens/ESign';
 import { Matters } from './screens/Practice';
 import { CalendarTasks } from './screens/practice/CalendarTasks/CalendarTasks';
-import { ClauseLib, LegalSearch, Counterparty, Team, Batch } from './screens/Knowledge';
+import { Team, Batch } from './screens/Knowledge';
+import { LegislationLibrary } from './screens/legislation/LegislationLibrary';
+import { AccessControl } from './screens/permissions/AccessControl';
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": "#cf2230",
@@ -51,19 +51,34 @@ const PAGE_TITLES = {
   builder: 'builderTitle', copilot: 'copilotTitle', library: 'libTitle', batch: 'batchTitle',
   matters: 'mattersTitle', calendar: 'calendarTitle',
   litigation: 'litTitle',
-  clauses: 'clauseLibTitle', legal: 'legalTitle', counterparty: 'cpTitle',
-  clients: 'clientsTitle', templates: 'templatesTitle', team: 'teamTitle',
-  esign: 'esignTitle', conflict: 'conflictTitle', portal: 'portalTitle',
+  legal: 'legalTitle',
+  team: 'teamTitle', access: 'accessTitle',
+  esign: 'esignTitle',
   lawyer: 'lawTitle',
 };
 
-const DEPRECATED_ROUTES = new Set(['tasks', 'billing', 'review']);
+// Stale routes from earlier nav refactors. On boot we silently bounce them
+// instead of rendering nothing. `clauses` / `counterparty` had real screens
+// in the old Knowledge nav and any deep link should now land on the unified
+// Legislation library; the rest go to the dashboard.
+const DEPRECATED_ROUTES = new Map([
+  ['tasks', 'calendar'],
+  ['billing', 'dashboard'],
+  ['review', 'dashboard'],
+  ['clauses', 'legal'],
+  ['counterparty', 'legal'],
+  ['clients', 'dashboard'],
+  ['conflict', 'access'],
+  ['portal', 'dashboard'],
+  ['templates', 'dashboard'],
+]);
 
 export default function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [route, setRoute] = useState(() => {
     const stored = localStorage.getItem('lx_route');
-    if (!stored || DEPRECATED_ROUTES.has(stored)) return 'dashboard';
+    if (!stored) return 'dashboard';
+    if (DEPRECATED_ROUTES.has(stored)) return DEPRECATED_ROUTES.get(stored);
     return stored;
   });
   const [lang, setLang] = useState(() => {
@@ -384,14 +399,9 @@ export default function App() {
   else if (route === 'matters') body = <Matters t={L} setRoute={setRoute} />;
   else if (route === 'litigation') body = <Litigation t={L} setRoute={setRoute} />;
   else if (route === 'esign') body = <ESign t={L} />;
-  else if (route === 'conflict') body = <ConflictCheck t={L} />;
-  else if (route === 'portal') body = <ClientPortal t={L} />;
-  else if (route === 'clauses') body = <ClauseLib t={L} />;
-  else if (route === 'legal') body = <LegalSearch t={L} />;
-  else if (route === 'counterparty') body = <Counterparty t={L} />;
+  else if (route === 'legal') body = <LegislationLibrary t={L} />;
   else if (route === 'team') body = <Team t={L} user={user} />;
-  else if (route === 'clients') body = <Clients t={L} setRoute={setRoute} />;
-  else if (route === 'templates') body = <Templates t={L} />;
+  else if (route === 'access') body = <AccessControl t={L} user={user} />;
   else if (route === 'calendar') body = <CalendarTasks t={L} />;
 
   if (!user) {

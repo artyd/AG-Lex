@@ -10,6 +10,7 @@ import { initialsOf, hueOf } from '../lib/auth';
 import { api, ApiError } from '../lib/api';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
+import { useTeamApi } from './permissions/useTeamApi';
 
 // localStorage-backed state for the team workspace (persists edits)
 function lxLS(key, fallback) {
@@ -357,156 +358,20 @@ function InviteModal({ open, onClose, onAdd, t }) {
 
 function Team({ t, user }) {
   const [tab, setTab] = useState('members');
-  // Initialise from the prototype data so the screen renders something before
-  // the first fetch and during pure-UI dev when the FastAPI backend is down.
-  const [members, setMembers] = useState(LX.team);
-  const [perms, setPerms] = useState(LX.permissions);
-  const [auditLog, setAuditLog] = useState(LX.audit);
   const [inviteOpen, setInviteOpen] = useState(false);
   const statusTone = { online: 'var(--risk-low)', away: 'var(--risk-med)', offline: 'var(--text-3)' };
-
-  // Hydrate from the API on mount. 401/403 falls back to LX seeds quietly.
-  useEffect(() => {
-    let cancelled = false;
-    Promise.allSettled([
-      api.request('/api/team/members'),
-      api.request('/api/team/permissions'),
-      api.request('/api/team/audit').catch((e) => {
-        // /audit needs manage; lawyer/paralegal etc. get 403. Keep going.
-        if (e instanceof ApiError && e.status === 403) return [];
-        throw e;
-      }),
-    ]).then(([m, p, a]) => {
-      if (cancelled) return;
-      if (m.status === 'fulfilled') setMembers(decorateMembers(m.value));
-      if (p.status === 'fulfilled') setPerms(p.value);
-      if (a.status === 'fulfilled') setAuditLog(decorateAudit(a.value));
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  const myRole = (user && user.role) || 'lawyer';
-  const manageRow = perms.find(p => p.key === 'manage');
-  const canManage = manageRow ? !!manageRow[myRole] : (myRole === 'partner' || myRole === 'admin');
   const roles = ['partner', 'senior', 'lawyer', 'paralegal', 'admin'];
 
-  // Helpers that decorate API rows with avatar/colour fields the UI expects
-  // but the backend doesn't store. Keeps presentation derived, not persisted.
-  function decorateMembers(rows) {
-    return rows.map(u => ({
-      ...u,
-      initials: initialsOf(u.name),
-      color: hueOf(u.email || u.name) % 360,
-      status: 'online',  // presence isn't tracked yet; show as online for now
-    }));
-  }
-  function decorateAudit(rows) {
-    return rows.map(a => ({
-      id: a.id,
-      ts: formatAuditTs(a.ts),
-      action: auditActionLabel(t, a.action),
-      target: a.target,
-      whoName: a.actor_name,
-      whoColor: hueOf(a.actor_name || '') % 360,
-    }));
-  }
+  // Shared with AccessControl so role edits here show up on /access without
+  // a refresh (and vice versa).
+  const {
+    members, auditLog, canManage,
+    changeRole, removeMember, addMember,
+  } = useTeamApi(t, user);
 
-  // Surface backend errors (403, 409 last-manage, network) as toasts.
-  function reportError(e, fallbackMsg) {
-    if (e instanceof ApiError) {
-      if (e.status === 403) toast(t.teamNoManage || 'Forbidden', 'alert');
-      else if (e.status === 409) toast(e.message || (t.teamPermLock || 'Last manager'), 'alert');
-      else toast(e.message || fallbackMsg, 'alert');
-    } else {
-      toast(fallbackMsg, 'alert');
-    }
-  }
-
-  async function refreshAudit() {
-    try { setAuditLog(decorateAudit(await api.request('/api/team/audit'))); }
-    catch (_e) { /* tolerated — non-manage users won't see audit */ }
-  }
-
-  const changeRole = async (id, role) => {
-    const m = members.find(x => x.id === id);
-    if (!m || m.role === role) return;
-    const prev = members;
-    setMembers(ms => ms.map(x => x.id === id ? { ...x, role } : x));
-    try {
-      await api.request(`/api/team/members/${id}`, { method: 'PATCH', body: { role } });
-      toast(t.teamRoleSaved, 'check');
-      refreshAudit();
-    } catch (e) {
-      setMembers(prev);
-      reportError(e, t.teamRoleSaved);
-    }
-  };
-
-  const removeMember = async (id) => {
-    const m = members.find(x => x.id === id);
-    if (!m) return;
-    if (!window.confirm(t.teamConfirmRemove + '\n' + m.name)) return;
-    const prev = members;
-    setMembers(ms => ms.filter(x => x.id !== id));
-    try {
-      await api.request(`/api/team/members/${id}`, { method: 'DELETE' });
-      toast(t.teamRemoved, 'x');
-      refreshAudit();
-    } catch (e) {
-      setMembers(prev);
-      reportError(e, t.teamRemoved);
-    }
-  };
-
-  const addMember = async (d) => {
-    try {
-      const created = await api.request('/api/team/members', {
-        method: 'POST',
-        body: {
-          name: d.name.trim(),
-          email: d.email.trim().toLowerCase(),
-          password: d.password,
-          role: d.role,
-        },
-      });
-      setMembers(ms => [...ms, ...decorateMembers([created])]);
-      toast(t.teamInvited, 'plus');
-      setInviteOpen(false);
-      refreshAudit();
-    } catch (e) {
-      reportError(e, t.teamInvited);
-    }
-  };
-
-  const togglePerm = async (i, role) => {
-    const row = perms[i];
-    const cur = !!row[role];
-    // Optimistic update so the UI feels snappy; revert on server reject.
-    const prev = perms;
-    setPerms(ps => ps.map((p, idx) => idx === i ? { ...p, [role]: !cur } : p));
-    try {
-      const fresh = await api.request('/api/team/permissions', {
-        method: 'PATCH',
-        body: { capability: row.key, role, allowed: !cur },
-      });
-      setPerms(fresh);
-      toast(t.teamPermSaved, 'check');
-      refreshAudit();
-    } catch (e) {
-      setPerms(prev);
-      reportError(e, t.teamPermSaved);
-    }
-  };
-
-  const resetPerms = async () => {
-    try {
-      const fresh = await api.request('/api/team/permissions/reset', { method: 'POST' });
-      setPerms(fresh);
-      toast(t.teamPermSaved, 'check');
-      refreshAudit();
-    } catch (e) {
-      reportError(e, t.teamPermSaved);
-    }
+  const handleAdd = async (d) => {
+    const ok = await addMember(d);
+    if (ok) setInviteOpen(false);
   };
 
   return (
@@ -514,12 +379,11 @@ function Team({ t, user }) {
       <div style={{ color: 'var(--text-2)', fontSize: 14, marginBottom: 'var(--s4)' }}>{t.teamManageHint}</div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 'var(--s5)' }}>
         <div className="seg">
-          {[['members', t.tabMembers], ['perms', t.tabPerms], ['audit', t.tabAudit]].map(([id, l]) => (
+          {[['members', t.tabMembers], ['audit', t.tabAudit]].map(([id, l]) => (
             <button key={id} className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>{l}</button>
           ))}
         </div>
         {canManage && tab === 'members' ? <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setInviteOpen(true)}><Icon name="plus" size={15} /> {t.invite}</button> : null}
-        {canManage && tab === 'perms' ? <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={resetPerms}><Icon name="settings" size={15} /> {t.teamResetPerms}</button> : null}
       </div>
 
       {!canManage ? (
@@ -558,34 +422,6 @@ function Team({ t, user }) {
         </div>
       )}
 
-      {tab === 'perms' && (
-        <div className="card view-enter" style={{ overflow: 'auto' }}>
-          <table className="perm-table">
-            <thead>
-              <tr><th style={{ textAlign: 'left' }}>{t.capability}</th>{roles.map(r => <th key={r}>{roleLabel(t, r)}</th>)}</tr>
-            </thead>
-            <tbody>
-              {perms.map((p, i) => (
-                <tr key={p.key || i}>
-                  <td style={{ textAlign: 'left', fontWeight: 600 }}>{p.cap}</td>
-                  {roles.map(r => (
-                    <td key={r}>
-                      {canManage
-                        ? <button className={'perm-toggle' + (p[r] ? ' on' : '')} onClick={() => togglePerm(i, r)} aria-label={p.cap + ' · ' + roleLabel(t, r)}>
-                            {p[r] ? <Icon name="check" size={13} stroke={3} /> : null}
-                          </button>
-                        : (p[r]
-                            ? <span className="perm-yes"><Icon name="check" size={13} stroke={3} /></span>
-                            : <span className="perm-no">—</span>)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
       {tab === 'audit' && (
         <div className="card view-enter" style={{ overflow: 'hidden' }}>
           <table className="lib-table">
@@ -608,7 +444,7 @@ function Team({ t, user }) {
         </div>
       )}
 
-      <InviteModal open={inviteOpen} onClose={() => setInviteOpen(false)} onAdd={addMember} t={t} />
+      <InviteModal open={inviteOpen} onClose={() => setInviteOpen(false)} onAdd={handleAdd} t={t} />
     </div></div>
   );
 }
@@ -677,4 +513,7 @@ function Batch({ t, setRoute }) {
   );
 }
 
-export { ClauseLib, LegalSearch, Counterparty, Team, Batch };
+// DEPRECATED — ClauseLib, LegalSearch, Counterparty removed from navigation
+// per refactor 2026-06. Legislation now lives in screens/legislation/.
+export { Team, Batch };
+// export { ClauseLib, LegalSearch, Counterparty };
