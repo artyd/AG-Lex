@@ -83,7 +83,7 @@ export function ChatPage({ t, setRoute, lang: _lang }) {
   }, [drawerOpen]);
 
   return (
-    <div className={'page cop-page lc-page cl-page' + (collapsed && !isNarrow ? ' cl-page-collapsed' : '')}>
+    <div className={'page cl-page' + (collapsed && !isNarrow ? ' cl-page-collapsed' : '')}>
       {!isNarrow ? (
         <ChatSidebar
           sessions={sessions}

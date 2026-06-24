@@ -5,28 +5,39 @@
    ChatWindow for the message thread itself.
    ============================================================ */
 
+/* Explicit flex-row beats any inherited .cop-page column rule and avoids
+   the grid-vs-flex cascade fight that was stacking the sidebar above the
+   window. The .page class is kept on the wrapper so the page integrates
+   into App.jsx's main column (flex: 1), but everything else is owned by
+   .cl-page directly — no .cop-page / .lc-page sharing. */
 .cl-page {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   height: 100%;
   min-height: 0;
+  width: 100%;
   overflow: hidden;
+  padding: 0;
   background: var(--bg, var(--surface-2));
 }
 
-.cl-page-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
-
 /* --- Sidebar shell --- */
 .cl-sidebar {
+  flex: 0 0 280px;
+  width: 280px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
   border-right: 1px solid var(--border);
   background: var(--surface);
   overflow: hidden;
+  transition: flex-basis 200ms ease, width 200ms ease;
 }
 
 .cl-sidebar-collapsed {
+  flex: 0 0 56px;
   width: 56px;
   align-items: center;
   padding: var(--s3) 0;
@@ -235,10 +246,12 @@
 
 /* --- Window --- */
 .cl-window {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   position: relative;
   background: var(--surface-2);
 }
@@ -323,7 +336,9 @@
 }
 
 @media (max-width: 767px) {
-  .cl-page, .cl-page-collapsed { grid-template-columns: minmax(0, 1fr); }
+  /* On mobile the sidebar isn't rendered as a sibling (ChatPage hides it
+     behind `!isNarrow`) — the drawer overlay is position:fixed and lives
+     outside the row. The window naturally takes 100% width. */
   .cl-inner { padding: var(--s4) var(--s3); }
   .cl-window-menu { top: var(--s2); left: var(--s2); }
 }
