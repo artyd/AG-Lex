@@ -5,20 +5,22 @@
    ChatWindow for the message thread itself.
    ============================================================ */
 
-/* Explicit flex-row beats any inherited .cop-page column rule and avoids
-   the grid-vs-flex cascade fight that was stacking the sidebar above the
-   window. The .page class is kept on the wrapper so the page integrates
-   into App.jsx's main column (flex: 1), but everything else is owned by
-   .cl-page directly — no .cop-page / .lc-page sharing. */
+/* Owns its own integration into App.jsx's .main column (flex:1) so it
+   doesn't share .page (which has padding:var(--s8) and overflow-y:auto)
+   nor .cop-page (which forces column flow). The result: chat fills the
+   entire space under the topbar, edge-to-edge, with no surrounding gap. */
 .cl-page {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  height: 100%;
-  min-height: 0;
   width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   padding: 0;
+  margin: 0;
   background: var(--bg, var(--surface-2));
 }
 
