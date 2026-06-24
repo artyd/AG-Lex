@@ -72,7 +72,25 @@ curl -f http://localhost:8002/api/health
 ```
 
 After that, every push to `main` triggers the workflow and the server
-self-updates. If a deploy fails, SSH in and inspect:
+self-updates.
+
+### Ownership note
+
+If the repo was cloned by a different user than the one the workflow SSHs in
+as (common: `git clone` ran as `root`, deploy uses a `deploy` user), Git
+refuses to `git pull` with *"fatal: detected dubious ownership in repository
+at '/opt/aglex'"*. The workflow already runs
+`git config --global --add safe.directory /opt/aglex` on every deploy, so
+this is self-healing. To remove the warning permanently, chown the tree to
+the deploy user once:
+
+```bash
+sudo chown -R "$DEPLOY_USER":"$DEPLOY_USER" /opt/aglex
+```
+
+### Diagnostics
+
+If a deploy fails, SSH in and inspect:
 
 ```bash
 cd /opt/aglex
