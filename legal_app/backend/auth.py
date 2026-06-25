@@ -46,6 +46,14 @@ TEST_USER_PASSWORD = "test1234"  # nosec — demo seed, see Phase 2.1 doc
 TEST_USER_NAME = "Тестовий Користувач"
 TEST_USER_ROLE = "partner"
 
+# Production-side seeded account for Вікторія Верещагіна (full partner access,
+# but her personal data — AI chat sessions, contracts she uploads, calendar
+# items she creates — starts empty so she lands on a clean state).
+VIKTORIA_USER_EMAIL = "viktoria@aglex.ua"
+VIKTORIA_USER_PASSWORD = "viktoria2026"  # nosec — handover credential, rotate after first login
+VIKTORIA_USER_NAME = "Вікторія Верещагіна"
+VIKTORIA_USER_ROLE = "partner"
+
 
 Role = Literal["partner", "senior", "lawyer", "paralegal", "admin"]
 
@@ -202,6 +210,26 @@ def seed_test_user(conn: sqlite3.Connection) -> None:
         name=TEST_USER_NAME,
         role=TEST_USER_ROLE,
         password=TEST_USER_PASSWORD,
+    )
+
+
+def seed_viktoria_user(conn: sqlite3.Connection) -> None:
+    """Provision the `viktoria@aglex.ua` partner account if missing.
+
+    Same role + capabilities as the test partner; the workspace data (matters,
+    tasks, codex articles, etc.) is global so she sees the shared content, but
+    her per-user state (AI chat sessions, uploaded contracts, calendar items
+    she creates) starts empty. Idempotent — running on every boot is a no-op
+    once the row exists.
+    """
+    if get_user_by_email(conn, VIKTORIA_USER_EMAIL):
+        return
+    create_user(
+        conn,
+        email=VIKTORIA_USER_EMAIL,
+        name=VIKTORIA_USER_NAME,
+        role=VIKTORIA_USER_ROLE,
+        password=VIKTORIA_USER_PASSWORD,
     )
 
 
