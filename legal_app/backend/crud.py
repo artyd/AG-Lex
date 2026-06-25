@@ -194,6 +194,26 @@ def upsert_many(conn: sqlite3.Connection, entity: Entity, rows: Iterable[dict]) 
 # Router factory
 # ---------------------------------------------------------------------------
 
+def _is_seed_pk(pk_value: Any) -> bool:
+    """Demo rows seeded by `seed_demo.py` use short stable IDs without dashes
+    (e.g. 'm1', 'tk0', 'cl1', 'inv2'). CRUD-created rows always carry an
+    `id_prefix` that ends in '-' followed by a UUID slice (e.g. 'm-a3c12fe'),
+    so the dash heuristic cleanly separates seed content from user-created
+    content without touching the schema.
+    """
+    return isinstance(pk_value, str) and "-" not in pk_value
+
+
+def _account_hides_demo(user: dict | None) -> bool:
+    """Per-account toggle: certain partner accounts land on a clean workspace
+    instead of inheriting the prototype's demo matters/tasks/clients/etc."""
+    # Importing at call time avoids a circular `crud → auth → crud` chain.
+    from .auth import VIKTORIA_USER_EMAIL
+    if not user:
+        return False
+    return user.get("email") == VIKTORIA_USER_EMAIL
+
+
 def build_router(
     entity: Entity,
     *,
@@ -213,12 +233,26 @@ def build_router(
     read_deps = [Depends(require(read_capability))] if read_capability else [Depends(current_user)]
     write_deps = [Depends(require(write_capability))] if write_capability else [Depends(current_user)]
 
+    pk_wire = entity.wire_field(entity.pk)
+
     @router.get("", dependencies=read_deps)
-    def list_(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
-        return list_rows(conn, entity)
+    def list_(
+        user: dict = Depends(current_user),
+        conn: sqlite3.Connection = Depends(get_db),
+    ) -> list[dict]:
+        rows = list_rows(conn, entity)
+        if _account_hides_demo(user):
+            rows = [r for r in rows if not _is_seed_pk(r.get(pk_wire))]
+        return rows
 
     @router.get("/{pk}", dependencies=read_deps)
-    def get_one(pk: str, conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    def get_one(
+        pk: str,
+        user: dict = Depends(current_user),
+        conn: sqlite3.Connection = Depends(get_db),
+    ) -> dict:
+        if _account_hides_demo(user) and _is_seed_pk(pk):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"{entity.table[:-1]} not found")
         row = get_row(conn, entity, pk)
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"{entity.table[:-1]} not found")
