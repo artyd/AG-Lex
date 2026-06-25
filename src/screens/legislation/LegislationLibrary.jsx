@@ -95,7 +95,7 @@ export function LegislationLibrary({ t }) {
   // Mobile: render only the current step + a back-chevron header.
   if (isNarrow) {
     return (
-      <div className="page lex-page lex-page-mobile">
+      <div className="lex-page lex-page-mobile">
         <header className="lex-mobile-head">
           {mobileView !== 'sources' ? (
             <button
@@ -184,7 +184,7 @@ export function LegislationLibrary({ t }) {
 
   // Desktop: three columns side-by-side.
   return (
-    <div className="page lex-page">
+    <div className="lex-page">
       <header className="lex-head">
         <div className="lex-head-title">
           <Icon name="library" size={18} />
