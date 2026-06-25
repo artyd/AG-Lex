@@ -10,180 +10,13 @@ import { api } from '../lib/api';
 import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
-import { buildHighlightParts, groupFindingsByClause } from '../lib/findingHighlight';
 import { AnalysisView } from './analysis/AnalysisView';
 import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 
-// Decode the upload's base64 PDF to a Uint8Array PDF.js can consume directly.
-function decodePdfB64(b64) {
-  if (!b64 || typeof b64 !== 'string') return null;
-  try {
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  } catch (_e) {
-    return null;
-  }
-}
-
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
 };
-
-/* ---------- Tiny Markdown renderer for uploaded contracts ----------
-   Covers what /api/upload actually emits today: paragraphs,
-   pipe-tables, **bold**, *italic*. Deliberately minimal — no extra deps,
-   no untrusted-HTML execution; <strong>/<em> only. Task 4 will overlay
-   <mark> highlights on top of the same node tree. */
-function MdInline({ text }) {
-  if (!text) return null;
-  const out = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
-  let last = 0;
-  let m;
-  let key = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith('**')) out.push(<strong key={'b' + key++}>{tok.slice(2, -2)}</strong>);
-    else out.push(<em key={'i' + key++}>{tok.slice(1, -1)}</em>);
-    last = m.index + tok.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-/* Paragraph with inline finding highlights. Findings whose suggest.from
-   matches this paragraph get wrapped in <mark>; the rest get returned via
-   the consumed Set so the caller can render heading fallback chips. */
-function HighlightedParagraph({ text, findings, hl, consumed }) {
-  const { parts, matched } = useMemo(() => buildHighlightParts(text, findings), [text, findings]);
-  if (consumed && matched && matched.size) {
-    for (const id of matched) consumed.add(id);
-  }
-  return (
-    <p className="doc-p">
-      {parts.map((p, i) => {
-        if (typeof p === 'string') return <span key={i}><MdInline text={p} /></span>;
-        const f = p.f;
-        const isActive = hl && hl.active === f.id;
-        const isHovered = hl && hl.hovered === f.id;
-        return (
-          <mark key={i}
-            ref={el => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
-            className={'hl hl-' + f.level
-              + (isActive ? ' hl-active' : '')
-              + (isHovered ? ' hl-hover' : '')}
-            onMouseEnter={(e) => { hl && hl.onHover && hl.onHover(f, e); hl && hl.setHovered && hl.setHovered(f.id); }}
-            onMouseMove={(e) => hl && hl.onHover && hl.onHover(f, e)}
-            onMouseLeave={() => { hl && hl.onHover && hl.onHover(null); hl && hl.setHovered && hl.setHovered(null); }}
-            onClick={() => hl && hl.onPick && hl.onPick(f.id)}
-            onDoubleClick={() => hl && hl.onAsk && hl.onAsk(f.id)}>
-            {p.matched}
-          </mark>
-        );
-      })}
-    </p>
-  );
-}
-
-function MdBlock({ text, findings, hl, consumed }) {
-  if (!text) return null;
-  const lines = text.split(/\r?\n/);
-  const blocks = [];
-  let buf = [];
-  const flush = () => { if (buf.length) { blocks.push(buf); buf = []; } };
-  for (const ln of lines) {
-    if (ln.trim() === '') flush();
-    else buf.push(ln);
-  }
-  flush();
-
-  const splitRow = (l) => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
-  const isDivider = (l) => /^\s*\|?[-: \|]+\|?\s*$/.test(l);
-
-  return blocks.map((b, idx) => {
-    // Pipe-table detection: ≥2 lines, all start with |, contains divider row.
-    const pipey = b.length >= 2 && b.every(l => l.trim().startsWith('|'));
-    if (pipey) {
-      const divIdx = b.findIndex(isDivider);
-      if (divIdx > 0) {
-        const head = splitRow(b[divIdx - 1]);
-        const body = b.slice(divIdx + 1).map(splitRow);
-        return (
-          <table className="doc-table" key={idx}>
-            <thead><tr>{head.map((c, k) => <th key={k}><MdInline text={c} /></th>)}</tr></thead>
-            <tbody>{body.map((r, k) => (
-              <tr key={k}>{r.map((c, j) => <td key={j}><MdInline text={c} /></td>)}</tr>
-            ))}</tbody>
-          </table>
-        );
-      }
-    }
-    // Paragraph (markdown soft-wrap → single line).
-    const paraText = b.join(' ');
-    if (findings && findings.length) {
-      return <HighlightedParagraph key={idx} text={paraText} findings={findings} hl={hl} consumed={consumed} />;
-    }
-    return <p className="doc-p" key={idx}><MdInline text={paraText} /></p>;
-  });
-}
-
-/* ---------- Real (uploaded) document renderer ----------
-   Mirrors the visual shape of <ContractDoc> (doc-head / doc-clause /
-   doc-clause-title / doc-p) so styling stays consistent, but reads
-   from /api/upload's `sections` shape: {number, title, text}. */
-function ContractDocReal({ filename, sections, findings, hl }) {
-  // Group findings by the clause number they refer to so each section only
-  // receives the findings it owns. Findings without a recognizable number go
-  // into "" and we surface them as preamble-level chips.
-  const groups = useMemo(() => groupFindingsByClause(findings || []), [findings]);
-  return (
-    <div className="doc">
-      <div className="doc-head">
-        <h1 className="doc-title">{filename || 'Договір'}</h1>
-      </div>
-      {(sections || []).map((s, i) => {
-        const head = [s.number, s.title].filter(Boolean).join(' ');
-        const numKey = s.number ? String(s.number).match(/\d+(?:\.\d+)*/)?.[0] || '' : '';
-        const sectionFindings = groups.get(numKey) || [];
-        const anchor = s.number ? `clause-${String(s.number).replace(/\s+/g, '')}` : `clause-i-${i}`;
-        // Track which findings actually matched in the body — anything left
-        // gets rendered as a heading chip so the panel ↔ document link still
-        // holds even when the model's quote couldn't be located verbatim.
-        const consumed = new Set();
-        const body = <MdBlock text={s.text} findings={sectionFindings} hl={hl} consumed={consumed} />;
-        const fallback = sectionFindings.filter(f => !consumed.has(f.id));
-        return (
-          <section className="doc-clause" id={anchor} key={i}>
-            {head ? (
-              <h3 className="doc-clause-title">
-                {head}
-                {fallback.map((f, k) => {
-                  const isActive = hl && hl.active === f.id;
-                  return (
-                    <mark key={k}
-                      ref={el => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
-                      className={'hl hl-fallback hl-' + f.level + (isActive ? ' hl-active' : '')}
-                      title={f.title}
-                      onMouseEnter={(e) => { hl && hl.onHover && hl.onHover(f, e); hl && hl.setHovered && hl.setHovered(f.id); }}
-                      onMouseLeave={() => { hl && hl.onHover && hl.onHover(null); hl && hl.setHovered && hl.setHovered(null); }}
-                      onClick={() => hl && hl.onPick && hl.onPick(f.id)}>
-                      <Icon name="alert" size={11} /> {f.clause}
-                    </mark>
-                  );
-                })}
-              </h3>
-            ) : null}
-            {body}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
 
 /* ---------- Inline highlighted document ---------- */
 function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, onHover, onPick, onAsk, addedClauses, t }) {
@@ -1221,25 +1054,23 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [loadedDoc, setLoadedDoc] = useState(null);
   const effectiveDoc = incoming || loadedDoc;
 
-  // Phase 4.x PR4: PDF view is now the default for any flow that has a
-  // display PDF. Fresh uploads carry the b64 in `incoming.displayPdfB64`;
-  // library re-opens carry a `displayPdfUrl` on `loadedDoc`. Either path
-  // ends up in <AnalysisView/>. DEMO mode (no incoming, no loadedDoc)
-  // keeps using ContractDoc below.
-  const uploadedBytes = useMemo(() => {
-    if (!incoming || !incoming.displayPdfB64) return null;
-    return decodePdfB64(incoming.displayPdfB64);
-  }, [incoming]);
-  const reopenedDisplayUrl = (loadedDoc && loadedDoc.displayPdfUrl) || null;
+  // Phase 5: the PDF viewer was retired — AnalysisView now renders the
+  // analyzer's per-section text via MarkdownDoc. Fresh uploads carry the
+  // sections in `incoming.sections`; library re-opens carry them under
+  // `loadedDoc.sections` (round-tripped through `analysis._doc.sections`).
+  // DEMO mode (no sections) keeps using ContractDoc below.
+  const effectiveSections = (effectiveDoc && Array.isArray(effectiveDoc.sections))
+    ? effectiveDoc.sections
+    : [];
   const docsForView = useMemo(() => {
-    const label = (effectiveDoc && effectiveDoc.filename) || 'Договір';
+    const filename = (effectiveDoc && effectiveDoc.filename) || 'Договір';
     return [{
-      label,
-      displayPdfBytes: uploadedBytes,
-      displayPdfUrl: reopenedDisplayUrl,
+      label: filename,
+      filename,
+      sections: effectiveSections,
     }];
-  }, [effectiveDoc, uploadedBytes, reopenedDisplayUrl]);
-  const usePdfView = Boolean(uploadedBytes || reopenedDisplayUrl);
+  }, [effectiveDoc, effectiveSections]);
+  const useAnalysisView = effectiveSections.length > 0;
 
   // Merged data source: real fields override DEMO when available. PR-2 of
   // analyze-unification: `summary`, `keyData`, `missing` now come from the
@@ -1565,10 +1396,9 @@ function ContractAnalysisSingle({ t, incoming }) {
           </div>
           <div className="panel-wrap panel-loading"><PanelSkeleton /></div>
         </div>
-      ) : usePdfView ? (
-        // Phase 4.x PR4: unified view — pixel-perfect PDF on the left,
-        // AiPanel on the right. AnalysisView owns the bytes fetch +
-        // highlight overlay + 404 fallback banner.
+      ) : useAnalysisView ? (
+        // Phase 5: MarkdownDoc on the left, AiPanel on the right.
+        // AnalysisView owns the text rendering + text-color highlights.
         <AnalysisView
           documents={docsForView}
           findings={data.findings}

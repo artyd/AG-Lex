@@ -33,17 +33,15 @@ test('upload contract → see real analysis with highlights and law chips', asyn
   await expect(analyzeBtn).toBeEnabled({ timeout: 10_000 });
   await analyzeBtn.click();
 
-  // Phase 4.x PR4: contract upload now mounts AnalysisView →
+  // Phase 5: contract upload now mounts AnalysisView →
   //   - .analysis shell + .aipanel-head right panel
-  //   - .pdf-viewer canvas (PdfViewer) for the source document
-  //   - .hl-rect overlay (pdfHighlight anchored mock finding quotes)
+  //   - .md-doc (MarkdownDoc) renders the analyzer's per-section text
+  //   - .md-hl spans color the matched finding fragments inline
   //   - .finding cards with .law-chip on the right side.
   await expect(page.locator('.analysis')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.aipanel-head')).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('.hl-rect').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.md-doc').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.md-hl').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.finding').first()).toBeVisible();
   await expect(page.locator('.finding .law-chip').first()).toBeVisible();
 });
@@ -69,13 +67,11 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await runBtn.click();
   await reconcileResp;
 
-  // Phase 4.x PR4: reconcile result uses AnalysisView too —
-  //   - PdfViewer canvas, .analysis-tabs (contract + handover),
+  // Phase 5: reconcile result uses AnalysisView too —
+  //   - .md-doc (MarkdownDoc) text + .analysis-tabs (contract + handover),
   //   - .finding cards on the right (cmp-find is gone).
   await expect(page.locator('.analysis')).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.locator('.pdf-viewer canvas[data-pdf-canvas]').first(),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.md-doc').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.analysis-tabs')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('.finding').first()).toBeVisible({ timeout: 30_000 });
 });

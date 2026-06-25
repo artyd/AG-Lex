@@ -205,6 +205,45 @@ def _iter_codex_files(paths: Iterable[Path]) -> Iterable[Path]:
             yield p
 
 
+def bootstrap_codex(conn: sqlite3.Connection, source_dir: Path | None = None) -> int:
+    """Auto-seed the codex on first boot when the articles table is empty.
+
+    Called from FastAPI's lifespan: if the volume is fresh (no rows in
+    `articles`), parse every .txt/.md file in `source_dir` (defaults to
+    `legal_app/data/codex_sources/`), embed and insert. Returns the number of
+    rows inserted; 0 means the table already had data or no sources were
+    found. Failures are caller-handled — the lifespan wraps this in try/except
+    so a missing model download doesn't break the API boot.
+    """
+    existing = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    if existing > 0:
+        return 0
+    base = source_dir or CODEX_DIR
+    if not base.exists():
+        print(f"[bootstrap_codex] {base} not found — skipping auto-import.")
+        return 0
+    files = list(_iter_codex_files([base]))
+    if not files:
+        print(f"[bootstrap_codex] {base} is empty — nothing to import.")
+        return 0
+    print(f"[bootstrap_codex] articles table empty — auto-importing {len(files)} codex file(s)…")
+    print(f"[bootstrap_codex] loading embedding model ({get_settings().EMBED_MODEL}) — first run downloads weights…")
+    model = _load_embedder()
+    total_inserted = 0
+    for f in files:
+        src = source_for(f)
+        try:
+            _parsed, inserted = import_file(f, src, conn, model=model)
+        except Exception as e:  # noqa: BLE001 — log and continue with the rest
+            print(f"[bootstrap_codex] {src} ({f.name}): FAILED {e!r}")
+            continue
+        print(f"[bootstrap_codex] {src} ({f.name}): inserted={inserted}")
+        total_inserted += inserted
+    grand = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    print(f"[bootstrap_codex] DONE. inserted={total_inserted} total_in_db={grand}")
+    return total_inserted
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     targets = [Path(a) for a in argv] if argv else [CODEX_DIR]
