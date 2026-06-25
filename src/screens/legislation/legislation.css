@@ -51,6 +51,102 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.lex-head-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  font-feature-settings: 'tnum' 1;
+}
+.lex-head-count-n { color: var(--text); }
+.lex-head-count-sep { color: var(--text-3); }
+.lex-head-count-rag {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lex-head-count-rag::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+/* --- Type filter chips --- */
+.lex-filters {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.lex-filters::-webkit-scrollbar { display: none; }
+.lex-filter {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.lex-filter:hover {
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  color: var(--text);
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+}
+.lex-filter-on {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.lex-filter-on:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.lex-filters-mobile {
+  padding: var(--s3) var(--s4);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* --- RAG indicator on source tile --- */
+.lex-tile-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lex-tile-rag {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 22%, transparent);
+  flex: 0 0 auto;
+}
+.lex-tile-on .lex-tile-rag {
+  background: var(--on-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--on-accent) 30%, transparent);
+}
 .lex-search {
   flex: 0 1 360px;
   display: flex;

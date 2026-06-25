@@ -8,6 +8,7 @@
    ============================================================ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import { typeOf } from './sourceMeta';
 
 const PAGE_SIZE = 50;
 
@@ -19,6 +20,7 @@ export function useLegislation() {
   const [sources, setSources] = useState([]);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   const [selectedSource, setSelectedSource] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [articles, setArticles] = useState([]);
   const [mode, setMode] = useState('list');
@@ -148,6 +150,9 @@ export function useLegislation() {
           || String(a.article_number).trim().endsWith(' ' + target),
         );
         if (hit) {
+          // Clear any active type chip — otherwise the citation can land on
+          // a source the user has filtered out and they see nothing.
+          setTypeFilter('all');
           setSelectedSource(src);
           setQuery('');
           setSelectedArticleId(hit.id);
@@ -165,11 +170,44 @@ export function useLegislation() {
 
   const selectArticle = useCallback((id) => setSelectedArticleId(id), []);
 
+  // Derived: sources visible under the current type filter + aggregate counters.
+  const visibleSources = useMemo(() => (
+    typeFilter === 'all' ? sources : sources.filter(s => typeOf(s.source) === typeFilter)
+  ), [sources, typeFilter]);
+
+  const totalSources = sources.length;
+  const indexedSources = useMemo(() => (
+    sources.filter(s => (s.indexed_count || 0) > 0).length
+  ), [sources]);
+
+  // The set of types actually present in the loaded sources — used by the UI
+  // to render only chips that have content, in a stable order.
+  const availableTypes = useMemo(() => {
+    const seen = new Set(sources.map(s => typeOf(s.source)));
+    return ['all', ...['code', 'eu', 'other'].filter(k => seen.has(k))];
+  }, [sources]);
+
+  // If the active filter hides the current selection, jump to the first
+  // visible source (or clear). Reading-pane state is wiped by the
+  // selectedSource effect already.
+  useEffect(() => {
+    if (typeFilter === 'all') return;
+    if (!selectedSource) return;
+    if (typeOf(selectedSource) === typeFilter) return;
+    setSelectedSource(visibleSources[0]?.source || null);
+  }, [typeFilter, selectedSource, visibleSources]);
+
   return useMemo(() => ({
     sources,
+    visibleSources,
     sourcesLoading,
     selectedSource,
     setSelectedSource,
+    typeFilter,
+    setTypeFilter,
+    availableTypes,
+    totalSources,
+    indexedSources,
     query,
     setQuery,
     articles,
@@ -183,7 +221,8 @@ export function useLegislation() {
     articleLoading,
     selectArticle,
   }), [
-    sources, sourcesLoading, selectedSource, query, articles, mode, total,
+    sources, visibleSources, sourcesLoading, selectedSource, typeFilter,
+    availableTypes, totalSources, indexedSources, query, articles, mode, total,
     listLoading, hasMore, loadMore, selectedArticleId, selectedArticle,
     articleLoading, selectArticle,
   ]);

@@ -408,12 +408,20 @@ def codex_stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
 
 @app.get("/api/codex/sources", dependencies=[Depends(require("view"))])
 def codex_sources(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
-    """Thin wrapper over stats.by_source — what the library sidebar needs."""
+    """Library sidebar payload: one row per codex source, with article totals
+    and the share that already has embeddings (i.e. participates in RAG)."""
     rows = conn.execute(
-        "SELECT source, COUNT(*) FROM articles "
-        "GROUP BY source ORDER BY COUNT(*) DESC, source"
+        "SELECT source, "
+        "       COUNT(*) AS total, "
+        "       SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END) AS indexed "
+        "FROM articles "
+        "GROUP BY source "
+        "ORDER BY COUNT(*) DESC, source"
     ).fetchall()
-    return [{"source": r[0], "count": r[1]} for r in rows]
+    return [
+        {"source": r[0], "count": r[1], "indexed_count": int(r[2] or 0)}
+        for r in rows
+    ]
 
 
 @app.get("/api/codex/articles", dependencies=[Depends(require("view"))])
