@@ -97,6 +97,7 @@ async def lifespan(app: FastAPI):
         migrate_reconciliations_display_pdf(conn)
         migrate_contracts_display_pdf(conn)
         auth_module.seed_test_user(conn)
+        auth_module.seed_viktoria_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
     finally:
