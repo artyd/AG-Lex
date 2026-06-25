@@ -99,6 +99,16 @@ async def lifespan(app: FastAPI):
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
+        # Fresh deploys (empty aglex_db volume) need the codex articles loaded
+        # or the «Законодавство» tab + RAG retrieval both come up empty. We
+        # auto-seed from data/codex_sources/ when articles is empty. Wrapped
+        # in try/except so a missing sentence-transformers download (e.g.
+        # offline build) doesn't block the API from coming up.
+        try:
+            from scripts.import_codex import bootstrap_codex
+            bootstrap_codex(conn)
+        except Exception as _e:  # noqa: BLE001
+            print(f"[lifespan] codex bootstrap skipped: {_e!r}")
     finally:
         conn.close()
     yield

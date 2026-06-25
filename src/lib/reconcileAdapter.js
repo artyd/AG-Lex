@@ -111,10 +111,79 @@ export function reconcileToScore(run) {
   };
 }
 
+/** Join one `uaP`/`enP` token stream into plain paragraph text. Handles both
+ *  the flat shape `[{t, cat, st}, ...]` the analyzer actually emits and the
+ *  nested-paragraph shape `[[token, ' tail'], ...]` the mock fixtures use,
+ *  so MarkdownDoc reads the same text regardless of source. */
+function _joinParts(parts) {
+  if (!Array.isArray(parts)) return '';
+  const out = [];
+  for (const item of parts) {
+    if (typeof item === 'string') {
+      const s = item.trim();
+      if (s) out.push(s);
+    } else if (item && typeof item.t === 'string') {
+      const s = item.t.trim();
+      if (s) out.push(s);
+    } else if (Array.isArray(item)) {
+      const para = item.map((x) =>
+        typeof x === 'string' ? x : (x && typeof x.t === 'string' ? x.t : ''),
+      ).join('');
+      const s = para.trim();
+      if (s) out.push(s);
+    }
+  }
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Convert `docs.contract.sections` → MarkdownDoc's `[{number, title, text}]`.
+ *  Each section concatenates the Ukrainian then the English paragraph stream;
+ *  empty sections are skipped so the reader doesn't render blank shells. */
+export function reconcileToSections(docs) {
+  if (!docs || !docs.contract) return [];
+  const list = Array.isArray(docs.contract.sections) ? docs.contract.sections : [];
+  const out = [];
+  for (const s of list) {
+    if (!s) continue;
+    const ua = _joinParts(s.uaP);
+    const en = _joinParts(s.enP);
+    const text = [ua, en].filter(Boolean).join('\n\n');
+    if (!text) continue;
+    out.push({
+      number: s.n || '',
+      title: s.ua || s.en || '',
+      text,
+    });
+  }
+  return out;
+}
+
+/** Flatten `docs.handover` (table-shaped, not section-shaped) into one
+ *  readable preamble + a bullet list of rows so MarkdownDoc has something
+ *  to render. The original structure (appendix/title/sub + rows[]) isn't
+ *  natively prose — we present it as a single "summary" section. */
+export function handoverToSections(docs) {
+  if (!docs || !docs.handover) return [];
+  const h = docs.handover;
+  const head = [h.appendix, h.title, h.sub, h.section].filter(Boolean).join(' · ');
+  const rows = Array.isArray(h.rows) ? h.rows : [];
+  const lines = rows
+    .map((r) => {
+      const tail = [r.label, r.value, r.note].filter(Boolean).join(' — ');
+      const num = r.n ? `${r.n}. ` : '';
+      return tail ? `- ${num}${tail}` : '';
+    })
+    .filter(Boolean);
+  const text = [head, lines.join('\n'), h.footnote].filter(Boolean).join('\n\n');
+  if (!text) return [];
+  return [{ number: '', title: h.title || 'Передача справ', text }];
+}
+
 /** Full bundle AnalysisView consumes: findings + comparison + score +
  *  legalBasis + warnings + documents (two-tab strip for the reconcile
  *  case). Empty legalBasis since /api/reconcile doesn't emit law refs. */
 export function reconcileToAnalysisProps(run, t = {}) {
+  const docs = (run && run.docs) || null;
   return {
     findings: reconcileToFindings(run),
     comparison: reconcileToComparison(run),
@@ -124,11 +193,13 @@ export function reconcileToAnalysisProps(run, t = {}) {
     documents: [
       {
         label: (run && run.contractFile) || t.cmpSlotContract || 'Договір',
-        displayPdfUrl: (run && run.displayPdfUrl) || null,
+        filename: (run && run.contractFile) || t.cmpSlotContract || 'Договір',
+        sections: reconcileToSections(docs),
       },
       {
         label: (run && run.handoverFile) || t.cmpSlotHandover || 'Передача справ',
-        displayPdfUrl: (run && run.handoverDisplayPdfUrl) || null,
+        filename: (run && run.handoverFile) || t.cmpSlotHandover || 'Передача справ',
+        sections: handoverToSections(docs),
       },
     ],
   };

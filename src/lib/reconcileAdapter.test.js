@@ -132,12 +132,27 @@ describe('reconcileToScore', () => {
 });
 
 describe('reconcileToAnalysisProps', () => {
-  it('emits two documents (contract + handover) with both display URLs', () => {
+  it('emits two documents (contract + handover) with derived sections', () => {
     const run = {
       contractFile: 'contract.docx',
       handoverFile: 'handover.xlsx',
-      displayPdfUrl: '/api/reconciliations/r-1/contract-display.pdf',
-      handoverDisplayPdfUrl: '/api/reconciliations/r-1/handover-display.pdf',
+      docs: {
+        contract: {
+          sections: [
+            { n: '1', ua: 'Предмет', en: 'Subject',
+              uaP: [{ t: 'Підлягає постачанню субстанції X у кількості 25 кг.', cat: 'plain', st: 'ok' }],
+              enP: [{ t: 'Substance X delivered, qty 25 kg.', cat: 'plain', st: 'ok' }] },
+          ],
+        },
+        handover: {
+          appendix: 'Додаток №1',
+          title: 'Лист погодження',
+          rows: [
+            { n: '1', label: 'Інкотермс', value: 'CIF Гданськ' },
+            { n: '2', label: 'Оплата',    value: '30/70' },
+          ],
+        },
+      },
       findings: [],
       rows: [],
       mustCount: 0,
@@ -146,10 +161,20 @@ describe('reconcileToAnalysisProps', () => {
     const props = reconcileToAnalysisProps(run);
     expect(props.documents).toHaveLength(2);
     expect(props.documents[0].label).toBe('contract.docx');
+    expect(props.documents[0].filename).toBe('contract.docx');
+    expect(props.documents[0].sections).toHaveLength(1);
+    expect(props.documents[0].sections[0].number).toBe('1');
+    expect(props.documents[0].sections[0].text).toContain('25 кг');
     expect(props.documents[1].label).toBe('handover.xlsx');
-    expect(props.documents[0].displayPdfUrl).toMatch(/contract-display\.pdf$/);
-    expect(props.documents[1].displayPdfUrl).toMatch(/handover-display\.pdf$/);
+    expect(props.documents[1].sections[0].text).toContain('Інкотермс');
     expect(props.legalBasis).toEqual([]);
     expect(props.warnings).toEqual([]);
+  });
+
+  it('returns empty sections when docs payload is absent', () => {
+    const run = { contractFile: 'c.docx', handoverFile: 'h.xlsx', findings: [], rows: [], mustCount: 0, shouldCount: 0 };
+    const props = reconcileToAnalysisProps(run);
+    expect(props.documents[0].sections).toEqual([]);
+    expect(props.documents[1].sections).toEqual([]);
   });
 });
