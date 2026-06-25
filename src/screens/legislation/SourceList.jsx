@@ -24,7 +24,7 @@ function meta(source) {
   return SOURCE_META[source] || { title: source, icon: 'book' };
 }
 
-export function SourceList({ sources, selected, onSelect, loading, t }) {
+export function SourceList({ sources, selected, onSelect, loading, t, emptyMessage }) {
   if (loading) {
     return (
       <aside className="lex-sources" aria-label={t.legalSources || 'Джерела'}>
@@ -35,7 +35,7 @@ export function SourceList({ sources, selected, onSelect, loading, t }) {
   if (!sources.length) {
     return (
       <aside className="lex-sources" aria-label={t.legalSources || 'Джерела'}>
-        <div className="lex-empty">{t.legalNoSources || 'База кодексів порожня.'}</div>
+        <div className="lex-empty">{emptyMessage || t.legalNoSources || 'База кодексів порожня.'}</div>
       </aside>
     );
   }
@@ -46,6 +46,7 @@ export function SourceList({ sources, selected, onSelect, loading, t }) {
         {sources.map(s => {
           const m = meta(s.source);
           const active = s.source === selected;
+          const indexed = (s.indexed_count || 0) > 0;
           return (
             <button
               key={s.source}
@@ -58,7 +59,16 @@ export function SourceList({ sources, selected, onSelect, loading, t }) {
                 <Icon name={m.icon} size={16} />
               </span>
               <span className="lex-tile-body">
-                <span className="lex-tile-code">{s.source}</span>
+                <span className="lex-tile-code">
+                  {s.source}
+                  {indexed && (
+                    <span
+                      className="lex-tile-rag"
+                      title={t.legalInRag || 'В базі знань'}
+                      aria-label={t.legalInRag || 'В базі знань'}
+                    />
+                  )}
+                </span>
                 <span className="lex-tile-title">{m.title}</span>
               </span>
               <span className="lex-tile-n">{s.count}</span>

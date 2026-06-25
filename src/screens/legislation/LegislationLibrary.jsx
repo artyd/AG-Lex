@@ -9,7 +9,12 @@ import { SourceList } from './SourceList';
 import { ArticleList } from './ArticleList';
 import { ReadingPane } from './ReadingPane';
 import { useLegislation } from './useLegislation';
+import { typeLabel } from './sourceMeta';
 import './legislation.css';
+
+function formatCount(template, n) {
+  return (template || '{n}').replace('{n}', String(n));
+}
 
 function useIsNarrow(breakpoint = 900) {
   const [narrow, setNarrow] = useState(() =>
@@ -33,10 +38,15 @@ function useIsNarrow(breakpoint = 900) {
 
 export function LegislationLibrary({ t }) {
   const {
-    sources,
+    visibleSources,
     sourcesLoading,
     selectedSource,
     setSelectedSource,
+    typeFilter,
+    setTypeFilter,
+    availableTypes,
+    totalSources,
+    indexedSources,
     query,
     setQuery,
     articles,
@@ -107,13 +117,31 @@ export function LegislationLibrary({ t }) {
         </header>
 
         {mobileView === 'sources' ? (
-          <SourceList
-            sources={sources}
-            selected={selectedSource}
-            loading={sourcesLoading}
-            onSelect={handleSelectSource}
-            t={t}
-          />
+          <>
+            {availableTypes.length > 1 && (
+              <nav className="lex-filters lex-filters-mobile" aria-label={t.legalSources || 'Джерела'}>
+                {availableTypes.map(typeKey => (
+                  <button
+                    key={typeKey}
+                    type="button"
+                    className={'lex-filter' + (typeFilter === typeKey ? ' lex-filter-on' : '')}
+                    onClick={() => setTypeFilter(typeKey)}
+                    aria-pressed={typeFilter === typeKey ? 'true' : 'false'}
+                  >
+                    {typeLabel(typeKey, t)}
+                  </button>
+                ))}
+              </nav>
+            )}
+            <SourceList
+              sources={visibleSources}
+              selected={selectedSource}
+              loading={sourcesLoading}
+              onSelect={handleSelectSource}
+              emptyMessage={typeFilter !== 'all' ? (t.legalNoSourcesOfType || 'Немає джерел цього типу.') : undefined}
+              t={t}
+            />
+          </>
         ) : null}
 
         {mobileView === 'list' ? (
@@ -161,7 +189,15 @@ export function LegislationLibrary({ t }) {
         <div className="lex-head-title">
           <Icon name="library" size={18} />
           <h1 className="lex-title">{t.legalTitle || 'Законодавство'}</h1>
-          <span className="lex-head-sub">{t.legalSub || 'Повна база кодексів і регламентів'}</span>
+          {sourcesLoading || totalSources === 0 ? (
+            <span className="lex-head-sub">{t.legalSub || 'Повна база кодексів і регламентів'}</span>
+          ) : (
+            <span className="lex-head-count" aria-live="polite">
+              <span className="lex-head-count-n">{formatCount(t.legalCountSources, totalSources)}</span>
+              <span className="lex-head-count-sep" aria-hidden="true">·</span>
+              <span className="lex-head-count-rag">{formatCount(t.legalCountIndexed, indexedSources)}</span>
+            </span>
+          )}
         </div>
         <div className="lex-search">
           <Icon name="search" size={14} />
@@ -174,12 +210,29 @@ export function LegislationLibrary({ t }) {
         </div>
       </header>
 
+      {availableTypes.length > 1 && (
+        <nav className="lex-filters" aria-label={t.legalSources || 'Джерела'}>
+          {availableTypes.map(typeKey => (
+            <button
+              key={typeKey}
+              type="button"
+              className={'lex-filter' + (typeFilter === typeKey ? ' lex-filter-on' : '')}
+              onClick={() => setTypeFilter(typeKey)}
+              aria-pressed={typeFilter === typeKey ? 'true' : 'false'}
+            >
+              {typeLabel(typeKey, t)}
+            </button>
+          ))}
+        </nav>
+      )}
+
       <div className="lex-grid">
         <SourceList
-          sources={sources}
+          sources={visibleSources}
           selected={selectedSource}
           loading={sourcesLoading}
           onSelect={handleSelectSource}
+          emptyMessage={typeFilter !== 'all' ? (t.legalNoSourcesOfType || 'Немає джерел цього типу.') : undefined}
           t={t}
         />
         <ArticleList

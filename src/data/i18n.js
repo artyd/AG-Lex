@@ -192,6 +192,10 @@ export const I18N = {
     legalNoArticles: 'Жодної статті в цьому джерелі.', legalNoSources: 'База кодексів порожня.',
     legalNoTitle: 'Без назви', legalLoadMore: 'Завантажити ще',
     legalPickArticle: 'Оберіть статтю', legalPickArticleSub: 'Виберіть джерело зліва і натисніть на статтю, щоб прочитати повний текст.',
+    legalCountSources: '{n} кодексів', legalCountIndexed: '{n} у базі знань',
+    legalInRag: 'В базі знань',
+    legalTypeAll: 'Усі', legalTypeCode: 'Кодекс', legalTypeEu: 'Регламент ЄС', legalTypeOther: 'Інше',
+    legalNoSourcesOfType: 'Немає джерел цього типу.',
     back: 'Назад',
     batch: 'Пакетний аналіз',
 
@@ -781,6 +785,10 @@ export const I18N = {
     legalNoArticles: 'No articles in this source.', legalNoSources: 'Codex database is empty.',
     legalNoTitle: 'No title', legalLoadMore: 'Load more',
     legalPickArticle: 'Pick an article', legalPickArticleSub: 'Choose a source on the left, then tap an article to read the full text.',
+    legalCountSources: '{n} sources', legalCountIndexed: '{n} indexed',
+    legalInRag: 'In knowledge base',
+    legalTypeAll: 'All', legalTypeCode: 'Code', legalTypeEu: 'EU regulation', legalTypeOther: 'Other',
+    legalNoSourcesOfType: 'No sources of this type.',
     back: 'Back',
     batch: 'Batch analysis',
 
