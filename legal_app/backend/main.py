@@ -99,18 +99,34 @@ async def lifespan(app: FastAPI):
         auth_module.seed_test_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
-        # Fresh deploys (empty aglex_db volume) need the codex articles loaded
-        # or the «Законодавство» tab + RAG retrieval both come up empty. We
-        # auto-seed from data/codex_sources/ when articles is empty. Wrapped
-        # in try/except so a missing sentence-transformers download (e.g.
-        # offline build) doesn't block the API from coming up.
-        try:
-            from scripts.import_codex import bootstrap_codex
-            bootstrap_codex(conn)
-        except Exception as _e:  # noqa: BLE001
-            print(f"[lifespan] codex bootstrap skipped: {_e!r}")
     finally:
         conn.close()
+
+    # Fresh deploys (empty aglex_db volume) need the codex articles loaded or
+    # the «Законодавство» tab + RAG retrieval both come up empty. We auto-seed
+    # from data/codex_sources/ when articles is empty — but only in the
+    # BACKGROUND. The sentence-transformers download (~200 MB) plus embedding
+    # ~2 500 articles takes minutes; doing it synchronously here would block
+    # the lifespan past the deploy workflow's 15 s health-check window and
+    # nginx would 502. The thread opens its own DB connection (sqlite3 won't
+    # share a handle across threads), runs `bootstrap_codex`, exits.
+    import threading
+    def _bootstrap_codex_in_background():
+        try:
+            from scripts.import_codex import bootstrap_codex
+            bg_conn = get_connection()
+            try:
+                bootstrap_codex(bg_conn)
+            finally:
+                bg_conn.close()
+        except Exception as _e:  # noqa: BLE001
+            print(f"[lifespan] codex bootstrap skipped: {_e!r}")
+    threading.Thread(
+        target=_bootstrap_codex_in_background,
+        name="codex-bootstrap",
+        daemon=True,
+    ).start()
+
     yield
 
 
