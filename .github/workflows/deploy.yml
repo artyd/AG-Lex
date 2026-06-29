@@ -108,7 +108,13 @@ jobs:
           git config --global --add safe.directory /opt/aglex
           cd /opt/aglex
           git pull origin main
-          docker compose up -d --build backend frontend nginx
+          # `converter` is the Node.js microservice that powers the new
+          # Document-checker upload flow (DOCX→MD, OCR for scanned PDFs,
+          # XLSX/DOC support). Without it, /api/documents/upload falls back
+          # to the legacy pymupdf4llm/mammoth path for .pdf/.docx only and
+          # returns 503 for every other format — that's how shipping #70
+          # broke uploads in the new screen.
+          docker compose up -d --build backend frontend nginx converter
           docker compose restart nginx
           sleep 15
           curl -fsS http://localhost:8002/api/health
