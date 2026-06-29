@@ -261,6 +261,16 @@ def api_health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# Lightweight diagnostic that pings the Node.js converter microservice
+# (the /api/documents/upload pipeline depends on it). Returns 200 always —
+# the payload tells you ok/not-ok so ops can `curl /api/health/converter`
+# and see why uploads might be failing without SSH'ing the box.
+@app.get("/api/health/converter")
+async def api_health_converter() -> dict:
+    from .converter_client import probe_converter
+    return await probe_converter()
+
+
 # ---------------------------------------------------------------------------
 # Phase 2.4: realtime WebSocket. Browsers can't set Authorization headers on
 # `new WebSocket()`, so the token comes in via the query string. Validates
