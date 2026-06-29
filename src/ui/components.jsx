@@ -65,6 +65,7 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
     { id: 'lawyer', icon: 'scales', label: t.lawNav || 'AI-адвокат' },
     { id: 'dashboard', icon: 'dashboard', label: t.dashboard },
     { id: 'builder', icon: 'wand', label: t.builder },
+    { id: 'docview', icon: 'scan', label: t.docviewNav || 'Перегляд документа' },
     { id: 'library', icon: 'library', label: t.library, badge: riskCount },
   ];
   const practice = [
