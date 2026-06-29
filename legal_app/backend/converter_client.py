@@ -76,3 +76,26 @@ async def convert_file_to_markdown(
             status_code=502,
         )
     return data
+
+
+async def probe_converter() -> dict[str, Any]:
+    """Hit the converter's /health endpoint with a short timeout.
+
+    Returns {"ok": True, "url": ..., "body": ...} on a 2xx response,
+    {"ok": False, "url": ..., "error": "..."} when unreachable or 5xx.
+    Used by the diagnostic endpoint so ops can verify the container is
+    actually up without SSH'ing into the host.
+    """
+    url = f"{CONVERTER_URL}/health"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+    except httpx.RequestError as e:
+        return {"ok": False, "url": url, "error": f"unreachable: {e}"}
+    if resp.status_code >= 400:
+        return {"ok": False, "url": url, "status": resp.status_code, "body": resp.text}
+    try:
+        body = resp.json()
+    except Exception:
+        body = resp.text
+    return {"ok": True, "url": url, "status": resp.status_code, "body": body}
