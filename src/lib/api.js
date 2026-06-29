@@ -178,6 +178,30 @@ function analyzeContract({ markdown, sections } = {}) {
   return request('/api/analyze/contract', { method: 'POST', body: { markdown, sections } });
 }
 
+// New document pipeline (Part 1 + 2): converter-backed upload, Claude error
+// detection, inline highlighting, and apply-fix. Stays separate from the
+// existing /api/upload contract flow so contracts and documents can evolve
+// independently.
+const documents = {
+  upload: (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return multipart('/api/documents/upload', fd);
+  },
+  get: (id) => request(`/api/documents/${encodeURIComponent(id)}`),
+  analyze: (id) =>
+    request(`/api/documents/${encodeURIComponent(id)}/analyze`, { method: 'POST' }),
+  errors: (id, { includeApplied = false } = {}) =>
+    request(`/api/documents/${encodeURIComponent(id)}/errors?include_applied=${includeApplied ? 1 : 0}`),
+  error: (id, errorId) =>
+    request(`/api/documents/${encodeURIComponent(id)}/errors/${encodeURIComponent(errorId)}`),
+  highlighted: (id) => request(`/api/documents/${encodeURIComponent(id)}/highlighted`),
+  applyFix: (id, errorId) =>
+    request(`/api/documents/${encodeURIComponent(id)}/apply-fix`, {
+      method: 'POST', body: { error_id: errorId },
+    }),
+};
+
 export const api = {
   request,
   matters,
@@ -203,6 +227,7 @@ export const api = {
   reconcile: (formData) => multipart('/api/reconcile', formData),
   upload,
   analyzeContract,
+  documents,
 };
 
 export { ApiError };

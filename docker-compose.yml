@@ -32,11 +32,30 @@ services:
       SOFFICE_PATH: /usr/bin/soffice
       DISPLAY_PDF_TIMEOUT: ${DISPLAY_PDF_TIMEOUT:-30}
       MAX_DISPLAY_PDF_BYTES: ${MAX_DISPLAY_PDF_BYTES:-41943040}
+      # Node.js document-converter microservice (Mammoth + Turndown + Tesseract).
+      # Falls back to legacy in-process conversion when the service isn't up.
+      CONVERTER_URL: ${CONVERTER_URL:-http://converter:3031}
     volumes:
       - aglex_db:/app/legal_app/database
       - aglex_data:/app/legal_app/data
     expose:
       - "8000"
+    networks:
+      - aglex_net
+
+  converter:
+    build:
+      context: ./converter
+      dockerfile: Dockerfile
+    image: aglex-converter:latest
+    container_name: aglex-converter
+    restart: unless-stopped
+    environment:
+      PORT: 3031
+      # 25 MB to match the FastAPI cap.
+      MAX_BYTES: ${CONVERTER_MAX_BYTES:-26214400}
+    expose:
+      - "3031"
     networks:
       - aglex_net
 
