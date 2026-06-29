@@ -19,6 +19,7 @@ from . import auth as auth_module
 from . import builder as builder_module
 from . import calendar_routes as calendar_module
 from . import chat_sessions as chat_sessions_module
+from . import documents_routes as documents_routes_module
 from . import drafts as drafts_module
 from . import lawyer_chat as lawyer_chat_module
 from . import matters_routes as matters_module
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI):
         init_user_schema(conn)        # users (Phase 2.1)
         init_chat_schema(conn)        # AI-lawyer chat sessions + messages
         init_entity_schema(conn)      # workspace entities (Phase 2.2)
+        documents_routes_module.init_documents_schema(conn)  # documents + document_errors
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
         migrate_drafts(conn)
@@ -145,6 +147,10 @@ app.include_router(drafts_module.router)  # Fix 1: custom router replaces generi
 app.include_router(matters_module.router)
 app.include_router(notifications_module.router)
 app.include_router(calendar_module.router)
+# Document viewer + error-highlighting pipeline. Registered above the generic
+# ALL_ENTITIES loop so a future /api/documents CRUD entity (if ever added)
+# can't shadow these handlers — same pattern as matters_module.
+app.include_router(documents_routes_module.router)
 
 # Phase 4.x: custom POST /api/contracts that accepts a base64-encoded display
 # PDF (`displayPdfB64`) and writes it to the BLOB column. Registered BEFORE

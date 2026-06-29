@@ -17,6 +17,10 @@ import { Auth } from './screens/Auth';
 import { Dashboard, Library } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
+import { DocumentViewer } from './screens/DocumentViewer';
+import { DocumentProcessingProvider, useDocumentProcessing } from './contexts/DocumentProcessingContext';
+import { useExitGuard } from './hooks/useExitGuard';
+import { ExitGuardModal } from './components/ExitGuardModal';
 import { Copilot } from './screens/Copilot';
 import { ChatPage } from './screens/chat/ChatPage';
 import { Litigation } from './screens/Litigation';
@@ -55,6 +59,7 @@ const PAGE_TITLES = {
   team: 'teamTitle', access: 'accessTitle',
   esign: 'esignTitle',
   lawyer: 'lawTitle',
+  docview: 'docviewTitle',
 };
 
 // Stale routes from earlier nav refactors. On boot we silently bounce them
@@ -73,14 +78,23 @@ const DEPRECATED_ROUTES = new Map([
   ['templates', 'dashboard'],
 ]);
 
-export default function App() {
+function AppShell() {
+  const { isProcessing, activeOperations, startOperation, endOperation } = useDocumentProcessing();
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [route, setRoute] = useState(() => {
+  const [route, setRouteRaw] = useState(() => {
     const stored = localStorage.getItem('lx_route');
     if (!stored) return 'dashboard';
     if (DEPRECATED_ROUTES.has(stored)) return DEPRECATED_ROUTES.get(stored);
     return stored;
   });
+  const exitGuard = useExitGuard(isProcessing);
+  // Internal control flow (upload/reconcile handlers, error recovery, logout)
+  // uses setRoute = setRouteRaw — the navigation is part of the operation
+  // itself, not a user trying to leave it. Only Sidebar/TopBar-driven
+  // navigation gets wrapped (guardedSetRoute below) so the modal shows
+  // when the user clicks the logo / nav while processing is mid-flight.
+  const setRoute = setRouteRaw;
+  const guardedSetRoute = exitGuard.guard(setRouteRaw);
   const [lang, setLang] = useState(() => {
     const s = localStorage.getItem('lx_lang');
     return (s === 'uk' || s === 'en') ? s : 'uk';
@@ -273,6 +287,7 @@ export default function App() {
     setRoute('analyze');
     try {
       setContractUploading(true);
+      startOperation('upload');
       const res = await api.upload(file);
       setAnalysisIncoming({
         markdown: res.markdown,
@@ -300,6 +315,7 @@ export default function App() {
       setRoute('dashboard');
     } finally {
       setContractUploading(false);
+      endOperation('upload');
     }
   };
   const onContractFileChange = (e) => {
@@ -353,6 +369,7 @@ export default function App() {
     setRoute('analyze');
     try {
       setPairUploading(true);
+      startOperation('upload');
       const run = await api.reconcile(fd);
       setAnalysisIncoming({ reconcileRun: run });
       toast(L.uploadDone, 'sparkle');
@@ -365,6 +382,7 @@ export default function App() {
       setRoute('dashboard');
     } finally {
       setPairUploading(false);
+      endOperation('upload');
     }
   };
   const startBatch = () => {
@@ -403,6 +421,7 @@ export default function App() {
   else if (route === 'team') body = <Team t={L} user={user} />;
   else if (route === 'access') body = <AccessControl t={L} user={user} />;
   else if (route === 'calendar') body = <CalendarTasks t={L} />;
+  else if (route === 'docview') body = <DocumentViewer />;
 
   if (!user) {
     return (
@@ -417,18 +436,25 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar route={route} setRoute={setRoute} t={L} riskCount={10} user={user}
+      <Sidebar route={route} setRoute={guardedSetRoute} t={L} riskCount={10} user={user}
         onUpload={() => setUploadOpen(true)} onSettings={() => setSettingsOpen(true)} />
       <div className="main">
         <TopBar title={L[titleKey]} crumb={crumb} t={L}
           lang={lang} setLang={setLang}
           theme={theme} setTheme={(th) => setTweak('dark', th === 'dark')}
-          query={query} setQuery={setQuery} onSearchEnter={goSearch} setRoute={setRoute}
+          query={query} setQuery={setQuery} onSearchEnter={goSearch} setRoute={guardedSetRoute}
           notifItems={notifItems} onNotifClick={onNotifClick} onMarkAllRead={markAllRead} />
         {body}
       </div>
 
       <Toaster />
+
+      <ExitGuardModal
+        isOpen={exitGuard.isBlocked}
+        operationNames={[...activeOperations]}
+        onStay={exitGuard.cancelLeave}
+        onLeave={exitGuard.confirmLeave}
+      />
 
       {/* Launcher modal — analysis hub. Three hub-block cards. */}
       <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
@@ -704,5 +730,13 @@ export default function App() {
           onChange={(v) => setTweak('training', v)} />
       </TweaksPanel>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <DocumentProcessingProvider>
+      <AppShell />
+    </DocumentProcessingProvider>
   );
 }

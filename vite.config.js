@@ -18,6 +18,11 @@ const BACKEND_PORT = process.env.AGLEX_BACKEND_PORT || '8001'
 
 export default defineConfig({
   plugins: [react()],
+  // Treat .mjs as a first-class asset so PDF.js's `pdf.worker.min.mjs` (and
+  // any other ESM-only worker) is served with `Content-Type: application/javascript`
+  // by the dev server. Without this, Chrome refuses the dynamic import with
+  // "Failed to fetch dynamically imported module".
+  assetsInclude: ['**/*.mjs'],
   server: {
     proxy: {
       '/api': {
