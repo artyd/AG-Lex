@@ -14,10 +14,42 @@ import { AnalysisView } from './analysis/AnalysisView';
 import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
+import { EditableDoc } from './analysis/EditableDoc';
 
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
 };
+
+const ZOOM_MIN = 70;
+const ZOOM_MAX = 150;
+const ZOOM_STEP = 10;
+
+/* Build a plain-text Markdown blob from the current section state and
+   trigger a browser download. No backend round-trip — works offline and
+   keeps Cyrillic/Latin chars in the filename. */
+function downloadEdited(sections, originalName) {
+  if (!Array.isArray(sections) || sections.length === 0) return;
+  const text = sections.map((s) => {
+    const head = [s.number, s.title].filter(Boolean).join(' ');
+    return (head ? `## ${head}\n\n` : '') + (s.text || '');
+  }).join('\n\n---\n\n');
+
+  const base = (originalName || 'contract')
+    .replace(/\.[^.]+$/, '')                  // strip extension
+    .replace(/[^\wЀ-ӿ\s-]/g, '')    // keep latin + cyrillic + dash + space
+    .trim() || 'contract';
+
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {
+    href: url,
+    download: `${base}-edited.md`,
+  });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
 
 /* ---------- Inline highlighted document ---------- */
 function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, onHover, onPick, onAsk, addedClauses, t }) {
@@ -1064,21 +1096,21 @@ function ContractAnalysisSingle({ t, incoming }) {
   const effectiveSections = (effectiveDoc && Array.isArray(effectiveDoc.sections))
     ? effectiveDoc.sections
     : [];
-  // The document stays at the analyzer's original text — "Apply fix" no
-  // longer rewrites the sections. The fix surfaces inline as a diff
-  // (strike old + green new) so the reader can see the correction in
-  // place; the underlying paragraph never silently morphs.
+  // editedSections is the source of truth for both the view and edit
+  // modes — typing in the editor flows back through it, and the
+  // MarkdownDoc reads from the same array so any edits are visible the
+  // moment the user toggles back to view. Resyncs whenever the upstream
+  // analyzer payload changes (new upload, library reopen).
+  const [editedSections, setEditedSections] = useState(effectiveSections);
+  useEffect(() => { setEditedSections(effectiveSections); }, [effectiveSections]);
   const docsForView = useMemo(() => {
     const filename = (effectiveDoc && effectiveDoc.filename) || 'Договір';
     return [{
       label: filename,
       filename,
-      sections: effectiveSections,
+      sections: editedSections,
     }];
-    // effectiveSections is derived from effectiveDoc — using both as deps
-    // would re-create the same object twice. Single source covers both.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDoc]);
+  }, [effectiveDoc, editedSections]);
   const useAnalysisView = effectiveSections.length > 0;
 
   // Merged data source: real fields override DEMO when available. PR-2 of
@@ -1106,6 +1138,8 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [applied, setApplied] = useState({});
   const [highlightsOn, setHighlightsOn] = useState(true);
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
+  const [editMode, setEditMode] = useState(false);  // false = view (MarkdownDoc), true = edit (EditableDoc)
+  const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
 
   const [protocolOpen, setProtocolOpen] = useState(false);
   const [addedSet, setAddedSet] = useState(new Set());
@@ -1448,6 +1482,61 @@ function ContractAnalysisSingle({ t, incoming }) {
           hovered={hovered}
           setHovered={setHovered}
           t={t}
+          docZoom={zoom / 100}
+          docToolbar={
+            <div className="doc-edit-toolbar">
+              <button type="button"
+                className={'btn btn-sm' + (!editMode ? ' btn-primary' : ' btn-ghost')}
+                onClick={() => setEditMode(false)}
+                title={t.viewMode || 'Перегляд'}>
+                <Icon name="scan" size={15} /> {t.viewMode || 'Перегляд'}
+              </button>
+              <button type="button"
+                className={'btn btn-sm' + (editMode ? ' btn-primary' : ' btn-ghost')}
+                onClick={() => setEditMode(true)}
+                title={t.editMode || 'Редагування'}>
+                <Icon name="pen" size={15} /> {t.editMode || 'Редагування'}
+              </button>
+
+              <div className="sep" />
+
+              <button type="button"
+                className="btn btn-ghost btn-sm btn-icon"
+                onClick={() => setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP))}
+                disabled={zoom <= ZOOM_MIN}
+                title={t.zoomOut || 'Зменшити'}
+                aria-label={t.zoomOut || 'Зменшити'}>
+                <Icon name="minus" size={14} />
+              </button>
+              <span className="zoom-label" aria-live="polite">{zoom}%</span>
+              <button type="button"
+                className="btn btn-ghost btn-sm btn-icon"
+                onClick={() => setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP))}
+                disabled={zoom >= ZOOM_MAX}
+                title={t.zoomIn || 'Збільшити'}
+                aria-label={t.zoomIn || 'Збільшити'}>
+                <Icon name="plus" size={14} />
+              </button>
+
+              <div className="sep" />
+
+              <button type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => downloadEdited(editedSections, effectiveDoc?.filename)}
+                title={t.downloadEdited || 'Завантажити'}>
+                <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
+              </button>
+            </div>
+          }
+          docOverride={editMode
+            ? (
+              <EditableDoc
+                filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
+                sections={editedSections}
+                onChange={setEditedSections}
+              />
+            )
+            : null}
           panel={
             <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
               hovered={hovered} setHovered={setHovered}
