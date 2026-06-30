@@ -257,6 +257,48 @@ ins.md-hl-applied-new {
   margin: 0 4px;
 }
 
+/* --- Download split button + format dropdown ---
+   Keeps the primary action (MD) one-click while the chevron opens a
+   pop-up menu for the other formats. Token-only colours so it follows
+   the active theme. */
+.dl-split { position: relative; display: inline-flex; gap: 1px; }
+.dl-split-main, .dl-split-chev {
+  /* btn-ghost handles the visual; nothing extra needed here. */
+}
+.dl-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 192px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: 0 6px 24px color-mix(in oklab, black 18%, transparent);
+  padding: 4px 0;
+  overflow: hidden;
+}
+.dl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.dl-menu-item:hover,
+.dl-menu-item:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.dl-menu-item > svg { color: var(--text-3); flex: 0 0 auto; }
+
 /* --- Zoom wrapper --- scales the doc body via inherited font-size.
    Lives inside doc-scroll so the toolbar isn't scaled. */
 .doc-zoom-wrap {
@@ -305,4 +347,71 @@ ins.md-hl-applied-new {
   border-color: var(--accent);
   background: var(--surface);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* --- Apply-fix flash ---
+   Fires on the section whose text was just rewritten in edit mode. Quick
+   green tint fades out so the user notices what changed without staring
+   at a permanent banner. */
+@keyframes section-flash {
+  0%   { background: color-mix(in oklab, var(--risk-low) 22%, transparent); }
+  100% { background: transparent; }
+}
+.md-section-edit.flash .md-edit-area {
+  animation: section-flash 1.2s ease-out forwards;
+}
+
+/* --- Print / save-as-PDF ---
+   Strip chrome so the printed page shows only the contract body. The
+   browser's print dialog handles the "Save as PDF" output, so no PDF
+   library is needed. */
+@media print {
+  .sidebar,
+  .topbar,
+  .analysis-bar,
+  .doc-edit-toolbar,
+  .panel-wrap,
+  .analysis-tabs,
+  .exit-guard-overlay,
+  nav {
+    display: none !important;
+  }
+
+  .analysis-body { display: block !important; }
+  .doc-scroll, .analysis-doc-pane {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  .doc-zoom-wrap, .md-doc {
+    width: 100% !important;
+    max-width: 100% !important;
+    font-size: 12pt !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  .md-p,
+  .md-edit-area,
+  .md-section-title,
+  .md-h {
+    font-size: 12pt !important;
+    line-height: 1.55 !important;
+    color: #000 !important;
+  }
+
+  /* Textareas render their content as static text — strip the editor chrome. */
+  .md-edit-area {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  /* Drop the read-only edit labels — they're UI hints, not document content. */
+  .md-section-title-edit { display: none !important; }
+
+  .md-section { break-inside: avoid; }
 }

@@ -15,6 +15,8 @@ import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
 import { EditableDoc } from './analysis/EditableDoc';
+import { downloadMd, downloadTxt, downloadDocx, printAsPdf } from '../lib/exportDoc';
+import { buildFromRegex } from '../lib/findingHighlight';
 
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
@@ -24,32 +26,31 @@ const ZOOM_MIN = 70;
 const ZOOM_MAX = 150;
 const ZOOM_STEP = 10;
 
-/* Build a plain-text Markdown blob from the current section state and
-   trigger a browser download. No backend round-trip — works offline and
-   keeps Cyrillic/Latin chars in the filename. */
-function downloadEdited(sections, originalName) {
-  if (!Array.isArray(sections) || sections.length === 0) return;
-  const text = sections.map((s) => {
-    const head = [s.number, s.title].filter(Boolean).join(' ');
-    return (head ? `## ${head}\n\n` : '') + (s.text || '');
-  }).join('\n\n---\n\n');
-
-  const base = (originalName || 'contract')
-    .replace(/\.[^.]+$/, '')                  // strip extension
-    .replace(/[^\wЀ-ӿ\s-]/g, '')    // keep latin + cyrillic + dash + space
-    .trim() || 'contract';
-
-  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), {
-    href: url,
-    download: `${base}-edited.md`,
+/* Replace a finding's `suggest.from` with `suggest.to` in the first
+   matching section. Used by edit-mode Apply so the editor textarea shows
+   the corrected wording in place (view mode keeps the diff layer from
+   PR #76 instead). Returns the new sections array + the index of the
+   section that was rewritten (-1 when no match), so the caller can
+   trigger a flash animation on the right textarea. */
+function applyFixToSections(sections, finding) {
+  const from = finding && finding.suggest && finding.suggest.from;
+  const to   = finding && finding.suggest && finding.suggest.to;
+  if (!from || !to || !Array.isArray(sections)) return { sections, changedIdx: -1 };
+  const re = buildFromRegex(from);
+  if (!re) return { sections, changedIdx: -1 };
+  let idx = -1;
+  const next = sections.map((sec, i) => {
+    if (idx !== -1) return sec;
+    const text = sec.text || '';
+    if (!re.test(text)) return sec;
+    idx = i;
+    // Function-form replace() so `$&` / `$1` inside suggest.to aren't
+    // treated as backreferences.
+    return { ...sec, text: text.replace(re, () => to) };
   });
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  return idx === -1 ? { sections, changedIdx: -1 } : { sections: next, changedIdx: idx };
 }
+
 
 /* ---------- Inline highlighted document ---------- */
 function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, onHover, onPick, onAsk, addedClauses, t }) {
@@ -1140,6 +1141,9 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
   const [editMode, setEditMode] = useState(false);  // false = view (MarkdownDoc), true = edit (EditableDoc)
   const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
+  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (edit-mode flash)
+  const [scrollToIdx, setScrollToIdx] = useState(null); // section index to scroll to after insertGap
 
   const [protocolOpen, setProtocolOpen] = useState(false);
   const [addedSet, setAddedSet] = useState(new Set());
@@ -1347,19 +1351,40 @@ function ContractAnalysisSingle({ t, incoming }) {
     }, 60);
   };
 
-  // "Apply" only flips the applied flag — MarkdownDoc renders the diff
-  // (strike old + green new) inline using the original section text. We
-  // intentionally do not mutate the document body so the user always has
-  // a stable reading anchor; the diff layer carries the correction.
+  // Apply behaviour is mode-dependent:
+  //   • view mode  — only flip the applied flag, MarkdownDoc renders the
+  //     diff (strike old + green new) over the original text.
+  //   • edit mode — rewrite the matching section's text in editedSections
+  //     and flash that section so the user sees the swap land in the
+  //     textarea they're editing.
   const onApply = (id) => {
     const f = data.findings.find(x => x.id === id);
     if (!f) return;
     setApplied(a => ({ ...a, [id]: true }));
+    if (editMode && f.suggest) {
+      const { sections: next, changedIdx } = applyFixToSections(editedSections, f);
+      if (changedIdx !== -1) {
+        setEditedSections(next);
+        setFlashIdx(changedIdx);
+        setTimeout(() => setFlashIdx(null), 1400);
+      }
+    }
   };
   const onApplyAll = () => {
     const next = {};
     data.findings.forEach(f => { if (f.suggest) next[f.id] = true; });
     setApplied(a => ({ ...a, ...next }));
+    if (editMode) {
+      // Apply every fix in order against the current edited copy so
+      // typed-over edits are preserved between rewrites.
+      let working = editedSections;
+      for (const f of data.findings) {
+        if (!f.suggest) continue;
+        const { sections, changedIdx } = applyFixToSections(working, f);
+        if (changedIdx !== -1) working = sections;
+      }
+      setEditedSections(working);
+    }
     toast(t.allApplied, 'wand');
   };
   const reanalyze = () => {
@@ -1385,9 +1410,31 @@ function ContractAnalysisSingle({ t, incoming }) {
     setTab('chat');
     setChatInject({ q: f.title + ' — ' + f.clause + '?', a, refs: [num], ts: Date.now() });
   };
+  // Insert a missing clause as a new editable section at the end of the
+  // document, switch to edit mode, and scroll the editor to the new
+  // textarea so the user can keep refining the wording. `clauseText` from
+  // the analyzer is the suggested body; falls back to empty so the user
+  // can type from scratch.
   const onAddClause = (idx) => {
+    const m = data.missing[idx];
+    if (!m) return;
     setAddedSet(s => { const n = new Set(s); n.add(idx); return n; });
+    const newSection = {
+      number: '',
+      title: m.title || '',
+      text: m.clauseText || '',
+    };
+    setEditedSections(prev => {
+      const next = [...prev, newSection];
+      setScrollToIdx(next.length - 1);
+      return next;
+    });
+    setEditMode(true);
     toast(t.clauseAdded, 'check');
+    // Clear the scroll target after the editor has had a chance to react
+    // — long enough for EditableDoc's effect to fire, short enough that a
+    // second insert in quick succession isn't ignored.
+    setTimeout(() => setScrollToIdx(null), 900);
   };
 
   const addedClauses = data.missing.filter((_, i) => addedSet.has(i));
@@ -1520,12 +1567,43 @@ function ContractAnalysisSingle({ t, incoming }) {
 
               <div className="sep" />
 
-              <button type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => downloadEdited(editedSections, effectiveDoc?.filename)}
-                title={t.downloadEdited || 'Завантажити'}>
-                <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
-              </button>
+              <div className="dl-split">
+                <button type="button"
+                  className="btn btn-ghost btn-sm dl-split-main"
+                  onClick={() => downloadMd(editedSections, effectiveDoc?.filename)}
+                  title={t.downloadEdited || 'Завантажити'}>
+                  <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
+                </button>
+                <button type="button"
+                  className="btn btn-ghost btn-sm btn-icon dl-split-chev"
+                  onClick={() => setFormatMenuOpen(o => !o)}
+                  aria-expanded={formatMenuOpen}
+                  aria-haspopup="menu"
+                  title={t.exportPickFormat || 'Оберіть формат'}
+                  aria-label={t.exportPickFormat || 'Оберіть формат'}>
+                  <Icon name="chevD" size={13} />
+                </button>
+                {formatMenuOpen ? (
+                  <div className="dl-menu" role="menu" onMouseLeave={() => setFormatMenuOpen(false)}>
+                    {[
+                      { key: 'md',    label: t.exportMd    || 'Markdown (.md)',
+                        run: () => downloadMd(editedSections, effectiveDoc?.filename) },
+                      { key: 'txt',   label: t.exportTxt   || 'Текст (.txt)',
+                        run: () => downloadTxt(editedSections, effectiveDoc?.filename) },
+                      { key: 'docx',  label: t.exportDocx  || 'Word (.docx)',
+                        run: () => downloadDocx(editedSections, effectiveDoc?.filename) },
+                      { key: 'print', label: t.exportPdf   || 'PDF (друк)',
+                        run: () => printAsPdf() },
+                    ].map(opt => (
+                      <button key={opt.key} type="button" role="menuitem" className="dl-menu-item"
+                        onClick={() => { opt.run(); setFormatMenuOpen(false); }}>
+                        <Icon name="doc" size={14} />
+                        <span>{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           }
           docOverride={editMode
@@ -1534,6 +1612,8 @@ function ContractAnalysisSingle({ t, incoming }) {
                 filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
                 sections={editedSections}
                 onChange={setEditedSections}
+                flashIdx={flashIdx}
+                scrollToIdx={scrollToIdx}
               />
             )
             : null}
