@@ -18,7 +18,7 @@ import { Dashboard, Library } from './screens/Views';
 import { ContractAnalysis } from './screens/ContractAnalysis';
 import { DocBuilder } from './screens/DocBuilder';
 import { DocumentViewer } from './screens/DocumentViewer';
-import { DocumentProcessingProvider, useDocumentProcessing } from './contexts/DocumentProcessingContext';
+import { useDocumentProcessing } from './contexts/DocumentProcessingContext';
 import { useExitGuard } from './hooks/useExitGuard';
 import { ExitGuardModal } from './components/ExitGuardModal';
 import { Copilot } from './screens/Copilot';
@@ -456,7 +456,7 @@ function AppShell() {
         onLeave={exitGuard.confirmLeave}
       />
 
-      {/* Launcher modal — analysis hub. Three big cards + one row. */}
+      {/* Launcher modal — analysis hub. Two big cards + one row. */}
       <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
         <div className="hub-grid" style={{ marginBottom: 14 }}>
           <HelpTip text={(L.tips && L.tips.hubContract) || ''} placement="bottom">
@@ -473,19 +473,6 @@ function AppShell() {
               <span className="hub-ic hub-ic-lg"><Icon name="scan" size={28} /></span>
               <span className="hub-block-t">{L.hubCompare}</span>
               <span className="hub-block-s">{L.hubCompareSub}</span>
-              <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
-            </button>
-          </HelpTip>
-          {/* Document checker — opens the new DocumentViewer screen.
-              setRouteRaw bypasses the exit guard on purpose: the user
-              just clicked Upload→DocCheck, so this navigation IS the
-              intent — we don't want to prompt them to confirm. */}
-          <HelpTip text={(L.tips && L.tips.hubDocCheck) || ''} placement="bottom">
-            <button className="hub-block hub-accent hub-block-lg" onClick={() => { setUploadOpen(false); setRouteRaw('docview'); }}>
-              <span className="hub-new">{L.hubNew}</span>
-              <span className="hub-ic hub-ic-lg"><Icon name="sparkle" size={28} fill={true} /></span>
-              <span className="hub-block-t">{L.hubDocCheck || 'Перевірка з підсвічуванням'}</span>
-              <span className="hub-block-s">{L.hubDocCheckSub || 'AI знаходить помилки в документі та підсвічує їх — наведіть курсор, щоб побачити деталі.'}</span>
               <span className="hub-open">{L.hubOpen} <Icon name="arrowR" size={14} /></span>
             </button>
           </HelpTip>
@@ -747,9 +734,5 @@ function AppShell() {
 }
 
 export default function App() {
-  return (
-    <DocumentProcessingProvider>
-      <AppShell />
-    </DocumentProcessingProvider>
-  );
+  return <AppShell />;
 }
