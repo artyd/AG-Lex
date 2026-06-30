@@ -14,6 +14,11 @@ export const PROCESSING_LABELS = {
   ocr: 'Розпізнавання тексту (OCR)',
   analysis: 'Аналіз документа',
   fix: 'Застосування виправлення',
+  // Long-lived marker held by ContractAnalysis whenever a real (non-demo)
+  // analysis session is on screen — covers both "analyzing" and "findings
+  // already loaded". Keeps the exit guard armed for sidebar nav clicks
+  // even after the API round-trip finishes.
+  session: 'Сеанс аналізу',
 };
 
 export function DocumentProcessingProvider({ children }) {
