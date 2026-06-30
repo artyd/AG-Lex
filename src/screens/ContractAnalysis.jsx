@@ -14,6 +14,7 @@ import { AnalysisView } from './analysis/AnalysisView';
 import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 import { buildFromRegex } from '../lib/findingHighlight';
+import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
 
 const LEVEL_COLOR = {
   high: 'var(--risk-high)', med: 'var(--risk-med)', low: 'var(--risk-low)', info: 'var(--info)',
@@ -1039,6 +1040,7 @@ function ContractAnalysisMain({ t, incoming }) {
 
 function ContractAnalysisSingle({ t, incoming }) {
   const D = DEMO;
+  const { startOperation, endOperation } = useDocumentProcessing();
   // Real analysis result from POST /api/analyze/contract. Null until the
   // round-trip completes (or never, in demo mode).
   const [analysis, setAnalysis] = useState(null);
@@ -1125,6 +1127,7 @@ function ContractAnalysisSingle({ t, incoming }) {
     liveRef.current = true;
     if (!incoming || !incoming.markdown) return () => { liveRef.current = false; };
     let cancelled = false;
+    startOperation('analysis');
     (async () => {
       try {
         const res = await api.analyzeContract({
@@ -1169,9 +1172,11 @@ function ContractAnalysisSingle({ t, incoming }) {
         toast(t.uploadError || 'Analysis failed', 'alert');
         setAnalysisStatus('error');
         setPhase('ready');
+      } finally {
+        endOperation('analysis');
       }
     })();
-    return () => { cancelled = true; liveRef.current = false; };
+    return () => { cancelled = true; liveRef.current = false; endOperation('analysis'); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming]);
 
@@ -1245,6 +1250,7 @@ function ContractAnalysisSingle({ t, incoming }) {
   async function runPendingAnalysis(markdown) {
     if (!pendingAlive.current) return;
     setPendingStatus('loading');
+    startOperation('analysis');
     try {
       const res = await api.request('/api/analyze/contract', {
         method: 'POST',
@@ -1258,6 +1264,8 @@ function ContractAnalysisSingle({ t, incoming }) {
       // banner. The screen still shows the prototype document underneath.
       if (!pendingAlive.current) return;
       setPendingStatus('error');
+    } finally {
+      endOperation('analysis');
     }
   }
 
@@ -1273,6 +1281,20 @@ function ContractAnalysisSingle({ t, incoming }) {
     const tm = setTimeout(() => setPhase('ready'), 2350);
     return () => clearTimeout(tm);
   }, [phase, incoming]);
+
+  // Exit-guard hook: keep a long-lived 'session' op flagged while a real
+  // analysis is on screen — covers both "analysing" and "findings loaded".
+  // The sidebar's guardedSetRoute reads isProcessing and pops the confirmation
+  // modal before letting the nav click through. Demo / error fall-through
+  // states deliberately leave the guard off — the user has nothing to lose.
+  const sessionActive =
+    analysisStatus === 'loading' || analysisStatus === 'ready' ||
+    pendingStatus  === 'loading' || pendingStatus  === 'ready';
+  useEffect(() => {
+    if (!sessionActive) return undefined;
+    startOperation('session');
+    return () => endOperation('session');
+  }, [sessionActive, startOperation, endOperation]);
 
   const scrollToSeg = (id) => {
     const el = segRefs.current[id];
