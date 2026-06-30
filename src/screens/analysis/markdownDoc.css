@@ -226,3 +226,83 @@ ins.md-hl-applied-new {
   line-height: 1.5;
   max-width: 360px;
 }
+
+/* --- Document toolbar (view / edit / zoom / download) ---
+   Sticks to the top of the doc-scroll pane so it stays visible while the
+   user scrolls a long contract. Tokens-only so it follows light/dark. */
+.doc-edit-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.doc-edit-toolbar .zoom-label {
+  min-width: 40px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.doc-edit-toolbar .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* --- Zoom wrapper --- scales the doc body via inherited font-size.
+   Lives inside doc-scroll so the toolbar isn't scaled. */
+.doc-zoom-wrap {
+  font-size: calc(var(--doc-zoom, 1) * 1rem);
+  transition: font-size 0.12s ease;
+}
+
+/* --- Edit mode ---
+   Read-only section labels above each textarea; the textareas grow with
+   their content so the page reads like a long form, not a fixed-height
+   editor. Tokens-only for dark-mode parity. */
+.md-doc-edit .md-section-edit {
+  margin-bottom: var(--s5);
+}
+.md-section-title-edit {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  user-select: none;
+}
+.md-edit-area {
+  width: 100%;
+  min-height: 60px;
+  resize: none;
+  overflow: hidden;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.md-edit-area:hover {
+  border-color: var(--border-strong);
+}
+.md-edit-area:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 18%, transparent);
+}
