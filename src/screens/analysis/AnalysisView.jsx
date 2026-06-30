@@ -24,6 +24,7 @@ export function AnalysisView({
   panel,                // ReactNode for the right side (AiPanel etc.)
   active, setActive,    // selected finding id ↔ panel
   hovered, setHovered,  // hover state (mark ↔ card)
+  applied,              // { [findingId]: true } — finding has been "Apply fix"ed
   t,
 }) {
   const docs = Array.isArray(documents) && documents.length > 0
@@ -66,6 +67,7 @@ export function AnalysisView({
             filename={cur.filename || cur.label}
             sections={cur.sections}
             findings={findings}
+            applied={applied}
             active={active}
             hovered={hovered}
             setActive={setActive}
