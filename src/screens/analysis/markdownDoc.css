@@ -75,72 +75,133 @@
   font-style: italic;
 }
 
-/* --- Text-color highlights (no background) ---
-   Renders the matched phrase in the risk color. Dotted underline keeps
-   the affordance "this is clickable" even when the cursor isn't hovering.
-   Hover thickens to solid; active wraps in a soft glow. */
+/* --- Inline finding marks ---
+   Tinted background + colored underline so the problematic phrase reads
+   like a real highlight, not a faint dotted hint. Per-level color comes
+   from the design-system risk tokens so dark mode stays consistent. */
 .md-hl {
-  color: var(--risk-high);          /* default — overridden by level class */
-  font-weight: 600;
+  background: transparent;
+  color: inherit;
+  border-radius: 2px;
+  padding: 1px 0;
   cursor: pointer;
   text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 3px;
-  transition: text-decoration-style 0.12s, text-shadow 0.12s;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  transition: background 0.15s, outline 0.15s;
 }
-.md-hl-high { color: var(--risk-high); }
-.md-hl-med  { color: var(--risk-med);  }
-.md-hl-low  { color: var(--risk-low);  }
-.md-hl-info { color: var(--info);      }
+.md-hl-high {
+  background: var(--risk-high-soft);
+  text-decoration-color: var(--risk-high);
+}
+.md-hl-med {
+  background: var(--risk-med-soft);
+  text-decoration-color: var(--risk-med);
+}
+.md-hl-low {
+  background: var(--risk-low-soft);
+  text-decoration-color: var(--risk-low);
+}
+.md-hl-info {
+  background: color-mix(in oklab, var(--info) 14%, transparent);
+  text-decoration-color: var(--info);
+}
 
+/* Hover — sticky parity with the AI panel card hover */
 .md-hl-hover {
-  text-decoration-style: solid;
-}
-.md-hl-active {
-  text-decoration-style: solid;
-  text-decoration-thickness: 2px;
-  text-shadow: 0 0 0.6px currentColor;
+  background: color-mix(in oklab, currentColor 18%, transparent);
 }
 
-/* Applied — finding has been auto-corrected; the new text shows in calm green
-   with a solid underline (visually distinct from the still-problematic dotted
-   state). Same specificity as .md-hl-{level}; this rule must stay AFTER the
-   level rules so the cascade picks the applied color when both classes apply. */
-.md-hl-applied {
-  color: var(--risk-low);
-  text-decoration-style: solid;
-  text-decoration-thickness: 2px;
+/* Active — clicked in the AI panel; ring matches the level color */
+.md-hl.md-hl-active {
+  outline: 2px solid var(--risk-high);
+  outline-offset: 1px;
 }
-.md-hl-chip.md-hl-applied {
-  color: var(--risk-low);
-  background: color-mix(in oklab, var(--risk-low) 12%, transparent);
-}
+.md-hl-high.md-hl-active { outline-color: var(--risk-high); }
+.md-hl-med.md-hl-active  { outline-color: var(--risk-med);  }
+.md-hl-low.md-hl-active  { outline-color: var(--risk-low);  }
+.md-hl-info.md-hl-active { outline-color: var(--info);      }
 
-/* Fallback chip — heading decoration for findings whose `suggest.from`
-   text didn't match the body. Uses a colored token, not a colored block. */
-.md-hl-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 2px 8px;
-  border-radius: 999px;
+/* Applied — diff view: old text struck through, new text shown inline.
+   The renderer wraps the matched phrase in <mark.md-hl-applied-old>
+   followed by an <ins.md-hl-applied-new> with the suggested replacement,
+   so the reader sees old → new in place without re-reading the document. */
+mark.md-hl-applied-old {
+  background: color-mix(in oklab, var(--risk-high) 8%, transparent);
+  color: var(--text-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--risk-high);
+  text-decoration-thickness: 2px;
+  border-radius: 2px;
+  padding: 1px 0;
   cursor: pointer;
-  color: var(--risk-high);
-  background: transparent;
-  border: 1px solid currentColor;
-  user-select: none;
 }
-.md-hl-chip.md-hl-med  { color: var(--risk-med);  }
-.md-hl-chip.md-hl-low  { color: var(--risk-low);  }
-.md-hl-chip.md-hl-info { color: var(--info);      }
-.md-hl-chip.md-hl-active {
-  background: color-mix(in oklab, currentColor 12%, transparent);
+ins.md-hl-applied-new {
+  background: color-mix(in oklab, var(--risk-low) 16%, transparent);
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 2px solid var(--risk-low);
+  border-radius: 2px;
+  padding: 1px 0;
+  font-style: normal;
+  cursor: pointer;
 }
-.md-hl-chip > svg { flex: 0 0 auto; }
+
+/* --- Margin annotation (fallback when text didn't match) ---
+   Renders below the heading as a left-bordered card so the reader knows a
+   finding lives on this clause even when the model's quote couldn't be
+   located in the body. Click flows to the AI panel like a normal mark. */
+.md-margin-annotation {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--risk-high);
+  background: color-mix(in oklab, var(--risk-high) 6%, transparent);
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  transition: background 0.12s;
+}
+.md-margin-annotation:hover {
+  background: color-mix(in oklab, var(--risk-high) 12%, transparent);
+}
+.md-margin-annotation.ann-med {
+  border-left-color: var(--risk-med);
+  background: color-mix(in oklab, var(--risk-med) 6%, transparent);
+}
+.md-margin-annotation.ann-med:hover {
+  background: color-mix(in oklab, var(--risk-med) 14%, transparent);
+}
+.md-margin-annotation.ann-low {
+  border-left-color: var(--risk-low);
+  background: color-mix(in oklab, var(--risk-low) 6%, transparent);
+}
+.md-margin-annotation.ann-low:hover {
+  background: color-mix(in oklab, var(--risk-low) 14%, transparent);
+}
+.md-margin-annotation.ann-info {
+  border-left-color: var(--info);
+  background: color-mix(in oklab, var(--info) 6%, transparent);
+}
+.md-margin-annotation.ann-active {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+.md-margin-annotation .ann-clause {
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--text);
+}
+.md-margin-annotation .ann-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
 
 /* --- Empty state when sections are unavailable --- */
 .md-empty {

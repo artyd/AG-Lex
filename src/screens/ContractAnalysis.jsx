@@ -13,7 +13,6 @@ import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, 
 import { AnalysisView } from './analysis/AnalysisView';
 import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
-import { buildFromRegex } from '../lib/findingHighlight';
 import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
 
 const LEVEL_COLOR = {
@@ -1065,18 +1064,21 @@ function ContractAnalysisSingle({ t, incoming }) {
   const effectiveSections = (effectiveDoc && Array.isArray(effectiveDoc.sections))
     ? effectiveDoc.sections
     : [];
-  // localSections is the mutable copy that "Apply fix" rewrites. It re-syncs
-  // whenever the upstream upload payload changes (new analysis, library reopen).
-  const [localSections, setLocalSections] = useState(effectiveSections);
-  useEffect(() => { setLocalSections(effectiveSections); }, [effectiveSections]);
+  // The document stays at the analyzer's original text — "Apply fix" no
+  // longer rewrites the sections. The fix surfaces inline as a diff
+  // (strike old + green new) so the reader can see the correction in
+  // place; the underlying paragraph never silently morphs.
   const docsForView = useMemo(() => {
     const filename = (effectiveDoc && effectiveDoc.filename) || 'Договір';
     return [{
       label: filename,
       filename,
-      sections: localSections,
+      sections: effectiveSections,
     }];
-  }, [effectiveDoc, localSections]);
+    // effectiveSections is derived from effectiveDoc — using both as deps
+    // would re-create the same object twice. Single source covers both.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveDoc]);
   const useAnalysisView = effectiveSections.length > 0;
 
   // Merged data source: real fields override DEMO when available. PR-2 of
@@ -1311,37 +1313,16 @@ function ContractAnalysisSingle({ t, incoming }) {
     }, 60);
   };
 
-  // Replace one finding's suggest.from with suggest.to in the first section
-  // it matches. buildFromRegex (shared with the highlighter) is whitespace +
-  // quote-loose, so the "Applied" semantics never diverge from the "Highlight"
-  // semantics. Function-form `replace()` so `$&`/`$1` inside suggest.to aren't
-  // treated as backreferences.
-  const applyFixToSections = (sections, finding) => {
-    const from = finding?.suggest?.from;
-    const to = finding?.suggest?.to;
-    if (!from || !to) return sections;
-    const re = buildFromRegex(from);
-    if (!re) return sections;
-    let replaced = false;
-    const next = sections.map(sec => {
-      if (replaced) return sec;
-      const text = sec.text || '';
-      if (!re.test(text)) return sec;
-      replaced = true;
-      return { ...sec, text: text.replace(re, () => to) };
-    });
-    return replaced ? next : sections;
-  };
+  // "Apply" only flips the applied flag — MarkdownDoc renders the diff
+  // (strike old + green new) inline using the original section text. We
+  // intentionally do not mutate the document body so the user always has
+  // a stable reading anchor; the diff layer carries the correction.
   const onApply = (id) => {
     const f = data.findings.find(x => x.id === id);
     if (!f) return;
-    setLocalSections(prev => applyFixToSections(prev, f));
     setApplied(a => ({ ...a, [id]: true }));
   };
   const onApplyAll = () => {
-    setLocalSections(prev =>
-      data.findings.reduce((acc, f) => (f.suggest ? applyFixToSections(acc, f) : acc), prev),
-    );
     const next = {};
     data.findings.forEach(f => { if (f.suggest) next[f.id] = true; });
     setApplied(a => ({ ...a, ...next }));
@@ -1349,7 +1330,6 @@ function ContractAnalysisSingle({ t, incoming }) {
   };
   const reanalyze = () => {
     setPhase('loading'); setActive(null); setApplied({});
-    setLocalSections(effectiveSections);
     setTab('risks'); setAddedSet(new Set());
   };
 
@@ -1377,16 +1357,6 @@ function ContractAnalysisSingle({ t, incoming }) {
   };
 
   const addedClauses = data.missing.filter((_, i) => addedSet.has(i));
-
-  // For applied findings, swap suggest.from → suggest.to so MarkdownDoc keeps
-  // matching the (now rewritten) text in localSections — and the mark renders
-  // in the calm-green md-hl-applied state instead of the red/yellow/blue
-  // problematic colors.
-  const findingsForView = useMemo(() => data.findings.map(f => (
-    applied[f.id] && f.suggest?.to
-      ? { ...f, suggest: { ...f.suggest, from: f.suggest.to } }
-      : f
-  )), [data.findings, applied]);
 
   return (
     <div className="analysis">
@@ -1471,7 +1441,7 @@ function ContractAnalysisSingle({ t, incoming }) {
         // AnalysisView owns the text rendering + text-color highlights.
         <AnalysisView
           documents={docsForView}
-          findings={findingsForView}
+          findings={data.findings}
           applied={applied}
           active={active}
           setActive={(fid) => { setActive(fid); scrollFindingCard(fid); }}

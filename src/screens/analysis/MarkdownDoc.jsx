@@ -95,8 +95,11 @@ function parseBlocks(text) {
 
 /* ---------- Single paragraph w/ inline highlights ----------
    Tries each finding's suggest.from against the paragraph text. Matches
-   become text-color spans; unmatched findings bubble up so the heading
-   chip fallback still surfaces them. */
+   become inline marks (tinted background + colored underline). When the
+   finding has been "applied", the matched phrase is rendered as a diff
+   (struck-through old + green inserted new) so the reader sees the
+   correction in place. Unmatched findings bubble up via the `consumed`
+   set so the section heading can render a margin-annotation fallback. */
 function HighlightedText({ text, findings, hl, consumed }) {
   const { parts, matched } = useMemo(
     () => buildHighlightParts(text, findings),
@@ -110,17 +113,49 @@ function HighlightedText({ text, findings, hl, consumed }) {
     const f = p.f;
     const isActive = hl && hl.active === f.id;
     const isHovered = hl && hl.hovered === f.id;
+    const isApplied = !!(hl && hl.applied && hl.applied[f.id]);
+    const setRef = (el) => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; };
+    const onEnter = () => hl && hl.setHovered && hl.setHovered(f.id);
+    const onLeave = () => hl && hl.setHovered && hl.setHovered(null);
+    const onClick = () => hl && hl.onPick && hl.onPick(f.id);
+
+    if (isApplied && f.suggest && f.suggest.to) {
+      // Diff: old (strike) → new (green). The ref + handlers sit on the
+      // old half so click/hover semantics match the unapplied mark.
+      return (
+        <span key={i}>
+          <mark
+            ref={setRef}
+            className="md-hl-applied-old"
+            onMouseEnter={onEnter}
+            onMouseLeave={onLeave}
+            onClick={onClick}
+          >
+            {p.matched}
+          </mark>
+          {' '}
+          <ins
+            className="md-hl-applied-new"
+            onMouseEnter={onEnter}
+            onMouseLeave={onLeave}
+            onClick={onClick}
+          >
+            {f.suggest.to}
+          </ins>
+        </span>
+      );
+    }
+
     return (
       <mark
         key={i}
-        ref={(el) => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
+        ref={setRef}
         className={'md-hl md-hl-' + f.level
           + (isActive ? ' md-hl-active' : '')
-          + (isHovered ? ' md-hl-hover' : '')
-          + (hl && hl.applied && hl.applied[f.id] ? ' md-hl-applied' : '')}
-        onMouseEnter={() => hl && hl.setHovered && hl.setHovered(f.id)}
-        onMouseLeave={() => hl && hl.setHovered && hl.setHovered(null)}
-        onClick={() => hl && hl.onPick && hl.onPick(f.id)}
+          + (isHovered ? ' md-hl-hover' : '')}
+        onMouseEnter={onEnter}
+        onMouseLeave={onLeave}
+        onClick={onClick}
       >
         {p.matched}
       </mark>
@@ -165,29 +200,47 @@ function Block({ block, findings, hl, consumed }) {
   );
 }
 
-/* ---------- Section heading w/ fallback finding chips ---------- */
-function SectionHead({ section, fallback, hl, t }) {
+/* ---------- Section heading ---------- */
+function SectionHead({ section }) {
   const head = [section.number, section.title].filter(Boolean).join(' ');
   if (!head) return null;
+  return <h3 className="md-section-title">{head}</h3>;
+}
+
+/* ---------- Fallback finding annotations ----------
+   Rendered as left-bordered margin cards between the heading and the
+   body. Used when a finding's `suggest.from` quote couldn't be located
+   in the paragraph text — the reader still sees that a finding lives on
+   this clause and clicking the card flows to the AI panel exactly like
+   a normal inline mark would. */
+function FallbackAnnotations({ fallback, hl }) {
+  if (!fallback || fallback.length === 0) return null;
   return (
-    <h3 className="md-section-title">
-      {head}
+    <div className="md-margin-annotations">
       {fallback.map((f, k) => (
-        <mark
+        <div
           key={k}
           ref={(el) => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
-          className={'md-hl-chip md-hl-' + f.level
-            + (hl && hl.active === f.id ? ' md-hl-active' : '')
-            + (hl && hl.applied && hl.applied[f.id] ? ' md-hl-applied' : '')}
-          title={f.title}
+          className={'md-margin-annotation ann-' + f.level
+            + (hl && hl.active === f.id ? ' ann-active' : '')}
+          title={f.desc || f.title}
           onMouseEnter={() => hl && hl.setHovered && hl.setHovered(f.id)}
           onMouseLeave={() => hl && hl.setHovered && hl.setHovered(null)}
           onClick={() => hl && hl.onPick && hl.onPick(f.id)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (hl && hl.onPick) hl.onPick(f.id);
+            }
+          }}
         >
-          <Icon name="alert" size={11} /> {f.clause}
-        </mark>
+          {f.clause ? <span className="ann-clause">{f.clause}</span> : null}
+          <span className="ann-title">{f.title}</span>
+        </div>
       ))}
-    </h3>
+    </div>
   );
 }
 
@@ -246,7 +299,8 @@ export function MarkdownDoc({
         const fallback = sectionFindings.filter((f) => !consumed.has(f.id));
         return (
           <section className="md-section" id={anchor} key={i}>
-            <SectionHead section={s} fallback={fallback} hl={hl} t={t} />
+            <SectionHead section={s} />
+            <FallbackAnnotations fallback={fallback} hl={hl} />
             {body}
           </section>
         );
