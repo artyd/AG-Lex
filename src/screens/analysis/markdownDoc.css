@@ -103,6 +103,20 @@
   text-shadow: 0 0 0.6px currentColor;
 }
 
+/* Applied — finding has been auto-corrected; the new text shows in calm green
+   with a solid underline (visually distinct from the still-problematic dotted
+   state). Same specificity as .md-hl-{level}; this rule must stay AFTER the
+   level rules so the cascade picks the applied color when both classes apply. */
+.md-hl-applied {
+  color: var(--risk-low);
+  text-decoration-style: solid;
+  text-decoration-thickness: 2px;
+}
+.md-hl-chip.md-hl-applied {
+  color: var(--risk-low);
+  background: color-mix(in oklab, var(--risk-low) 12%, transparent);
+}
+
 /* Fallback chip — heading decoration for findings whose `suggest.from`
    text didn't match the body. Uses a colored token, not a colored block. */
 .md-hl-chip {

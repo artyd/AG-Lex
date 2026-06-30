@@ -116,7 +116,8 @@ function HighlightedText({ text, findings, hl, consumed }) {
         ref={(el) => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
         className={'md-hl md-hl-' + f.level
           + (isActive ? ' md-hl-active' : '')
-          + (isHovered ? ' md-hl-hover' : '')}
+          + (isHovered ? ' md-hl-hover' : '')
+          + (hl && hl.applied && hl.applied[f.id] ? ' md-hl-applied' : '')}
         onMouseEnter={() => hl && hl.setHovered && hl.setHovered(f.id)}
         onMouseLeave={() => hl && hl.setHovered && hl.setHovered(null)}
         onClick={() => hl && hl.onPick && hl.onPick(f.id)}
@@ -175,7 +176,9 @@ function SectionHead({ section, fallback, hl, t }) {
         <mark
           key={k}
           ref={(el) => { if (el && hl && hl.segRefs) hl.segRefs.current[f.id] = el; }}
-          className={'md-hl-chip md-hl-' + f.level + (hl && hl.active === f.id ? ' md-hl-active' : '')}
+          className={'md-hl-chip md-hl-' + f.level
+            + (hl && hl.active === f.id ? ' md-hl-active' : '')
+            + (hl && hl.applied && hl.applied[f.id] ? ' md-hl-applied' : '')}
           title={f.title}
           onMouseEnter={() => hl && hl.setHovered && hl.setHovered(f.id)}
           onMouseLeave={() => hl && hl.setHovered && hl.setHovered(null)}
@@ -197,6 +200,7 @@ export function MarkdownDoc({
   hovered,
   setActive,
   setHovered,
+  applied,            // { [findingId]: true } — toggles md-hl-applied (green) on the matched mark
   t,
 }) {
   const segRefs = useRef({});
@@ -207,7 +211,8 @@ export function MarkdownDoc({
     setHovered,
     onPick: (fid) => { if (setActive) setActive(fid); },
     segRefs,
-  }), [active, hovered, setHovered, setActive]);
+    applied: applied || {},
+  }), [active, hovered, setHovered, setActive, applied]);
 
   const list = Array.isArray(sections) ? sections : [];
   if (list.length === 0) {
