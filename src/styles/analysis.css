@@ -416,14 +416,18 @@
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
 }
-/* Карточка = div-обёртка + внутренняя button.lib-card-open. Разделено на
-   два элемента, чтобы кнопка «Видалити» жила рядом с открытием, а не
-   nested-button внутри button (невалидный HTML). Визуальные hover/focus/
-   анимации переехали на .lib-card-open; .lib-card держит только позицию. */
+/* Карточка = 3-уровневая структура для CSS 3D-flip:
+     .lib-card              — perspective-контейнер + backing box для hover
+     .lib-card-inner        — transform-target (rotateY),  preserve-3d
+     .lib-card-face         — front / back слои, backface-visibility:hidden
+   Front — существующая .lib-card-open (button, click = открыть договор).
+   Back  — панель с двумя действиями (Відкрити / Видалити). Flip триггерит
+   :hover ИЛИ :focus-within — доступно с клавиатуры без мыши. Для не-договоров
+   (reconcile) класса .lib-card-flippable нет — карточка не переворачивается. */
 .lib-card {
   position: relative;
-  overflow: hidden;
   border-radius: var(--r-md);
+  perspective: 1200px;
   animation: libCardIn 0.32s ease-out backwards;
 }
 .lib-card:nth-child(1) { animation-delay: 0.02s; }
@@ -432,6 +436,67 @@
 .lib-card:nth-child(4) { animation-delay: 0.11s; }
 .lib-card:nth-child(5) { animation-delay: 0.14s; }
 .lib-card:nth-child(6) { animation-delay: 0.17s; }
+.lib-card-inner {
+  position: relative;
+  width: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.28s cubic-bezier(.22,.61,.36,1);
+}
+.lib-card-flippable:hover .lib-card-inner,
+.lib-card-flippable:focus-within .lib-card-inner {
+  transform: rotateY(180deg);
+}
+.lib-card-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: var(--r-md);
+}
+.lib-card-front {
+  position: relative; /* держит высоту .lib-card-inner по front-контенту */
+}
+.lib-card-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent), 0 4px 10px rgba(0,0,0,0.04);
+}
+.lib-card-back-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: var(--s5) var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.14s, border-color 0.14s, color 0.14s, background 0.14s;
+}
+.lib-card-back-btn:hover { transform: translateY(-2px); }
+.lib-card-back-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lib-card-back-open:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+}
+.lib-card-back-del:hover {
+  color: var(--risk-high);
+  border-color: var(--risk-high);
+  background: color-mix(in oklab, var(--risk-high) 8%, transparent);
+}
+.lib-card-back-del:focus-visible { outline-color: var(--risk-high); }
+
 .lib-card-open {
   position: relative;
   display: flex; flex-direction: column; gap: 8px;
@@ -443,29 +508,26 @@
   transition: transform 0.18s cubic-bezier(.22,.61,.36,1),
               box-shadow 0.18s, border-color 0.18s;
 }
-.lib-card-open:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent), 0 4px 10px rgba(0,0,0,0.04); }
+/* Hover-визуал (тень/подъём) переносим на .lib-card, чтобы он оставался
+   видимым даже когда front-face повернулся вокруг Y (backface-visibility
+   скрывает сам button, но outer div остаётся в потоке). */
+.lib-card:hover .lib-card-open,
+.lib-card:not(.lib-card-flippable) .lib-card-open:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent),
+              0 4px 10px rgba(0,0,0,0.04);
+}
 .lib-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lib-card-open:active { transform: translateY(-1px); }
-.lib-card-del {
-  position: absolute; top: 8px; right: 8px; z-index: 2;
-  width: 26px; height: 26px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid transparent; border-radius: var(--r-sm);
-  background: transparent; color: var(--text-3);
-  cursor: pointer;
-  transition: color 0.14s, background 0.14s, border-color 0.14s, opacity 0.14s;
-  opacity: 0;
+/* Мобильная сборка: без hover flip недоступен — держим back постоянно видимым
+   (полу-прозрачно) и разрешаем клик по нему без предварительного «наведения». */
+@media (hover: none) {
+  .lib-card-flippable .lib-card-inner { transform: none; }
+  .lib-card-flippable .lib-card-back {
+    position: static; transform: none;
+    margin-top: var(--s2);
+  }
 }
-.lib-card:hover .lib-card-del,
-.lib-card-del:focus-visible { opacity: 1; }
-.lib-card-del:hover {
-  color: var(--risk-high);
-  background: color-mix(in oklab, var(--risk-high) 12%, transparent);
-  border-color: color-mix(in oklab, var(--risk-high) 24%, transparent);
-}
-.lib-card-del:focus-visible { outline: 2px solid var(--risk-high); outline-offset: 2px; }
-/* Мобильная сборка — скрытые иконки на hover бесполезны; показываем всегда. */
-@media (hover: none) { .lib-card-del { opacity: 1; } }
 
 .lib-row-del {
   display: inline-flex; align-items: center; justify-content: center;
@@ -570,7 +632,7 @@
 .lib-table-pretty tbody tr.lib-row-low  td:first-child::before { background: var(--risk-low);  opacity: 1; }
 
 @media (prefers-reduced-motion: reduce) {
-  .lib-card, .lib-kpi, .lib-card-arrow { animation: none !important; transition: none !important; }
+  .lib-card, .lib-kpi, .lib-card-arrow, .lib-card-inner { animation: none !important; transition: none !important; }
 }
 
 /* ============================================================

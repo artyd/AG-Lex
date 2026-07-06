@@ -355,61 +355,81 @@ function Library({ t, setRoute, query, clearAnalysisIncoming, onLibraryChange })
         ) : view === 'grid' ? (
           <div className="lib-grid">
             {rows.map(c => (
-              <div key={c.id} className={'lib-card lib-card-' + c.risk + (c.isRecon ? ' lib-card-recon' : '')}>
-                <button
-                  type="button"
-                  className="lib-card-open"
-                  onClick={() => openRow(c)}
-                  aria-label={c.name}>
-                  <span className="lib-stripe" />
-                  <div className="lib-card-head">
-                    <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
-                      <Icon name={c.isRecon ? 'scan' : 'doc'} size={16} />
-                    </span>
-                    <span className="lib-kind-chip">
-                      {c.isRecon ? (t.libRecons || 'Звірка') : (t.libContracts || 'Договір')}
-                    </span>
-                    <RiskBadge level={c.risk} t={t} />
-                  </div>
-                  <div className="lib-card-title">{c.name}</div>
-                  <div className="lib-card-sub">{c.client}</div>
-                  <div className="lib-card-foot">
-                    <div className="lib-score" style={{ color: scoreColor(c.score) }}>
-                      {typeof c.score === 'number' ? (
-                        <>
-                          <span className="lib-score-v">{c.score}</span>
-                          <span className="lib-score-l">{t.colScore || 'Оцінка'}</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="lib-score-v lib-score-na">—</span>
-                          <span className="lib-score-l">{t.libNoScore || 'Без оцінки'}</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="lib-meta">
-                      {c.findingsCount ? (
-                        <span className="lib-meta-bit" title={t.libFindings || 'Зауваження'}>
-                          <Icon name="alert" size={11} /> {c.findingsCount}
-                        </span>
-                      ) : null}
-                      <span className="lib-meta-bit lib-meta-date">
-                        <Icon name="calendar" size={11} /> {c.date}
-                      </span>
-                    </div>
-                  </div>
-                  <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
-                </button>
-                {c.isContract ? (
+              // Только для договоров карточка «переворачивается» на hover/focus
+              // и показывает back-face с двумя действиями. Reconcile-строкам
+              // flip не нужен: удаления пока нет, а «відкрити» — click куда
+              // угодно по карте.
+              <div
+                key={c.id}
+                className={
+                  'lib-card lib-card-' + c.risk
+                  + (c.isRecon ? ' lib-card-recon' : '')
+                  + (c.isContract ? ' lib-card-flippable' : '')
+                }>
+                <div className="lib-card-inner">
                   <button
                     type="button"
-                    className="lib-card-del"
-                    aria-label={t.deleteContract || 'Видалити'}
-                    title={t.deleteContract || 'Видалити'}
-                    onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: c.id, name: c.name }); }}>
-                    <Icon name="trash" size={13} />
+                    className="lib-card-face lib-card-front lib-card-open"
+                    onClick={() => openRow(c)}
+                    aria-label={c.name}>
+                    <span className="lib-stripe" />
+                    <div className="lib-card-head">
+                      <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
+                        <Icon name={c.isRecon ? 'scan' : 'doc'} size={16} />
+                      </span>
+                      <span className="lib-kind-chip">
+                        {c.isRecon ? (t.libRecons || 'Звірка') : (t.libContracts || 'Договір')}
+                      </span>
+                      <RiskBadge level={c.risk} t={t} />
+                    </div>
+                    <div className="lib-card-title">{c.name}</div>
+                    <div className="lib-card-sub">{c.client}</div>
+                    <div className="lib-card-foot">
+                      <div className="lib-score" style={{ color: scoreColor(c.score) }}>
+                        {typeof c.score === 'number' ? (
+                          <>
+                            <span className="lib-score-v">{c.score}</span>
+                            <span className="lib-score-l">{t.colScore || 'Оцінка'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="lib-score-v lib-score-na">—</span>
+                            <span className="lib-score-l">{t.libNoScore || 'Без оцінки'}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="lib-meta">
+                        {c.findingsCount ? (
+                          <span className="lib-meta-bit" title={t.libFindings || 'Зауваження'}>
+                            <Icon name="alert" size={11} /> {c.findingsCount}
+                          </span>
+                        ) : null}
+                        <span className="lib-meta-bit lib-meta-date">
+                          <Icon name="calendar" size={11} /> {c.date}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
                   </button>
-                ) : null}
+                  {c.isContract ? (
+                    <div className="lib-card-face lib-card-back">
+                      <button
+                        type="button"
+                        className="lib-card-back-btn lib-card-back-open"
+                        onClick={() => openRow(c)}>
+                        <Icon name="folder" size={26} />
+                        <span>{t.openContract || 'Відкрити'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="lib-card-back-btn lib-card-back-del"
+                        onClick={() => setPendingDelete({ id: c.id, name: c.name })}>
+                        <Icon name="trash" size={26} />
+                        <span>{t.deleteContract || 'Видалити'}</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
