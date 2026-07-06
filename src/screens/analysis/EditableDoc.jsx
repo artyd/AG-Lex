@@ -62,7 +62,11 @@ const flashField = StateField.define({
 const aglexTheme = EditorView.theme({
   '&': {
     fontFamily: 'var(--font-doc)',
-    fontSize: '15px',
+    // --doc-zoom пропускается через AnalysisView → .doc-zoom-wrap (0.7…1.5).
+    // Тулбар редактора крутит zoom, CSS custom prop наследуется вниз до
+    // CodeMirror, размер шрифта пересчитывается на каждый тик. Fallback 1
+    // держит рендер живым, если пропа-обёртки нет.
+    fontSize: 'calc(var(--doc-zoom, 1) * 15px)',
     backgroundColor: 'var(--surface)',
     color: 'var(--text)',
     height: 'auto',
@@ -89,10 +93,11 @@ const aglexTheme = EditorView.theme({
    в отдельные блоки), чтобы редактирование через границу «## заголовок
    ↔ параграф» не глючило с каретом. */
 const aglexHighlight = HighlightStyle.define([
-  { tag: t.heading1, fontSize: '19px', fontWeight: '700', color: 'var(--accent)' },
-  { tag: t.heading2, fontSize: '17px', fontWeight: '700', color: 'var(--accent)' },
-  { tag: t.heading3, fontSize: '15.5px', fontWeight: '650', color: 'var(--text)' },
-  { tag: t.heading4, fontSize: '14.5px', fontWeight: '650', color: 'var(--text-2)' },
+  // em, чтобы заголовки масштабировались вместе с --doc-zoom.
+  { tag: t.heading1, fontSize: '1.27em', fontWeight: '700', color: 'var(--accent)' },
+  { tag: t.heading2, fontSize: '1.13em', fontWeight: '700', color: 'var(--accent)' },
+  { tag: t.heading3, fontSize: '1.03em', fontWeight: '650', color: 'var(--text)' },
+  { tag: t.heading4, fontSize: '0.97em', fontWeight: '650', color: 'var(--text-2)' },
   { tag: t.strong, fontWeight: '700' },
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.strikethrough, textDecoration: 'line-through', color: 'var(--text-3)' },

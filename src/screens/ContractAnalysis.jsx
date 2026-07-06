@@ -1212,15 +1212,19 @@ function ContractAnalysisSingle({ t, incoming }) {
   const effectiveSections = (effectiveDoc && Array.isArray(effectiveDoc.sections))
     ? effectiveDoc.sections
     : [];
-  // editedMarkdown — единый source of truth для CodeMirror-редактора.
-  // На старте склеиваем секции из аплоада в одну markdown-строку (та же
-  // sectionsToMarkdown, что используется в экспорте, так что round-trip
-  // документа при export/re-import совпадает). На новый upload / library
-  // reopen пересобираем строку заново.
-  const [editedMarkdown, setEditedMarkdown] = useState(() => sectionsToMarkdown(effectiveSections));
+  // Приоритет — сохранённая markdown-строка (после первого save юрист
+  // редактировал не по секциям, а построчно; секции стали stale). Fallback —
+  // склейка из секций. Так восстанавливаем ровно то, что было в редакторе на
+  // момент последнего save при возврате из Library.
+  const effectiveMarkdown = (effectiveDoc && typeof effectiveDoc.markdown === 'string')
+    ? effectiveDoc.markdown
+    : sectionsToMarkdown(effectiveSections);
+  // editedMarkdown — единый source of truth для CodeMirror-редактора. На
+  // новый upload / library reopen пересобираем строку заново.
+  const [editedMarkdown, setEditedMarkdown] = useState(effectiveMarkdown);
   useEffect(() => {
-    setEditedMarkdown(sectionsToMarkdown(effectiveSections));
-  }, [effectiveSections]);
+    setEditedMarkdown(effectiveMarkdown);
+  }, [effectiveMarkdown]);
   // AnalysisView всё ещё ждёт documents[].sections для fallback-ветки
   // (MarkdownDoc) — держим оригинальные effectiveSections. В нашей ветке
   // docOverride=<EditableDoc> перекрывает MarkdownDoc, но проп всё равно
@@ -1268,6 +1272,12 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
   const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
   const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
+  // selectedFormat — «выбранный» вариант в split-button. Клик по левой
+  // половине кнопки скачивает в этом формате; клик по элементу дропдауна
+  // и скачивает, и запоминает выбор для следующего клика. Персистент
+  // между открытиями сессии — юрист-стайл, но не через localStorage:
+  // хватило бы в компоненте.
+  const [selectedFormat, setSelectedFormat] = useState('md'); // 'md' | 'txt' | 'docx' | 'print'
   // flashRange — {from,to} диапазон, куда AI-виправлення только что вставил
   // suggest.to; CodeMirror отрисует .aglex-flash-декорацию, которая через
   // 1.2s растворится. Раньше был flashIdx (индекс секции), сейчас доку —
@@ -1294,6 +1304,15 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [trOpen, setTrOpen] = useState(false);
   const [apprSteps, setApprSteps] = useState(LX.approval);
   const [comments, setComments] = useState(LX.comments);
+  // savedContractId — id из /api/contracts, назначается после успешного create
+  // (upload path) или при библиотечном reopen. Пока не задан — сохранять
+  // некуда: DEMO-режим, ошибочный upload или ожидание первого persist.
+  const [savedContractId, setSavedContractId] = useState(null);
+  const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
+  // lastSavedRef хранит markdown, зафиксированный последним успешным PATCH.
+  // Нужен чтобы не спамить сеть при монтировании (editedMarkdown ставится в
+  // ту же строку, которая уже лежит в БД — сравниваем и пропускаем no-op).
+  const lastSavedMdRef = useRef(null);
 
   // Совместимость с существующими компонентами (FindingCard, MarkdownDoc,
   // ContractDoc), которые читают applied[id] как «правку применили».
@@ -1305,6 +1324,23 @@ function ContractAnalysisSingle({ t, incoming }) {
         .map(([k]) => [k, true])
     ),
   [findingStatus]);
+
+  // Сброс всего локально-выведенного состояния при новом анализе.
+  // Каждый новый API-ответ — это самостоятельный run: findings/comparison/
+  // summary/keyData/missing прилетают ЦЕЛИКОМ новыми объектами (Claude может
+  // выдать одинаковые id вроде f-prepay для разных договоров), поэтому если
+  // не почистить findingStatus вручную, принятая правка со старого анализа
+  // так и останется «прийнято» на новом. Ключ — идентичность `analysis` state:
+  // как только setAnalysis(newRes) вызвано (свежий upload / library reopen /
+  // DocBuilder handoff), эффект сработает и обнулит все зависимые карты.
+  useEffect(() => {
+    setFindingStatus({});
+    setMissingStatus({});
+    setActive(null);
+    setFlashRange(null);
+    setScrollToPos(null);
+    setTooltip(null);
+  }, [analysis]);
 
   // Manual-accept detection: если юрист сам переписал текст в редакторе поверх
   // finding.suggest.from — карточка без клика уходит в accepted/manual-edit.
@@ -1333,6 +1369,42 @@ function ContractAnalysisSingle({ t, incoming }) {
     return () => clearTimeout(h);
   }, [editedMarkdown, data.findings]);
 
+  // Debounced auto-save. Каждое изменение editedMarkdown спит 800ms; если за
+  // это время новое изменение — таймер перезапускается. По истечении шлём
+  // PATCH /api/contracts/{savedContractId} с обновлённым analysis._doc.markdown.
+  // Skip, если id ещё нет (DEMO / первый upload до создания записи) или если
+  // текущий текст совпадает с последним сохранённым (защита от no-op сети на
+  // монтировании и от резонанса с внешним setEditedMarkdown из upload/reopen).
+  useEffect(() => {
+    if (!savedContractId) return undefined;
+    if (lastSavedMdRef.current === editedMarkdown) return undefined;
+    const h = setTimeout(async () => {
+      setSaveState('saving');
+      try {
+        await api.contracts.update(savedContractId, {
+          analysis: {
+            ...(analysis || {}),
+            _doc: {
+              ...((analysis && analysis._doc) || {}),
+              markdown: editedMarkdown,
+            },
+          },
+        });
+        lastSavedMdRef.current = editedMarkdown;
+        setSaveState('saved');
+        // Через 2s гасим индикатор — юристу не нужен постоянный «збережено».
+        setTimeout(() => setSaveState((s) => (s === 'saved' ? 'idle' : s)), 2000);
+      } catch (_e) {
+        setSaveState('error');
+      }
+    }, 800);
+    return () => clearTimeout(h);
+    // analysis deps намеренно исключены: обновление analysis (setAnalysis)
+    // не должно триггерить лишний save, а свежий analysis всё равно
+    // прочитается из замыкания при следующем срабатывании.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editedMarkdown, savedContractId]);
+
   // Mount: if we got an uploaded doc, analyze it for real. Cancellable so a
   // route change mid-flight doesn't write to a stale state.
   const liveRef = useRef(true);
@@ -1352,11 +1424,12 @@ function ContractAnalysisSingle({ t, incoming }) {
         setAnalysisStatus('ready');
         setPhase('ready');
         // Fire-and-forget persistence: failures don't disrupt the open
-        // session — the analysis is still visible. The saved row carries
-        // the original doc (filename + sections) inside `analysis._doc` so
-        // Library → reopen can render the contract without re-uploading.
+        // session — the analysis is still visible. Ловим возвращённый id,
+        // чтобы дальше debounced-save мог патчить именно эту строку через
+        // PATCH /api/contracts/{id}. Без id (backend down) save-эффект
+        // просто не срабатывает.
         try {
-          await api.contracts.create({
+          const created = await api.contracts.create({
             filename: incoming.filename,
             title: incoming.filename,
             counterparty: '',
@@ -1366,7 +1439,11 @@ function ContractAnalysisSingle({ t, incoming }) {
             analysis: {
               ...res,
               tokenStats: incoming.tokenStats || null,
-              _doc: { filename: incoming.filename, sections: incoming.sections || [] },
+              _doc: {
+                filename: incoming.filename,
+                sections: incoming.sections || [],
+                markdown: sectionsToMarkdown(incoming.sections || []),
+              },
             },
             // Phase 4.x: round-trip the display PDF back to the backend so the
             // BLOB lands on the persisted contract row. When soffice failed,
@@ -1376,6 +1453,10 @@ function ContractAnalysisSingle({ t, incoming }) {
             displayPdfError: incoming.displayPdfError || null,
             createdAt: new Date().toISOString(),
           });
+          if (!cancelled && liveRef.current && created && created.id) {
+            setSavedContractId(created.id);
+            lastSavedMdRef.current = sectionsToMarkdown(incoming.sections || []);
+          }
         } catch (_e) { /* persistence is best-effort */ }
       } catch (_e) {
         if (cancelled || !liveRef.current) return;
@@ -1421,12 +1502,18 @@ function ContractAnalysisSingle({ t, incoming }) {
         setLoadedDoc({
           filename: c.filename || (a._doc && a._doc.filename) || 'Договір',
           sections: (a._doc && a._doc.sections) || [],
+          // Приоритет — сохранённая markdown-строка (после первого edit + save).
+          // Fallback — сгенерить её из секций (совместимость с записями до v3).
+          markdown: (a._doc && a._doc.markdown) || sectionsToMarkdown((a._doc && a._doc.sections) || []),
           tokenStats: a.tokenStats || null,
           // Phase 4.x PR4: AnalysisView fetches the bytes from this URL.
           // Returns 404 for legacy rows persisted before PR1 — the FE
           // then renders the "preview unavailable" banner.
           displayPdfUrl: `/api/contracts/${encodeURIComponent(id)}/display.pdf`,
         });
+        setSavedContractId(id);
+        lastSavedMdRef.current = (a._doc && a._doc.markdown)
+          || sectionsToMarkdown((a._doc && a._doc.sections) || []);
         setAnalysisStatus('ready');
         setPhase('ready');
       } catch (_e) { /* fall through to demo */ }
@@ -1750,43 +1837,77 @@ function ContractAnalysisSingle({ t, incoming }) {
 
               <div className="sep" />
 
-              <div className="dl-split">
-                <button type="button"
-                  className="btn btn-ghost btn-sm dl-split-main"
-                  onClick={() => downloadMd(editedMarkdown, effectiveDoc?.filename)}
-                  title={t.downloadEdited || 'Завантажити'}>
-                  <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
-                </button>
-                <button type="button"
-                  className="btn btn-ghost btn-sm btn-icon dl-split-chev"
-                  onClick={() => setFormatMenuOpen(o => !o)}
-                  aria-expanded={formatMenuOpen}
-                  aria-haspopup="menu"
-                  title={t.exportPickFormat || 'Оберіть формат'}
-                  aria-label={t.exportPickFormat || 'Оберіть формат'}>
-                  <Icon name="chevD" size={13} />
-                </button>
-                {formatMenuOpen ? (
-                  <div className="dl-menu" role="menu" onMouseLeave={() => setFormatMenuOpen(false)}>
-                    {[
-                      { key: 'md',    label: t.exportMd    || 'Markdown (.md)',
-                        run: () => downloadMd(editedMarkdown, effectiveDoc?.filename) },
-                      { key: 'txt',   label: t.exportTxt   || 'Текст (.txt)',
-                        run: () => downloadTxt(editedMarkdown, effectiveDoc?.filename) },
-                      { key: 'docx',  label: t.exportDocx  || 'Word (.docx)',
-                        run: () => downloadDocx(editedMarkdown, effectiveDoc?.filename) },
-                      { key: 'print', label: t.exportPdf   || 'PDF (друк)',
-                        run: () => printAsPdf() },
-                    ].map(opt => (
-                      <button key={opt.key} type="button" role="menuitem" className="dl-menu-item"
-                        onClick={() => { opt.run(); setFormatMenuOpen(false); }}>
-                        <Icon name="doc" size={14} />
-                        <span>{opt.label}</span>
-                      </button>
-                    ))}
+              {saveState !== 'idle' ? (
+                <span className={'save-chip save-chip-' + saveState} aria-live="polite">
+                  {saveState === 'saving' ? (
+                    <><Icon name="refresh" size={12} /> {t.saveSaving || 'Збереження…'}</>
+                  ) : saveState === 'saved' ? (
+                    <><Icon name="check" size={12} /> {t.saveSaved || 'Збережено'}</>
+                  ) : (
+                    <><Icon name="alert" size={12} /> {t.saveError || 'Не збережено'}</>
+                  )}
+                </span>
+              ) : null}
+
+              <div className="sep" />
+
+              {(() => {
+                const formats = [
+                  { key: 'md',    label: t.exportMd    || 'Markdown (.md)',
+                    icon: 'doc',
+                    run: () => downloadMd(editedMarkdown, effectiveDoc?.filename) },
+                  { key: 'txt',   label: t.exportTxt   || 'Текст (.txt)',
+                    icon: 'doc',
+                    run: () => downloadTxt(editedMarkdown, effectiveDoc?.filename) },
+                  { key: 'docx',  label: t.exportDocx  || 'Word (.docx)',
+                    icon: 'doc',
+                    run: () => downloadDocx(editedMarkdown, effectiveDoc?.filename) },
+                  { key: 'print', label: t.exportPdf   || 'PDF (друк)',
+                    icon: 'doc',
+                    run: () => printAsPdf() },
+                ];
+                const current = formats.find(f => f.key === selectedFormat) || formats[0];
+                return (
+                  <div className="dl-split">
+                    <button type="button"
+                      className="btn btn-ghost btn-sm dl-split-main"
+                      onClick={() => current.run()}
+                      title={t.downloadEdited || 'Завантажити'}>
+                      <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
+                      <span className="dl-split-fmt">· {current.label}</span>
+                    </button>
+                    <button type="button"
+                      className="btn btn-ghost btn-sm btn-icon dl-split-chev"
+                      onClick={() => setFormatMenuOpen(o => !o)}
+                      aria-expanded={formatMenuOpen}
+                      aria-haspopup="menu"
+                      title={t.exportPickFormat || 'Оберіть формат'}
+                      aria-label={t.exportPickFormat || 'Оберіть формат'}>
+                      <Icon name="chevD" size={13} />
+                    </button>
+                    {formatMenuOpen ? (
+                      <div className="dl-menu" role="menu" onMouseLeave={() => setFormatMenuOpen(false)}>
+                        {formats.map(opt => (
+                          <button key={opt.key} type="button" role="menuitem"
+                            className={'dl-menu-item' + (opt.key === selectedFormat ? ' dl-menu-item-active' : '')}
+                            aria-current={opt.key === selectedFormat ? 'true' : undefined}
+                            onClick={() => {
+                              setSelectedFormat(opt.key);
+                              opt.run();
+                              setFormatMenuOpen(false);
+                            }}>
+                            <Icon name={opt.icon} size={14} />
+                            <span>{opt.label}</span>
+                            {opt.key === selectedFormat ? (
+                              <Icon name="check" size={13} style={{ marginLeft: 'auto', color: 'var(--accent)' }} />
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-              </div>
+                );
+              })()}
             </div>
           }
           docOverride={
