@@ -15,7 +15,7 @@ import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
 import { EditableDoc } from './analysis/EditableDoc';
-import { downloadMd, downloadTxt, downloadDocx, printAsPdf } from '../lib/exportDoc';
+import { downloadMd, downloadTxt, downloadDocx, printAsPdf, sectionsToMarkdown } from '../lib/exportDoc';
 import { buildFromRegex } from '../lib/findingHighlight';
 
 const LEVEL_COLOR = {
@@ -26,29 +26,29 @@ const ZOOM_MIN = 70;
 const ZOOM_MAX = 150;
 const ZOOM_STEP = 10;
 
-/* Replace a finding's `suggest.from` with `suggest.to` in the first
-   matching section. Used by edit-mode Apply so the editor textarea shows
-   the corrected wording in place (view mode keeps the diff layer from
-   PR #76 instead). Returns the new sections array + the index of the
-   section that was rewritten (-1 when no match), so the caller can
-   trigger a flash animation on the right textarea. */
-function applyFixToSections(sections, finding) {
+/* Заменить finding.suggest.from на finding.suggest.to в первой
+   позиции markdown-строки, где найден фрагмент. Используется AI-виправлення:
+   после подмены возвращаем {markdown, changedRange:{from,to}}, чтобы
+   CodeMirror-редактор мог мигнуть зелёным на новом диапазоне. Возврат
+   changedRange=null означает «anchor не нашёлся» — карточка правки
+   всё равно уходит в accepted (это ветка manual-edit по факту), просто
+   без визуального flash. */
+export function applyFixToMarkdown(md, finding) {
   const from = finding && finding.suggest && finding.suggest.from;
   const to   = finding && finding.suggest && finding.suggest.to;
-  if (!from || !to || !Array.isArray(sections)) return { sections, changedIdx: -1 };
+  if (!from || !to || typeof md !== 'string') {
+    return { markdown: md, changedRange: null };
+  }
   const re = buildFromRegex(from);
-  if (!re) return { sections, changedIdx: -1 };
-  let idx = -1;
-  const next = sections.map((sec, i) => {
-    if (idx !== -1) return sec;
-    const text = sec.text || '';
-    if (!re.test(text)) return sec;
-    idx = i;
-    // Function-form replace() so `$&` / `$1` inside suggest.to aren't
-    // treated as backreferences.
-    return { ...sec, text: text.replace(re, () => to) };
-  });
-  return idx === -1 ? { sections, changedIdx: -1 } : { sections: next, changedIdx: idx };
+  if (!re) return { markdown: md, changedRange: null };
+  const m = re.exec(md);
+  if (!m) return { markdown: md, changedRange: null };
+  const start = m.index;
+  const nextMd = md.slice(0, start) + to + md.slice(start + m[0].length);
+  return {
+    markdown: nextMd,
+    changedRange: { from: start, to: start + to.length },
+  };
 }
 
 
@@ -1212,21 +1212,27 @@ function ContractAnalysisSingle({ t, incoming }) {
   const effectiveSections = (effectiveDoc && Array.isArray(effectiveDoc.sections))
     ? effectiveDoc.sections
     : [];
-  // editedSections is the source of truth for both the view and edit
-  // modes — typing in the editor flows back through it, and the
-  // MarkdownDoc reads from the same array so any edits are visible the
-  // moment the user toggles back to view. Resyncs whenever the upstream
-  // analyzer payload changes (new upload, library reopen).
-  const [editedSections, setEditedSections] = useState(effectiveSections);
-  useEffect(() => { setEditedSections(effectiveSections); }, [effectiveSections]);
+  // editedMarkdown — единый source of truth для CodeMirror-редактора.
+  // На старте склеиваем секции из аплоада в одну markdown-строку (та же
+  // sectionsToMarkdown, что используется в экспорте, так что round-trip
+  // документа при export/re-import совпадает). На новый upload / library
+  // reopen пересобираем строку заново.
+  const [editedMarkdown, setEditedMarkdown] = useState(() => sectionsToMarkdown(effectiveSections));
+  useEffect(() => {
+    setEditedMarkdown(sectionsToMarkdown(effectiveSections));
+  }, [effectiveSections]);
+  // AnalysisView всё ещё ждёт documents[].sections для fallback-ветки
+  // (MarkdownDoc) — держим оригинальные effectiveSections. В нашей ветке
+  // docOverride=<EditableDoc> перекрывает MarkdownDoc, но проп всё равно
+  // читается для fallback-баннера «preview unavailable».
   const docsForView = useMemo(() => {
     const filename = (effectiveDoc && effectiveDoc.filename) || 'Договір';
     return [{
       label: filename,
       filename,
-      sections: editedSections,
+      sections: effectiveSections,
     }];
-  }, [effectiveDoc, editedSections]);
+  }, [effectiveDoc, effectiveSections]);
   const useAnalysisView = effectiveSections.length > 0;
 
   // Merged data source: real fields override DEMO when available. PR-2 of
@@ -1262,8 +1268,14 @@ function ContractAnalysisSingle({ t, incoming }) {
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
   const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
   const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
-  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (flash animation)
-  const [scrollToIdx, setScrollToIdx] = useState(null); // section index to scroll to after insertGap
+  // flashRange — {from,to} диапазон, куда AI-виправлення только что вставил
+  // suggest.to; CodeMirror отрисует .aglex-flash-декорацию, которая через
+  // 1.2s растворится. Раньше был flashIdx (индекс секции), сейчас доку —
+  // одна строка, поэтому позиции.
+  const [flashRange, setFlashRange] = useState(null);
+  // scrollToPos — куда прокрутить редактор после Додати розділ. Заменяет
+  // scrollToIdx (индекс секции) на позицию в markdown-строке.
+  const [scrollToPos, setScrollToPos] = useState(null);
 
   const [protocolOpen, setProtocolOpen] = useState(false);
   // missingStatus[idx] = та же форма, что и findingStatus. resolvedVia:
@@ -1296,7 +1308,7 @@ function ContractAnalysisSingle({ t, incoming }) {
 
   // Manual-accept detection: если юрист сам переписал текст в редакторе поверх
   // finding.suggest.from — карточка без клика уходит в accepted/manual-edit.
-  // Тот же buildFromRegex, что и в applyFixToSections, — чтобы «правка ушла»
+  // Тот же buildFromRegex, что и в applyFixToMarkdown, — чтобы «правка ушла»
   // означало одно и то же для AI-кнопки и для ручного ввода. Дебаунс 500ms,
   // чтобы промежуточные keystroke не флипали статус на середине слова.
   useEffect(() => {
@@ -1308,8 +1320,7 @@ function ContractAnalysisSingle({ t, incoming }) {
           if (cur !== 'pending') continue;
           const re = buildFromRegex(f.suggest?.from || '');
           if (!re) continue;
-          const stillPresent = editedSections.some(s => re.test(s.text || ''));
-          if (!stillPresent) {
+          if (!re.test(editedMarkdown)) {
             if (next === prev) next = { ...prev };
             next[f.id] = {
               state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'manual-edit',
@@ -1320,7 +1331,7 @@ function ContractAnalysisSingle({ t, incoming }) {
       });
     }, 500);
     return () => clearTimeout(h);
-  }, [editedSections, data.findings]);
+  }, [editedMarkdown, data.findings]);
 
   // Mount: if we got an uploaded doc, analyze it for real. Cancellable so a
   // route change mid-flight doesn't write to a stale state.
@@ -1514,18 +1525,19 @@ function ContractAnalysisSingle({ t, incoming }) {
   };
 
   // Документ теперь всегда редактируемый (нет режима «Перегляд»), поэтому AI-
-  // виправлення сразу переписывает соответствующую секцию editedSections и
-  // подсвечивает её flash-анимацией. Reject не трогает текст — только помечает
-  // finding как отклонённый, чтобы карточка ушла вниз списка со striked-стилем.
+  // виправлення сразу переписывает markdown-строку editedMarkdown и подсвечивает
+  // вставленный диапазон flash-декорацией CodeMirror. Reject не трогает текст —
+  // только помечает finding как отклонённый, чтобы карточка ушла вниз списка.
   const onApply = (id) => {
     const f = data.findings.find(x => x.id === id);
     if (!f) return;
     if (f.suggest) {
-      const { sections: next, changedIdx } = applyFixToSections(editedSections, f);
-      if (changedIdx !== -1) {
-        setEditedSections(next);
-        setFlashIdx(changedIdx);
-        setTimeout(() => setFlashIdx(null), 1400);
+      const { markdown: next, changedRange } = applyFixToMarkdown(editedMarkdown, f);
+      if (changedRange) {
+        setEditedMarkdown(next);
+        setFlashRange(changedRange);
+        setScrollToPos(changedRange.from);
+        setTimeout(() => setFlashRange(null), 1400);
       }
     }
     setFindingStatus(prev => ({
@@ -1540,21 +1552,23 @@ function ContractAnalysisSingle({ t, incoming }) {
     }));
   };
   const onApplyAll = () => {
-    // Применяем каждый pending finding по очереди к текущему editedSections,
+    // Применяем каждый pending finding по очереди к текущему editedMarkdown,
     // чтобы правки поверх правок не затирали друг друга. Уже принятые/отклонённые
-    // findings пропускаем — resolvedAt в findingStatus остаётся тем же.
-    let working = editedSections;
+    // findings пропускаем. Диапазоны от отдельных applyFixToMarkdown сдвигаются
+    // после каждой замены — но flash для «apply all» мы не показываем; юрист
+    // и так видит, что все правки прошли (тост + переупорядочивание списка).
+    let working = editedMarkdown;
     const now = Date.now();
     const patch = {};
     for (const f of data.findings) {
       if (!f.suggest) continue;
       const cur = findingStatus[f.id]?.state ?? 'pending';
       if (cur !== 'pending') continue;
-      const { sections, changedIdx } = applyFixToSections(working, f);
-      if (changedIdx !== -1) working = sections;
+      const { markdown: nextMd, changedRange } = applyFixToMarkdown(working, f);
+      if (changedRange) working = nextMd;
       patch[f.id] = { state: 'accepted', resolvedAt: now, resolvedVia: 'ai-button' };
     }
-    if (working !== editedSections) setEditedSections(working);
+    if (working !== editedMarkdown) setEditedMarkdown(working);
     if (Object.keys(patch).length) setFindingStatus(prev => ({ ...prev, ...patch }));
     toast(t.allApplied, 'wand');
   };
@@ -1582,11 +1596,11 @@ function ContractAnalysisSingle({ t, incoming }) {
     setTab('chat');
     setChatInject({ q: f.title + ' — ' + f.clause + '?', a, refs: [num], ts: Date.now() });
   };
-  // Добавляем недостающий раздел в конец документа и скроллим редактор
-  // к новой textarea, чтобы юрист сразу мог править формулировку. Позиция
-  // сейчас всегда «в конце» — бэкенд не возвращает точку вставки; TODO для
-  // отдельной задачи. Статус missing[idx] флипается в accepted, чтобы
-  // карточка ушла вниз списка.
+  // Добавляем недостающий раздел в конец markdown-строки (## <title>\n\n<body>),
+  // скроллим CodeMirror-редактор к концу и фокусируем — юрист сразу может
+  // править формулировку. Позиция всегда «в конце» — бэкенд не возвращает
+  // точку вставки; TODO для отдельной задачи. Статус missing[idx] флипается
+  // в accepted, чтобы карточка ушла вниз списка.
   const onAddClause = (idx) => {
     const m = data.missing[idx];
     if (!m) return;
@@ -1594,20 +1608,19 @@ function ContractAnalysisSingle({ t, incoming }) {
       ...prev,
       [idx]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'add-button' },
     }));
-    const newSection = {
-      number: '',
-      title: m.title || '',
-      text: m.clauseText || '',
-    };
-    setEditedSections(prev => {
-      const next = [...prev, newSection];
-      setScrollToIdx(next.length - 1);
-      return next;
+    const head = m.title ? `\n\n---\n\n## ${m.title}\n\n` : '\n\n';
+    const body = m.clauseText || '';
+    setEditedMarkdown(prev => {
+      const glue = prev && !prev.endsWith('\n') ? head : head.replace(/^\n+/, '');
+      const nextMd = prev + glue + body;
+      // Скроллим к началу нового раздела (заголовку), чтобы юрист сразу увидел
+      // название и мог править «под ним». Позиция начала = длина prev + длина
+      // склеенного head-разделителя.
+      setScrollToPos(prev.length + glue.length);
+      return nextMd;
     });
     toast(t.clauseAdded, 'check');
-    // Сбрасываем scroll-цель после того, как эффект EditableDoc успел
-    // отработать. Долго держать нельзя — второй быстрый insert проигнорируется.
-    setTimeout(() => setScrollToIdx(null), 900);
+    setTimeout(() => setScrollToPos(null), 900);
   };
   const onRejectMissing = (idx) => {
     setMissingStatus(prev => ({
@@ -1740,7 +1753,7 @@ function ContractAnalysisSingle({ t, incoming }) {
               <div className="dl-split">
                 <button type="button"
                   className="btn btn-ghost btn-sm dl-split-main"
-                  onClick={() => downloadMd(editedSections, effectiveDoc?.filename)}
+                  onClick={() => downloadMd(editedMarkdown, effectiveDoc?.filename)}
                   title={t.downloadEdited || 'Завантажити'}>
                   <Icon name="download" size={15} /> {t.downloadEdited || 'Завантажити'}
                 </button>
@@ -1757,11 +1770,11 @@ function ContractAnalysisSingle({ t, incoming }) {
                   <div className="dl-menu" role="menu" onMouseLeave={() => setFormatMenuOpen(false)}>
                     {[
                       { key: 'md',    label: t.exportMd    || 'Markdown (.md)',
-                        run: () => downloadMd(editedSections, effectiveDoc?.filename) },
+                        run: () => downloadMd(editedMarkdown, effectiveDoc?.filename) },
                       { key: 'txt',   label: t.exportTxt   || 'Текст (.txt)',
-                        run: () => downloadTxt(editedSections, effectiveDoc?.filename) },
+                        run: () => downloadTxt(editedMarkdown, effectiveDoc?.filename) },
                       { key: 'docx',  label: t.exportDocx  || 'Word (.docx)',
-                        run: () => downloadDocx(editedSections, effectiveDoc?.filename) },
+                        run: () => downloadDocx(editedMarkdown, effectiveDoc?.filename) },
                       { key: 'print', label: t.exportPdf   || 'PDF (друк)',
                         run: () => printAsPdf() },
                     ].map(opt => (
@@ -1779,10 +1792,10 @@ function ContractAnalysisSingle({ t, incoming }) {
           docOverride={
             <EditableDoc
               filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
-              sections={editedSections}
-              onChange={setEditedSections}
-              flashIdx={flashIdx}
-              scrollToIdx={scrollToIdx}
+              markdown={editedMarkdown}
+              onChange={setEditedMarkdown}
+              flashRange={flashRange}
+              scrollToPos={scrollToPos}
             />
           }
           panel={
