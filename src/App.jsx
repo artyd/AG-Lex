@@ -123,6 +123,23 @@ function AppShell() {
   // <ReconcileResult> instead of the single-contract analyze flow.
   const [analysisIncoming, setAnalysisIncoming] = useState(null);
   const [user, setUser] = useState(() => lxLoadSession());
+  // Счётчик сайдбара «Бібліотека N». Раньше был захардкожен в 10 — теперь
+  // подгружаем реальное количество договоров при монтировании и обновляем,
+  // когда Library делает delete (через onLibraryChange). При создании нового
+  // договора после аналіза счётчик оживает при следующем визите Library
+  // (useContractRows там refetch'ит на mount).
+  const [libraryCount, setLibraryCount] = useState(null);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.contracts.list();
+        if (!cancelled) setLibraryCount(Array.isArray(list) ? list.length : 0);
+      } catch (_e) { /* сайдбар покажет — если 401 — пусто */ }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
   const [notifRead, setNotifRead] = useState(() => { try { return JSON.parse(localStorage.getItem('aglex_notif_read') || '[]'); } catch (e) { return []; } });
   const L = I18N[lang];
 
@@ -412,7 +429,8 @@ function AppShell() {
   else if (route === 'copilot') body = <Copilot t={L} setRoute={setRoute} />;
   else if (route === 'lawyer') body = <ChatPage t={L} setRoute={setRoute} lang={lang} />;
   else if (route === 'library') body = <Library t={L} setRoute={setRoute} query={query}
-    clearAnalysisIncoming={() => { setAnalysisIncoming(null); setAnalyzeNonce(n => n + 1); }} />;
+    clearAnalysisIncoming={() => { setAnalysisIncoming(null); setAnalyzeNonce(n => n + 1); }}
+    onLibraryChange={setLibraryCount} />;
   else if (route === 'batch') body = <Batch t={L} setRoute={setRoute} />;
   else if (route === 'matters') body = <Matters t={L} setRoute={setRoute} />;
   else if (route === 'litigation') body = <Litigation t={L} setRoute={setRoute} />;
@@ -436,7 +454,7 @@ function AppShell() {
 
   return (
     <div className="app">
-      <Sidebar route={route} setRoute={guardedSetRoute} t={L} riskCount={10} user={user}
+      <Sidebar route={route} setRoute={guardedSetRoute} t={L} riskCount={libraryCount ?? 0} user={user}
         onUpload={() => setUploadOpen(true)} onSettings={() => setSettingsOpen(true)} />
       <div className="main">
         <TopBar title={L[titleKey]} crumb={crumb} t={L}
@@ -456,9 +474,12 @@ function AppShell() {
         onLeave={exitGuard.confirmLeave}
       />
 
-      {/* Launcher modal — analysis hub. Two big cards + one row. */}
+      {/* Launcher modal — analysis hub. Two big cards + one row.
+          Раньше сетка была `.hub-grid` (repeat(3, 1fr)) — оставляла пустой
+          слот справа. Добавлена модификация `.hub-grid-2` (repeat(2, 1fr)),
+          которая уже была в screens.css — просто её не подключали. */}
       <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title={L.hubTitle} sub={L.hubSub} icon="sparkle" wide>
-        <div className="hub-grid" style={{ marginBottom: 14 }}>
+        <div className="hub-grid hub-grid-2" style={{ marginBottom: 14 }}>
           <HelpTip text={(L.tips && L.tips.hubContract) || ''} placement="bottom">
             <button className="hub-block hub-accent hub-block-lg" onClick={openContractUpload}>
               <span className="hub-ic hub-ic-lg"><Icon name="doc" size={28} /></span>

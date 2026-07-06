@@ -306,59 +306,37 @@ ins.md-hl-applied-new {
   transition: font-size 0.12s ease;
 }
 
-/* --- Edit mode ---
-   Read-only section labels above each textarea; the textareas grow with
-   their content so the page reads like a long form, not a fixed-height
-   editor. Tokens-only for dark-mode parity. */
-.md-doc-edit .md-section-edit {
-  margin-bottom: var(--s5);
-}
-.md-section-title-edit {
-  margin: 0 0 6px;
-  font-family: var(--font-ui);
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-3);
-  user-select: none;
-}
-.md-edit-area {
-  width: 100%;
-  min-height: 60px;
-  resize: none;
-  overflow: hidden;
-  padding: 10px 12px;
-  font-family: inherit;
-  font-size: inherit;
-  line-height: 1.65;
-  color: var(--text);
-  background: var(--surface-2, var(--surface));
+/* --- Edit mode: CodeMirror 6 host ---
+   Один непрерывный редактор поверх всего документа. Секций как отдельных
+   textarea больше нет — CM сам управляет своей версткой; мы только
+   даём ему рамку и flash-анимацию для apply-fix. */
+.md-doc-edit .cm-host {
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  outline: none;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
-  box-sizing: border-box;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  overflow: hidden;
 }
-.md-edit-area:hover {
+.md-doc-edit .cm-host:hover {
   border-color: var(--border-strong);
 }
-.md-edit-area:focus {
+.md-doc-edit .cm-host:focus-within {
   border-color: var(--accent);
-  background: var(--surface);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 18%, transparent);
 }
 
 /* --- Apply-fix flash ---
-   Fires on the section whose text was just rewritten in edit mode. Quick
-   green tint fades out so the user notices what changed without staring
-   at a permanent banner. */
-@keyframes section-flash {
-  0%   { background: color-mix(in oklab, var(--risk-low) 22%, transparent); }
-  100% { background: transparent; }
+   Диапазон, куда AI-виправлення только что вставил suggest.to. Зелёная
+   заливка растворяется за 1.2s — юрист видит, что именно изменилось,
+   но фон уходит и не мешает читать дальше. */
+@keyframes cm-flash {
+  0%   { background-color: color-mix(in oklab, var(--risk-low) 30%, transparent); }
+  100% { background-color: transparent; }
 }
-.md-section-edit.flash .md-edit-area {
-  animation: section-flash 1.2s ease-out forwards;
+.aglex-flash {
+  background-color: color-mix(in oklab, var(--risk-low) 30%, transparent);
+  animation: cm-flash 1.2s ease-out forwards;
+  border-radius: 3px;
 }
 
 /* --- Print / save-as-PDF ---

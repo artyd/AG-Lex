@@ -30,11 +30,29 @@ function sectionsToText(sections) {
   }).join('\n\n\n');
 }
 
-function sectionsToMarkdown(sections) {
+export function sectionsToMarkdown(sections) {
+  if (!Array.isArray(sections) || sections.length === 0) return '';
   return sections.map((s) => {
     const head = [s.number, s.title].filter(Boolean).join(' ');
     return (head ? `## ${head}\n\n` : '') + (s.text || '');
   }).join('\n\n---\n\n');
+}
+
+/* Ужать markdown до чистого текста для .txt-экспорта. Логика повторяет
+   sectionsToText inline: убираем ** * ` ~~ и заголовочный `#`, а маркеры
+   списка нормализуем в «•». */
+function markdownToPlain(md) {
+  return (md || '')
+    .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[-*+]\s+/gm, '• ')
+    .replace(/^---+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // Strip filesystem-hostile chars but keep cyrillic + latin + dash + space.
@@ -55,16 +73,37 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export function downloadMd(sections, name) {
-  if (!Array.isArray(sections) || sections.length === 0) return;
-  const text = sectionsToMarkdown(sections);
+/* Ниже пары «string-based» / «sections-based» вариантов. Основная ветка
+   аналитического экрана уже держит доку как markdown-строку (после
+   миграции на CodeMirror 6), поэтому *String-варианты — быстрый путь.
+   Массивные варианты оставлены для legacy-caller'ов (Library preview,
+   старый MarkdownDoc-путь), они просто гоняют массив через
+   sectionsToMarkdown и передают дальше. */
+
+export function downloadMdString(md, name) {
+  if (typeof md !== 'string' || md.length === 0) return;
   triggerDownload(
-    new Blob([text], { type: 'text/markdown;charset=utf-8' }),
+    new Blob([md], { type: 'text/markdown;charset=utf-8' }),
     safeBase(name) + '-edited.md',
   );
 }
 
+export function downloadMd(sections, name) {
+  if (typeof sections === 'string') return downloadMdString(sections, name);
+  if (!Array.isArray(sections) || sections.length === 0) return;
+  downloadMdString(sectionsToMarkdown(sections), name);
+}
+
+export function downloadTxtString(md, name) {
+  if (typeof md !== 'string' || md.length === 0) return;
+  triggerDownload(
+    new Blob([markdownToPlain(md)], { type: 'text/plain;charset=utf-8' }),
+    safeBase(name) + '-edited.txt',
+  );
+}
+
 export function downloadTxt(sections, name) {
+  if (typeof sections === 'string') return downloadTxtString(sections, name);
   if (!Array.isArray(sections) || sections.length === 0) return;
   const text = sectionsToText(sections);
   triggerDownload(
@@ -73,33 +112,50 @@ export function downloadTxt(sections, name) {
   );
 }
 
-export async function downloadDocx(sections, name) {
-  if (!Array.isArray(sections) || sections.length === 0) return;
-  // Dynamic import — the docx package is ~500 KB minified and most users
-  // never click this option. Loading it on-demand keeps the initial JS
-  // bundle small.
+export async function downloadDocxString(md, name) {
+  if (typeof md !== 'string' || md.length === 0) return;
+  // Dynamic import — the docx package is ~500 KB minified.
   const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import('docx');
 
   const children = [];
-  for (const s of sections) {
-    const head = [s.number, s.title].filter(Boolean).join(' ');
-    if (head) {
+  // Split by blank lines; keep header-line vs body-line separate.
+  const blocks = md.split(/\n{2,}/);
+  for (const raw of blocks) {
+    const block = raw.trim();
+    if (!block) continue;
+    if (/^---+$/.test(block)) continue; // горизонтальная линия из sectionsToMarkdown
+
+    const headMatch = block.match(/^(#{1,6})\s+(.+)$/m);
+    if (headMatch && headMatch.index === 0) {
+      const level = Math.min(headMatch[1].length, 6);
+      const HEADING_MAP = [
+        HeadingLevel.HEADING_1, HeadingLevel.HEADING_1, HeadingLevel.HEADING_2,
+        HeadingLevel.HEADING_3, HeadingLevel.HEADING_4, HeadingLevel.HEADING_5,
+        HeadingLevel.HEADING_6,
+      ];
       children.push(new Paragraph({
-        text: head,
-        heading: HeadingLevel.HEADING_2,
+        text: headMatch[2].trim(),
+        heading: HEADING_MAP[level] || HeadingLevel.HEADING_2,
         spacing: { before: 320, after: 120 },
       }));
+      const rest = block.slice(headMatch[0].length).trim();
+      if (!rest) continue;
+      const clean = rest.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').trim();
+      if (clean) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: clean, size: 24 })],
+          spacing: { after: 160 },
+        }));
+      }
+      continue;
     }
-    const body = (s.text || '').trim();
-    if (!body) continue;
-    for (const para of body.split(/\n{2,}/)) {
-      const clean = para.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').trim();
-      if (!clean) continue;
-      children.push(new Paragraph({
-        children: [new TextRun({ text: clean, size: 24 })], // 12pt
-        spacing: { after: 160 },
-      }));
-    }
+
+    const clean = block.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').trim();
+    if (!clean) continue;
+    children.push(new Paragraph({
+      children: [new TextRun({ text: clean, size: 24 })],
+      spacing: { after: 160 },
+    }));
   }
 
   const doc = new Document({
@@ -113,6 +169,12 @@ export async function downloadDocx(sections, name) {
 
   const blob = await Packer.toBlob(doc);
   triggerDownload(blob, safeBase(name) + '-edited.docx');
+}
+
+export async function downloadDocx(sections, name) {
+  if (typeof sections === 'string') return downloadDocxString(sections, name);
+  if (!Array.isArray(sections) || sections.length === 0) return;
+  return downloadDocxString(sectionsToMarkdown(sections), name);
 }
 
 /**

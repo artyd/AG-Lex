@@ -2,9 +2,9 @@
    Lexena — workspace views: Dashboard, Library, Clients,
    Templates, Calendar
    ============================================================ */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../ui/Icon';
-import { RiskBadge, SectionTitle, riskDot, toast } from '../ui/components';
+import { Modal, RiskBadge, SectionTitle, riskDot, toast } from '../ui/components';
 import { DEMO } from '../data/demo';
 import { api } from '../lib/api';
 import { RECON_HISTORY_KEY, RECON_OPEN_KEY } from '../lib/reconcileStorage';
@@ -52,7 +52,26 @@ function useContractRows(t) {
     })();
     return () => { cancelled = true; };
   }, [t.contractType, t.analyze]);
-  return rows;
+
+  // Оптимистичное удаление: сначала убираем строку локально (UI мгновенный),
+  // потом стучимся в бэкенд. Если 4xx/5xx — откатываем к предыдущему стейту
+  // и показываем ошибку. Отдельный snapshot нужен потому, что параллельный
+  // update стейта из useEffect выше может подгрузить свежий список — не
+  // хотим восстанавливать удалённую строку из-за того, что список
+  // перезагрузился до нашего api.remove.
+  const remove = useCallback(async (id) => {
+    let prev = null;
+    setRows((cur) => { prev = cur; return cur.filter(r => r.id !== id); });
+    try {
+      await api.contracts.remove(id);
+      return true;
+    } catch (_e) {
+      if (prev) setRows(prev);
+      return false;
+    }
+  }, []);
+
+  return { rows, remove };
 }
 
 function openContract(id, setRoute) {
@@ -140,17 +159,41 @@ function Dashboard({ t, setRoute, user }) {
 }
 
 /* ---------- Library ---------- */
-function Library({ t, setRoute, query, clearAnalysisIncoming }) {
-  const contractRows = useContractRows(t);
+function Library({ t, setRoute, query, clearAnalysisIncoming, onLibraryChange }) {
+  const { rows: contractRows, remove: removeContract } = useContractRows(t);
   const reconRows = useReconciliationRows(t);
   const [riskFilter, setRiskFilter] = useState('all');
   const [kindFilter, setKindFilter] = useState('all'); // all | contract | recon
   const [sort, setSort] = useState('new');             // new | score | risk
   const [view, setView] = useState('grid');            // grid | list
+  // { id, name } | null — держим отдельный state вместо inline confirm, чтобы
+  // клик по «Видалити» на карточке не открывал сам договор (stopPropagation +
+  // отдельный overlay-модал в конце Library JSX).
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   // Real data only — saved contracts (POST /api/analyze/contract result)
   // and reconciliations (POST /api/reconcile result). Newest first by default.
   const allItems = [...contractRows, ...reconRows];
+
+  // Всякий раз, когда меняется список контрактов (первый fetch, delete),
+  // сообщаем App — сайдбар обновит счётчик «Бібліотека N». Reconciliations
+  // не считаем: сайдбарный счётчик показывает именно договоры.
+  useEffect(() => {
+    if (typeof onLibraryChange === 'function') {
+      onLibraryChange(contractRows.length);
+    }
+  }, [contractRows.length, onLibraryChange]);
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
+    const ok = await removeContract(id);
+    toast(
+      ok ? (t.contractDeleted || 'Перевірку видалено') : (t.contractDeleteFailed || 'Не вдалося видалити'),
+      ok ? 'check' : 'alert',
+    );
+  };
 
   // Aggregate KPIs for the header strip — gives the user instant context
   // ("how big is my library, how risky on average") without scrolling.
@@ -312,46 +355,62 @@ function Library({ t, setRoute, query, clearAnalysisIncoming }) {
         ) : view === 'grid' ? (
           <div className="lib-grid">
             {rows.map(c => (
-              <button key={c.id} className={'lib-card lib-card-' + c.risk + (c.isRecon ? ' lib-card-recon' : '')} onClick={() => openRow(c)}>
-                <span className="lib-stripe" />
-                <div className="lib-card-head">
-                  <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
-                    <Icon name={c.isRecon ? 'scan' : 'doc'} size={16} />
-                  </span>
-                  <span className="lib-kind-chip">
-                    {c.isRecon ? (t.libRecons || 'Звірка') : (t.libContracts || 'Договір')}
-                  </span>
-                  <RiskBadge level={c.risk} t={t} />
-                </div>
-                <div className="lib-card-title">{c.name}</div>
-                <div className="lib-card-sub">{c.client}</div>
-                <div className="lib-card-foot">
-                  <div className="lib-score" style={{ color: scoreColor(c.score) }}>
-                    {typeof c.score === 'number' ? (
-                      <>
-                        <span className="lib-score-v">{c.score}</span>
-                        <span className="lib-score-l">{t.colScore || 'Оцінка'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="lib-score-v lib-score-na">—</span>
-                        <span className="lib-score-l">{t.libNoScore || 'Без оцінки'}</span>
-                      </>
-                    )}
-                  </div>
-                  <div className="lib-meta">
-                    {c.findingsCount ? (
-                      <span className="lib-meta-bit" title={t.libFindings || 'Зауваження'}>
-                        <Icon name="alert" size={11} /> {c.findingsCount}
-                      </span>
-                    ) : null}
-                    <span className="lib-meta-bit lib-meta-date">
-                      <Icon name="calendar" size={11} /> {c.date}
+              <div key={c.id} className={'lib-card lib-card-' + c.risk + (c.isRecon ? ' lib-card-recon' : '')}>
+                <button
+                  type="button"
+                  className="lib-card-open"
+                  onClick={() => openRow(c)}
+                  aria-label={c.name}>
+                  <span className="lib-stripe" />
+                  <div className="lib-card-head">
+                    <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
+                      <Icon name={c.isRecon ? 'scan' : 'doc'} size={16} />
                     </span>
+                    <span className="lib-kind-chip">
+                      {c.isRecon ? (t.libRecons || 'Звірка') : (t.libContracts || 'Договір')}
+                    </span>
+                    <RiskBadge level={c.risk} t={t} />
                   </div>
-                </div>
-                <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
-              </button>
+                  <div className="lib-card-title">{c.name}</div>
+                  <div className="lib-card-sub">{c.client}</div>
+                  <div className="lib-card-foot">
+                    <div className="lib-score" style={{ color: scoreColor(c.score) }}>
+                      {typeof c.score === 'number' ? (
+                        <>
+                          <span className="lib-score-v">{c.score}</span>
+                          <span className="lib-score-l">{t.colScore || 'Оцінка'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="lib-score-v lib-score-na">—</span>
+                          <span className="lib-score-l">{t.libNoScore || 'Без оцінки'}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="lib-meta">
+                      {c.findingsCount ? (
+                        <span className="lib-meta-bit" title={t.libFindings || 'Зауваження'}>
+                          <Icon name="alert" size={11} /> {c.findingsCount}
+                        </span>
+                      ) : null}
+                      <span className="lib-meta-bit lib-meta-date">
+                        <Icon name="calendar" size={11} /> {c.date}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
+                </button>
+                {c.isContract ? (
+                  <button
+                    type="button"
+                    className="lib-card-del"
+                    aria-label={t.deleteContract || 'Видалити'}
+                    title={t.deleteContract || 'Видалити'}
+                    onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: c.id, name: c.name }); }}>
+                    <Icon name="trash" size={13} />
+                  </button>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : (
@@ -366,6 +425,7 @@ function Library({ t, setRoute, query, clearAnalysisIncoming }) {
                   <th>{t.colRisk}</th>
                   <th style={{ textAlign: 'right' }}>{t.colScore}</th>
                   <th aria-hidden="true"></th>
+                  <th aria-hidden="true" style={{ width: 32 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -387,6 +447,18 @@ function Library({ t, setRoute, query, clearAnalysisIncoming }) {
                       {typeof c.score === 'number' ? c.score : <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>—</span>}
                     </td>
                     <td><Icon name="chevR" size={16} style={{ color: 'var(--text-3)' }} /></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {c.isContract ? (
+                        <button
+                          type="button"
+                          className="lib-row-del"
+                          aria-label={t.deleteContract || 'Видалити'}
+                          title={t.deleteContract || 'Видалити'}
+                          onClick={() => setPendingDelete({ id: c.id, name: c.name })}>
+                          <Icon name="trash" size={13} />
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -394,6 +466,31 @@ function Library({ t, setRoute, query, clearAnalysisIncoming }) {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title={t.confirmDeleteTitle || 'Видалити перевірку?'}
+        sub={pendingDelete ? pendingDelete.name : ''}
+        icon="trash"
+        footer={
+          <>
+            <button className="btn btn-subtle" onClick={() => setPendingDelete(null)}>
+              {t.cancel || 'Скасувати'}
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ background: 'var(--risk-high)', borderColor: 'var(--risk-high)' }}
+              onClick={confirmDelete}>
+              <Icon name="trash" size={14} /> {t.deleteConfirmBtn || 'Видалити'}
+            </button>
+          </>
+        }>
+        <p style={{ margin: 0, color: 'var(--text-2)', fontSize: 14, lineHeight: 1.55 }}>
+          {t.confirmDeleteSub
+            || 'Ви впевнені, що хочете видалити цю перевірку? Дію не можна скасувати.'}
+        </p>
+      </Modal>
     </div>
   );
 }
