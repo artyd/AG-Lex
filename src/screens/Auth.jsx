@@ -55,7 +55,9 @@ export function Auth({ t, lang, setLang, theme, setTheme, onAuth }) {
     <div className="auth">
       <aside className="auth-brand">
         <div className="auth-brand-top">
-          <div className="brand-mark" style={{ fontSize: 16, letterSpacing: '-0.03em', width: 40, height: 40 }}>AG</div>
+          <div className="brand-mark brand-mark-logo" style={{ width: 40, height: 40 }}>
+            <img src="/aglexlogo.png" alt="AG Lex" />
+          </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 20, color: '#fff' }}>AG Lex</div>
             <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>Альянс Груп 95</div>

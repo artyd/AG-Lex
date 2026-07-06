@@ -121,7 +121,9 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
   return (
     <aside className="sidebar">
       <div className="brand" onClick={() => setRoute('dashboard')}>
-        <div className="brand-mark" style={{ fontSize: 13, letterSpacing: '-0.03em' }}>AG</div>
+        <div className="brand-mark brand-mark-logo">
+          <img src="/aglexlogo.png" alt="AG Lex" />
+        </div>
         <div>
           <div className="brand-name">AG Lex</div>
           <div className="brand-sub">{t.brandSub}</div>
