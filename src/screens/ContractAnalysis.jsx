@@ -1247,6 +1247,42 @@ function ContractAnalysisSingle({ t, incoming }) {
   const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
 
   const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
+  const [phase, setPhase] = useState('loading');
+  const [tab, setTab] = useState('risks');
+  const [active, setActive] = useState(null);
+  const [hovered, setHovered] = useState(null);     // bidirectional hover (mark ↔ card)
+  // findingStatus[id] = { state: 'pending'|'accepted'|'rejected',
+  //                       resolvedAt: number|null,
+  //                       resolvedVia: 'ai-button'|'manual-edit'|'reject-button'|null }
+  // Отсутствие ключа = pending. Держим одну карту вместо трёх флагов, чтобы
+  // список фиксов на панели мог отсортировать активные наверх, а решённые вниз
+  // по времени resolvedAt.
+  const [findingStatus, setFindingStatus] = useState({});
+  const [highlightsOn, setHighlightsOn] = useState(true);
+  const [tooltip, setTooltip] = useState(null);     // { f, x, y }
+  const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
+  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (flash animation)
+  const [scrollToIdx, setScrollToIdx] = useState(null); // section index to scroll to after insertGap
+
+  const [protocolOpen, setProtocolOpen] = useState(false);
+  // missingStatus[idx] = та же форма, что и findingStatus. resolvedVia:
+  //   'add-button'    — юрист добавил раздел через кнопку «Додати»;
+  //   'reject-button' — юрист явно отверг раздел.
+  const [missingStatus, setMissingStatus] = useState({});
+  const [chatInject, setChatInject] = useState(null);
+  const [verOpen, setVerOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [curVer, setCurVer] = useState('v2');
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [apprOpen, setApprOpen] = useState(false);
+  const [commOpen, setCommOpen] = useState(false);
+  const [dlOpen, setDlOpen] = useState(false);
+  const [sumOpen, setSumOpen] = useState(false);
+  const [trOpen, setTrOpen] = useState(false);
+  const [apprSteps, setApprSteps] = useState(LX.approval);
+  const [comments, setComments] = useState(LX.comments);
+
   // Совместимость с существующими компонентами (FindingCard, MarkdownDoc,
   // ContractDoc), которые читают applied[id] как «правку применили».
   // Достаём из findingStatus только принятые записи.
@@ -1285,42 +1321,6 @@ function ContractAnalysisSingle({ t, incoming }) {
     }, 500);
     return () => clearTimeout(h);
   }, [editedSections, data.findings]);
-
-  const [phase, setPhase] = useState('loading');
-  const [tab, setTab] = useState('risks');
-  const [active, setActive] = useState(null);
-  const [hovered, setHovered] = useState(null);     // bidirectional hover (mark ↔ card)
-  // findingStatus[id] = { state: 'pending'|'accepted'|'rejected',
-  //                       resolvedAt: number|null,
-  //                       resolvedVia: 'ai-button'|'manual-edit'|'reject-button'|null }
-  // Отсутствие ключа = pending. Держим одну карту вместо трёх флагов, чтобы
-  // список фиксов на панели мог отсортировать активные наверх, а решённые вниз
-  // по времени resolvedAt.
-  const [findingStatus, setFindingStatus] = useState({});
-  const [highlightsOn, setHighlightsOn] = useState(true);
-  const [tooltip, setTooltip] = useState(null);     // { f, x, y }
-  const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
-  const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
-  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (flash animation)
-  const [scrollToIdx, setScrollToIdx] = useState(null); // section index to scroll to after insertGap
-
-  const [protocolOpen, setProtocolOpen] = useState(false);
-  // missingStatus[idx] = та же форма, что и findingStatus. resolvedVia:
-  //   'add-button'    — юрист добавил раздел через кнопку «Додати»;
-  //   'reject-button' — юрист явно отверг раздел.
-  const [missingStatus, setMissingStatus] = useState({});
-  const [chatInject, setChatInject] = useState(null);
-  const [verOpen, setVerOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [curVer, setCurVer] = useState('v2');
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [apprOpen, setApprOpen] = useState(false);
-  const [commOpen, setCommOpen] = useState(false);
-  const [dlOpen, setDlOpen] = useState(false);
-  const [sumOpen, setSumOpen] = useState(false);
-  const [trOpen, setTrOpen] = useState(false);
-  const [apprSteps, setApprSteps] = useState(LX.approval);
-  const [comments, setComments] = useState(LX.comments);
 
   // Mount: if we got an uploaded doc, analyze it for real. Cancellable so a
   // route change mid-flight doesn't write to a stale state.
