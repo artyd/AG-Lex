@@ -146,6 +146,47 @@
 .finding-done { background: var(--risk-low-soft); }
 .finding-done:hover { box-shadow: var(--shadow-sm); }
 
+/* ===== To-do rows: accepted / rejected fixes and missing sections =====
+   Резолвед-элементы уходят в конец списка приглушёнными: заголовок с
+   line-through, статусная плашка справа. Красный для rejected берём
+   отдельным оттенком, чтобы не путать со шкалой severity (--risk-high). */
+.todo-item.finding-accepted,
+.miss-card.todo-item-accepted { background: color-mix(in oklab, var(--risk-low-soft) 90%, transparent); }
+.todo-item.finding-rejected,
+.miss-card.todo-item-rejected {
+  background: var(--surface-2);
+  border-color: color-mix(in oklab, var(--text-3) 30%, var(--border));
+}
+.todo-item.finding-accepted .todo-title,
+.todo-item.finding-rejected .todo-title,
+.miss-card.todo-item-accepted .todo-title,
+.miss-card.todo-item-rejected .todo-title {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+.todo-item.finding-accepted,
+.todo-item.finding-rejected,
+.miss-card.todo-item-accepted,
+.miss-card.todo-item-rejected { opacity: 0.78; }
+.todo-actions {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-top: var(--s3);
+}
+.todo-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.todo-status-accepted { color: var(--risk-low); }
+/* Rejected: приглушённый красный, отличный от --risk-high, чтобы плашка
+   «Відхилено» не читалась как «Высокий риск». */
+.todo-status-rejected { color: oklch(0.60 0.09 25); }
+.doc-edit-mode-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--text-2);
+  padding: 4px 10px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+
 /* ===== AI chat ===== */
 .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s5); display: flex; flex-direction: column; gap: 14px; }
