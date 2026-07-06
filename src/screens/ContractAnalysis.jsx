@@ -122,31 +122,54 @@ function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, 
 }
 
 /* ---------- Finding card ---------- */
-function FindingCard({ f, active, hovered, onHover, onClick, applied, onApply, t }) {
+function FindingCard({ f, active, hovered, onHover, onClick, onApply, onReject, status, t }) {
   const lvLabel = { high: 'badge-high', med: 'badge-med', low: 'badge-low' }[f.level];
-  const isApplied = applied[f.id];
+  const state = status?.state || 'pending';
+  const isAccepted = state === 'accepted';
+  const isRejected = state === 'rejected';
+  const isResolved = isAccepted || isRejected;
+  const resolvedLabel = isAccepted
+    ? (status?.resolvedVia === 'manual-edit' ? t.acceptedManual : t.acceptedAi)
+    : t.rejected;
+  const stateClass = isAccepted ? ' finding-accepted' : isRejected ? ' finding-rejected' : '';
+  const borderColor = isAccepted
+    ? 'var(--risk-low)'
+    : isRejected
+      ? 'var(--text-3)'
+      : LEVEL_COLOR[f.level];
   return (
     <div id={'finding-' + f.id}
-      className={'finding'
+      className={'finding todo-item'
         + (active ? ' finding-active' : '')
         + (hovered ? ' finding-hover' : '')
-        + (isApplied ? ' finding-done' : '')}
+        + (isAccepted ? ' finding-done' : '')
+        + stateClass}
       onClick={onClick}
       onMouseEnter={() => onHover && onHover(f.id)}
       onMouseLeave={() => onHover && onHover(null)}
-      style={{ borderLeftColor: isApplied ? 'var(--risk-low)' : LEVEL_COLOR[f.level] }}>
+      style={{ borderLeftColor: borderColor }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span className={'badge-risk ' + (isApplied ? 'badge-low' : lvLabel)}>{f.clause}</span>
-        <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 'auto' }}>{isApplied ? <span style={{ color: 'var(--risk-low)', fontWeight: 700 }}>✓ {t.applied}</span> : f.severity}</span>
+        <span className={'badge-risk ' + (isAccepted ? 'badge-low' : isRejected ? 'badge-muted' : lvLabel)}>{f.clause}</span>
+        <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 'auto' }}>
+          {isAccepted ? (
+            <span className="todo-status todo-status-accepted">
+              <Icon name="checkCircle" size={12} /> {resolvedLabel}
+            </span>
+          ) : isRejected ? (
+            <span className="todo-status todo-status-rejected">
+              <Icon name="x" size={12} /> {resolvedLabel}
+            </span>
+          ) : f.severity}
+        </span>
       </div>
-      <div style={{ fontWeight: 650, fontSize: 14.5, marginBottom: 4, letterSpacing: '-0.01em' }}>{f.title}</div>
+      <div className="todo-title" style={{ fontWeight: 650, fontSize: 14.5, marginBottom: 4, letterSpacing: '-0.01em' }}>{f.title}</div>
       <div style={{ fontSize: 13.5, color: 'var(--text-2)', lineHeight: 1.5 }}>{f.desc}</div>
 
       {f.law ? (
         <div className="law-chip"><Icon name="scales" size={12} /> {t.lawLabel}: {f.law}</div>
       ) : null}
 
-      {f.suggest && active ? (
+      {f.suggest && active && !isResolved ? (
         <div className="suggest" onClick={e => e.stopPropagation()}>
           <div className="suggest-row suggest-from">
             <span className="suggest-tag">{t.original}</span>
@@ -156,15 +179,21 @@ function FindingCard({ f, active, hovered, onHover, onClick, applied, onApply, t
             <span className="suggest-tag suggest-tag-good"><Icon name="wand" size={12} /> {t.proposed}</span>
             <span>«{f.suggest.to}»</span>
           </div>
-          <button className={'btn btn-sm ' + (isApplied ? 'btn-ghost' : 'btn-primary')} disabled={isApplied}
-            style={{ marginTop: 8, opacity: isApplied ? 0.7 : 1 }}
-            onClick={() => onApply(f.id)}>
-            {isApplied ? <><Icon name="check" size={14} /> {t.applied}</> : <><Icon name="wand" size={14} /> {t.applySuggestion}</>}
-          </button>
         </div>
-      ) : f.suggest && !isApplied ? (
-        <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Icon name="wand" size={13} /> {t.suggestRewrite}
+      ) : null}
+
+      {!isResolved ? (
+        <div className="todo-actions" onClick={e => e.stopPropagation()}>
+          {f.suggest ? (
+            <button className="btn btn-sm btn-primary"
+              onClick={() => onApply(f.id)}>
+              <Icon name="wand" size={13} /> {t.aiFixShort || 'AI-виправлення'}
+            </button>
+          ) : null}
+          <button className="btn btn-sm btn-ghost"
+            onClick={() => onReject(f.id)}>
+            <Icon name="x" size={13} /> {t.rejectFix || 'Відхилити'}
+          </button>
         </div>
       ) : null}
     </div>
@@ -371,10 +400,16 @@ function Chat({ t, inject }) {
 }
 
 /* ---------- AI panel ---------- */
-export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered, applied, onApply, onApplyAll, scrollToSeg, chatInject, addedSet, onAddClause, data, isDemo, hideTabs }) {
+export function AiPanel({
+  t, tab, setTab, active, setActive, hovered, setHovered,
+  findingStatus = {}, onApply, onReject, onApplyAll, scrollToSeg,
+  chatInject,
+  missingStatus = {}, onAddClause, onRejectMissing,
+  data, isDemo, hideTabs,
+}) {
   // `data` (always defined) is the merged real-or-demo bundle from
   // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
-  // from DEMO until the backend learns to return them (Task 5/future).
+  // from DEMO until the backend learns to return them.
   const findings = data.findings;
   const comparison = data.comparison;
   const legalBasis = data.legalBasis;
@@ -384,17 +419,56 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
   const warnings = data.warnings;
   const [filter, setFilter] = useState('all');
 
-  const appliedWeight = findings.reduce((s, f) => s + (applied[f.id] ? (f.weight || 0) : 0), 0);
+  const getFindingState = (id) => findingStatus[id]?.state || 'pending';
+  const getMissingState = (i) => missingStatus[i]?.state || 'pending';
+
+  const appliedWeight = findings.reduce(
+    (s, f) => s + (getFindingState(f.id) === 'accepted' ? (f.weight || 0) : 0), 0
+  );
   const liveScore = Math.min(92, (data.score?.value || 0) + appliedWeight);
-  const openHigh = findings.filter(f => f.level === 'high' && !applied[f.id]).length;
-  const openMed = findings.filter(f => f.level === 'med' && !applied[f.id]).length;
-  const resolved = findings.filter(f => applied[f.id]).length;
+  const openHigh = findings.filter(f => f.level === 'high' && getFindingState(f.id) === 'pending').length;
+  const openMed = findings.filter(f => f.level === 'med' && getFindingState(f.id) === 'pending').length;
+  const resolved = findings.filter(f => getFindingState(f.id) === 'accepted').length;
   const scoreLabel = liveScore >= 80 ? t.scoreLow : liveScore >= 58 ? t.scoreMed : t.scoreHigh;
   const scoreColor = liveScore >= 75 ? 'var(--risk-low)' : liveScore >= 55 ? 'var(--risk-med)' : 'var(--risk-high)';
 
   const fixable = findings.filter(f => f.suggest);
-  const allFixed = fixable.every(f => applied[f.id]);
-  const filtered = filter === 'all' ? findings : findings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
+  // «Все правки решены»: либо принято, либо отклонено — не осталось pending.
+  const allFixed = fixable.every(f => getFindingState(f.id) !== 'pending');
+  const pendingFixableCount = fixable.filter(f => getFindingState(f.id) === 'pending').length;
+  const openMissing = missing.filter((_, i) => getMissingState(i) === 'pending').length;
+
+  // Сортировка to-do списка: pending наверху (сохраняя исходный порядок),
+  // решённые (accepted/rejected) — внизу по resolvedAt. Фильтр по уровню
+  // применяется поверх сортировки.
+  const sortedFindings = useMemo(() => {
+    const withMeta = findings.map((f, i) => ({ f, i, st: findingStatus[f.id] }));
+    withMeta.sort((a, b) => {
+      const sa = a.st?.state || 'pending';
+      const sb = b.st?.state || 'pending';
+      if (sa === 'pending' && sb !== 'pending') return -1;
+      if (sa !== 'pending' && sb === 'pending') return 1;
+      if (sa === 'pending' && sb === 'pending') return a.i - b.i;
+      return (a.st?.resolvedAt || 0) - (b.st?.resolvedAt || 0);
+    });
+    return withMeta.map(({ f }) => f);
+  }, [findings, findingStatus]);
+  const sortedMissing = useMemo(() => {
+    const withMeta = missing.map((m, i) => ({ m, i, st: missingStatus[i] }));
+    withMeta.sort((a, b) => {
+      const sa = a.st?.state || 'pending';
+      const sb = b.st?.state || 'pending';
+      if (sa === 'pending' && sb !== 'pending') return -1;
+      if (sa !== 'pending' && sb === 'pending') return 1;
+      if (sa === 'pending' && sb === 'pending') return a.i - b.i;
+      return (a.st?.resolvedAt || 0) - (b.st?.resolvedAt || 0);
+    });
+    return withMeta; // сохраняем оригинальный i для onAddClause/onRejectMissing
+  }, [missing, missingStatus]);
+
+  const filtered = filter === 'all'
+    ? sortedFindings
+    : sortedFindings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
 
   // Reconcile callers pass hideTabs=['summary','data','missing'] because
   // those concepts (executive summary, contract metadata, missing clauses)
@@ -406,7 +480,7 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
     { id: 'chat', label: t.tabChat, icon: 'sparkle' },
     { id: 'summary', label: t.tabSummary },
     { id: 'data', label: t.tabData },
-    { id: 'missing', label: t.tabMissing, n: missing.length - addedSet.size },
+    { id: 'missing', label: t.tabMissing, n: openMissing },
     { id: 'compare', label: t.tabCompare },
   ].filter((tb) => !hidden.has(tb.id));
 
@@ -492,15 +566,17 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
               <HelpTip text={(t.tips && t.tips.aiApplyAll) || ''} placement="top">
                 <button className={'btn ' + (allFixed ? 'btn-ghost' : 'btn-primary')} disabled={allFixed}
                   onClick={onApplyAll} style={{ justifyContent: 'center', width: '100%' }}>
-                  {allFixed ? <><Icon name="check" size={15} /> {t.allApplied}</> : <><Icon name="wand" size={15} /> {t.applyAll} ({fixable.filter(f => !applied[f.id]).length})</>}
+                  {allFixed ? <><Icon name="check" size={15} /> {t.allApplied}</> : <><Icon name="wand" size={15} /> {t.applyAll} ({pendingFixableCount})</>}
                 </button>
               </HelpTip>
               {filtered.map(f => (
-                <FindingCard key={f.id} f={f} t={t} applied={applied}
+                <FindingCard key={f.id} f={f} t={t}
+                  status={findingStatus[f.id]}
                   active={active === f.id}
                   hovered={hovered === f.id}
                   onHover={setHovered}
                   onApply={onApply}
+                  onReject={onReject}
                   onClick={() => { setActive(active === f.id ? null : f.id); scrollToSeg(f.id); }} />
               ))}
             </div>
@@ -555,21 +631,51 @@ export function AiPanel({ t, tab, setTab, active, setActive, hovered, setHovered
             <div className="view-enter">
               <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 10 }}>{t.missingSub}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                {missing.map((m, i) => {
-                  const added = addedSet.has(i);
+                {sortedMissing.map(({ m, i, st }) => {
+                  const state = st?.state || 'pending';
+                  const isAccepted = state === 'accepted';
+                  const isRejected = state === 'rejected';
+                  const isResolved = isAccepted || isRejected;
                   return (
-                    <div className={'miss-card' + (added ? ' miss-done' : '')} key={i}>
-                      <div className="miss-ic" style={added ? { background: 'var(--risk-low-soft)', color: 'var(--risk-low)' } : null}>
-                        <Icon name={added ? 'check' : 'x'} size={13} stroke={2.6} />
+                    <div className={
+                      'miss-card todo-item'
+                      + (isAccepted ? ' miss-done todo-item-accepted' : '')
+                      + (isRejected ? ' todo-item-rejected' : '')
+                    } key={i}>
+                      <div className="miss-ic" style={
+                        isAccepted ? { background: 'var(--risk-low-soft)', color: 'var(--risk-low)' } :
+                        isRejected ? { background: 'var(--surface-2)', color: 'var(--text-3)' } : null
+                      }>
+                        <Icon name={isAccepted ? 'check' : isRejected ? 'x' : 'plus'} size={13} stroke={2.6} />
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 650, fontSize: 14 }}>{m.title}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="todo-title" style={{ fontWeight: 650, fontSize: 14 }}>{m.title}</div>
                         <div style={{ fontSize: 12.5, color: 'var(--text-2)', marginTop: 2 }}>{m.note}</div>
                         {m.law ? <div className="law-chip" style={{ marginTop: 6 }}><Icon name="scales" size={11} /> {m.law}</div> : null}
+                        {!isResolved ? (
+                          <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 6 }}>
+                            {t.missingWhere || 'Додається в кінець документа'}
+                          </div>
+                        ) : null}
                       </div>
-                      {added
-                        ? <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--risk-low)', whiteSpace: 'nowrap' }}>✓ {t.added}</span>
-                        : <button className="btn btn-sm btn-subtle" onClick={() => onAddClause(i)}><Icon name="plus" size={14} /> {t.addClause}</button>}
+                      {isAccepted ? (
+                        <span className="todo-status todo-status-accepted" style={{ whiteSpace: 'nowrap' }}>
+                          <Icon name="checkCircle" size={12} /> {t.added}
+                        </span>
+                      ) : isRejected ? (
+                        <span className="todo-status todo-status-rejected" style={{ whiteSpace: 'nowrap' }}>
+                          <Icon name="x" size={12} /> {t.rejected}
+                        </span>
+                      ) : (
+                        <div className="todo-actions" style={{ flexDirection: 'column', gap: 6 }}>
+                          <button className="btn btn-sm btn-subtle" onClick={() => onAddClause(i)}>
+                            <Icon name="plus" size={13} /> {t.addClause}
+                          </button>
+                          <button className="btn btn-sm btn-ghost" onClick={() => onRejectMissing(i)}>
+                            <Icon name="x" size={13} /> {t.rejectFix || 'Відхилити'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -682,7 +788,10 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
   const [active, setActive] = useState(null);
   const [hovered, setHovered] = useState(null);
   const [tab, setTab] = useState('risks');
-  const [applied, setApplied] = useState({});
+  // Локальный findingStatus для сверок: reconcile-режим не переписывает
+  // editedSections (тут нет одного «главного» договора), только помечает
+  // findings принятыми/отклонёнными для дальнейшего экспорта.
+  const [findingStatus, setFindingStatus] = useState({});
 
   const data = useMemo(() => ({
     findings: (adapted && adapted.findings) || [],
@@ -804,13 +913,19 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
           <AiPanel t={t} tab={tab} setTab={setTab}
             active={active} setActive={setActive}
             hovered={hovered} setHovered={setHovered}
-            applied={applied}
-            onApply={(id) => setApplied((a) => ({ ...a, [id]: true }))}
+            findingStatus={findingStatus}
+            onApply={(id) => setFindingStatus((s) => ({
+              ...s, [id]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'ai-button' },
+            }))}
+            onReject={(id) => setFindingStatus((s) => ({
+              ...s, [id]: { state: 'rejected', resolvedAt: Date.now(), resolvedVia: 'reject-button' },
+            }))}
             onApplyAll={() => {}}
             scrollToSeg={() => {}}
             chatInject={null}
-            addedSet={new Set()}
+            missingStatus={{}}
             onAddClause={() => {}}
+            onRejectMissing={() => {}}
             data={data}
             isDemo={false}
             hideTabs={['summary', 'data', 'missing']} />
@@ -1132,21 +1247,68 @@ function ContractAnalysisSingle({ t, incoming }) {
   const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
 
   const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
+  // Совместимость с существующими компонентами (FindingCard, MarkdownDoc,
+  // ContractDoc), которые читают applied[id] как «правку применили».
+  // Достаём из findingStatus только принятые записи.
+  const applied = useMemo(() =>
+    Object.fromEntries(
+      Object.entries(findingStatus)
+        .filter(([, v]) => v && v.state === 'accepted')
+        .map(([k]) => [k, true])
+    ),
+  [findingStatus]);
+
+  // Manual-accept detection: если юрист сам переписал текст в редакторе поверх
+  // finding.suggest.from — карточка без клика уходит в accepted/manual-edit.
+  // Тот же buildFromRegex, что и в applyFixToSections, — чтобы «правка ушла»
+  // означало одно и то же для AI-кнопки и для ручного ввода. Дебаунс 500ms,
+  // чтобы промежуточные keystroke не флипали статус на середине слова.
+  useEffect(() => {
+    const h = setTimeout(() => {
+      setFindingStatus(prev => {
+        let next = prev;
+        for (const f of data.findings) {
+          const cur = prev[f.id]?.state ?? 'pending';
+          if (cur !== 'pending') continue;
+          const re = buildFromRegex(f.suggest?.from || '');
+          if (!re) continue;
+          const stillPresent = editedSections.some(s => re.test(s.text || ''));
+          if (!stillPresent) {
+            if (next === prev) next = { ...prev };
+            next[f.id] = {
+              state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'manual-edit',
+            };
+          }
+        }
+        return next;
+      });
+    }, 500);
+    return () => clearTimeout(h);
+  }, [editedSections, data.findings]);
+
   const [phase, setPhase] = useState('loading');
   const [tab, setTab] = useState('risks');
   const [active, setActive] = useState(null);
   const [hovered, setHovered] = useState(null);     // bidirectional hover (mark ↔ card)
-  const [applied, setApplied] = useState({});
+  // findingStatus[id] = { state: 'pending'|'accepted'|'rejected',
+  //                       resolvedAt: number|null,
+  //                       resolvedVia: 'ai-button'|'manual-edit'|'reject-button'|null }
+  // Отсутствие ключа = pending. Держим одну карту вместо трёх флагов, чтобы
+  // список фиксов на панели мог отсортировать активные наверх, а решённые вниз
+  // по времени resolvedAt.
+  const [findingStatus, setFindingStatus] = useState({});
   const [highlightsOn, setHighlightsOn] = useState(true);
   const [tooltip, setTooltip] = useState(null);     // { f, x, y }
-  const [editMode, setEditMode] = useState(false);  // false = view (MarkdownDoc), true = edit (EditableDoc)
   const [zoom, setZoom] = useState(100);            // percent, ZOOM_MIN..ZOOM_MAX in ZOOM_STEP increments
   const [formatMenuOpen, setFormatMenuOpen] = useState(false); // download-format dropdown
-  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (edit-mode flash)
+  const [flashIdx, setFlashIdx] = useState(null);   // section index just rewritten by Apply (flash animation)
   const [scrollToIdx, setScrollToIdx] = useState(null); // section index to scroll to after insertGap
 
   const [protocolOpen, setProtocolOpen] = useState(false);
-  const [addedSet, setAddedSet] = useState(new Set());
+  // missingStatus[idx] = та же форма, что и findingStatus. resolvedVia:
+  //   'add-button'    — юрист добавил раздел через кнопку «Додати»;
+  //   'reject-button' — юрист явно отверг раздел.
+  const [missingStatus, setMissingStatus] = useState({});
   const [chatInject, setChatInject] = useState(null);
   const [verOpen, setVerOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -1351,17 +1513,14 @@ function ContractAnalysisSingle({ t, incoming }) {
     }, 60);
   };
 
-  // Apply behaviour is mode-dependent:
-  //   • view mode  — only flip the applied flag, MarkdownDoc renders the
-  //     diff (strike old + green new) over the original text.
-  //   • edit mode — rewrite the matching section's text in editedSections
-  //     and flash that section so the user sees the swap land in the
-  //     textarea they're editing.
+  // Документ теперь всегда редактируемый (нет режима «Перегляд»), поэтому AI-
+  // виправлення сразу переписывает соответствующую секцию editedSections и
+  // подсвечивает её flash-анимацией. Reject не трогает текст — только помечает
+  // finding как отклонённый, чтобы карточка ушла вниз списка со striked-стилем.
   const onApply = (id) => {
     const f = data.findings.find(x => x.id === id);
     if (!f) return;
-    setApplied(a => ({ ...a, [id]: true }));
-    if (editMode && f.suggest) {
+    if (f.suggest) {
       const { sections: next, changedIdx } = applyFixToSections(editedSections, f);
       if (changedIdx !== -1) {
         setEditedSections(next);
@@ -1369,27 +1528,40 @@ function ContractAnalysisSingle({ t, incoming }) {
         setTimeout(() => setFlashIdx(null), 1400);
       }
     }
+    setFindingStatus(prev => ({
+      ...prev,
+      [id]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'ai-button' },
+    }));
+  };
+  const onReject = (id) => {
+    setFindingStatus(prev => ({
+      ...prev,
+      [id]: { state: 'rejected', resolvedAt: Date.now(), resolvedVia: 'reject-button' },
+    }));
   };
   const onApplyAll = () => {
-    const next = {};
-    data.findings.forEach(f => { if (f.suggest) next[f.id] = true; });
-    setApplied(a => ({ ...a, ...next }));
-    if (editMode) {
-      // Apply every fix in order against the current edited copy so
-      // typed-over edits are preserved between rewrites.
-      let working = editedSections;
-      for (const f of data.findings) {
-        if (!f.suggest) continue;
-        const { sections, changedIdx } = applyFixToSections(working, f);
-        if (changedIdx !== -1) working = sections;
-      }
-      setEditedSections(working);
+    // Применяем каждый pending finding по очереди к текущему editedSections,
+    // чтобы правки поверх правок не затирали друг друга. Уже принятые/отклонённые
+    // findings пропускаем — resolvedAt в findingStatus остаётся тем же.
+    let working = editedSections;
+    const now = Date.now();
+    const patch = {};
+    for (const f of data.findings) {
+      if (!f.suggest) continue;
+      const cur = findingStatus[f.id]?.state ?? 'pending';
+      if (cur !== 'pending') continue;
+      const { sections, changedIdx } = applyFixToSections(working, f);
+      if (changedIdx !== -1) working = sections;
+      patch[f.id] = { state: 'accepted', resolvedAt: now, resolvedVia: 'ai-button' };
     }
+    if (working !== editedSections) setEditedSections(working);
+    if (Object.keys(patch).length) setFindingStatus(prev => ({ ...prev, ...patch }));
     toast(t.allApplied, 'wand');
   };
   const reanalyze = () => {
-    setPhase('loading'); setActive(null); setApplied({});
-    setTab('risks'); setAddedSet(new Set());
+    setPhase('loading'); setActive(null);
+    setFindingStatus({}); setMissingStatus({});
+    setTab('risks');
   };
 
   // hover tooltip
@@ -1410,15 +1582,18 @@ function ContractAnalysisSingle({ t, incoming }) {
     setTab('chat');
     setChatInject({ q: f.title + ' — ' + f.clause + '?', a, refs: [num], ts: Date.now() });
   };
-  // Insert a missing clause as a new editable section at the end of the
-  // document, switch to edit mode, and scroll the editor to the new
-  // textarea so the user can keep refining the wording. `clauseText` from
-  // the analyzer is the suggested body; falls back to empty so the user
-  // can type from scratch.
+  // Добавляем недостающий раздел в конец документа и скроллим редактор
+  // к новой textarea, чтобы юрист сразу мог править формулировку. Позиция
+  // сейчас всегда «в конце» — бэкенд не возвращает точку вставки; TODO для
+  // отдельной задачи. Статус missing[idx] флипается в accepted, чтобы
+  // карточка ушла вниз списка.
   const onAddClause = (idx) => {
     const m = data.missing[idx];
     if (!m) return;
-    setAddedSet(s => { const n = new Set(s); n.add(idx); return n; });
+    setMissingStatus(prev => ({
+      ...prev,
+      [idx]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'add-button' },
+    }));
     const newSection = {
       number: '',
       title: m.title || '',
@@ -1429,15 +1604,19 @@ function ContractAnalysisSingle({ t, incoming }) {
       setScrollToIdx(next.length - 1);
       return next;
     });
-    setEditMode(true);
     toast(t.clauseAdded, 'check');
-    // Clear the scroll target after the editor has had a chance to react
-    // — long enough for EditableDoc's effect to fire, short enough that a
-    // second insert in quick succession isn't ignored.
+    // Сбрасываем scroll-цель после того, как эффект EditableDoc успел
+    // отработать. Долго держать нельзя — второй быстрый insert проигнорируется.
     setTimeout(() => setScrollToIdx(null), 900);
   };
+  const onRejectMissing = (idx) => {
+    setMissingStatus(prev => ({
+      ...prev,
+      [idx]: { state: 'rejected', resolvedAt: Date.now(), resolvedVia: 'reject-button' },
+    }));
+  };
 
-  const addedClauses = data.missing.filter((_, i) => addedSet.has(i));
+  const addedClauses = data.missing.filter((_, i) => missingStatus[i]?.state === 'accepted');
 
   return (
     <div className="analysis">
@@ -1532,18 +1711,9 @@ function ContractAnalysisSingle({ t, incoming }) {
           docZoom={zoom / 100}
           docToolbar={
             <div className="doc-edit-toolbar">
-              <button type="button"
-                className={'btn btn-sm' + (!editMode ? ' btn-primary' : ' btn-ghost')}
-                onClick={() => setEditMode(false)}
-                title={t.viewMode || 'Перегляд'}>
-                <Icon name="scan" size={15} /> {t.viewMode || 'Перегляд'}
-              </button>
-              <button type="button"
-                className={'btn btn-sm' + (editMode ? ' btn-primary' : ' btn-ghost')}
-                onClick={() => setEditMode(true)}
-                title={t.editMode || 'Редагування'}>
-                <Icon name="pen" size={15} /> {t.editMode || 'Редагування'}
-              </button>
+              <span className="doc-edit-mode-label">
+                <Icon name="pen" size={14} /> {t.editMode || 'Редагування'}
+              </span>
 
               <div className="sep" />
 
@@ -1606,22 +1776,23 @@ function ContractAnalysisSingle({ t, incoming }) {
               </div>
             </div>
           }
-          docOverride={editMode
-            ? (
-              <EditableDoc
-                filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
-                sections={editedSections}
-                onChange={setEditedSections}
-                flashIdx={flashIdx}
-                scrollToIdx={scrollToIdx}
-              />
-            )
-            : null}
+          docOverride={
+            <EditableDoc
+              filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
+              sections={editedSections}
+              onChange={setEditedSections}
+              flashIdx={flashIdx}
+              scrollToIdx={scrollToIdx}
+            />
+          }
           panel={
             <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
               hovered={hovered} setHovered={setHovered}
-              applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
-              chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
+              findingStatus={findingStatus}
+              onApply={onApply} onReject={onReject} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
+              chatInject={chatInject}
+              missingStatus={missingStatus}
+              onAddClause={onAddClause} onRejectMissing={onRejectMissing}
               data={data} isDemo={isDemo} />
           }
         />
@@ -1650,8 +1821,11 @@ function ContractAnalysisSingle({ t, incoming }) {
           <div className="panel-wrap">
             <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
               hovered={hovered} setHovered={setHovered}
-              applied={applied} onApply={onApply} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
-              chatInject={chatInject} addedSet={addedSet} onAddClause={onAddClause}
+              findingStatus={findingStatus}
+              onApply={onApply} onReject={onReject} onApplyAll={onApplyAll} scrollToSeg={scrollToSeg}
+              chatInject={chatInject}
+              missingStatus={missingStatus}
+              onAddClause={onAddClause} onRejectMissing={onRejectMissing}
               data={data} isDemo={isDemo} />
           </div>
         </div>

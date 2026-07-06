@@ -368,6 +368,7 @@ button:focus-visible, a:focus-visible, .nav-item:focus-visible, .nav-group-head:
 .badge-med  { background: var(--risk-med-soft);  color: var(--risk-med); }
 .badge-low  { background: var(--risk-low-soft);  color: var(--risk-low); }
 .badge-info { background: var(--info-soft);       color: var(--info); }
+.badge-muted { background: var(--surface-2); color: var(--text-3); }
 
 .divider { height: 1px; background: var(--border); border: none; margin: var(--s4) 0; }
 
