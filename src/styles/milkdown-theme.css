@@ -189,23 +189,30 @@
   border: none;
   outline: none;
   caret-color: var(--text);
-  min-height: 420px;
 }
 .milkdown-host .milkdown .ProseMirror {
-  padding: 16px 24px;
+  /* Padding-bottom = 60px, чтобы низ последней страницы визуально
+     «завершался», текст не тыкается в самый край листа. */
+  padding: 16px 24px 60px;
+  /* min-height = 1 A4 (1123px = 297mm × 96dpi). Раньше стояло 420px —
+     короткий договор рендерился «сплошным листом», ни одна «щель»
+     из repeating-linear-gradient не попадала в высоту документа.
+     Теперь минимум одна страница A4 всегда видна целиком, а длинные
+     договоры получают полноценные разрывы каждые 1123px. */
+  min-height: 1123px;
   /* Разрыв страниц: каждые 1123px (A4 = 297mm × 96dpi) — серая «щель»
      32px, чтобы каждый лист визуально отделился от следующего, как в
      Google Docs Print Layout. `repeating-linear-gradient` сам повторяет
      паттерн, доп. background-size/repeat не нужны — раньше они ломали
-     рендер и щель не появлялась. Контраст щели ~10% чтобы юрист её
-     реально видел, не как «может это тень». */
+     рендер и щель не появлялась. Контраст щели 25% — чтобы юрист её
+     точно видел даже на бумажно-светлой теме, а не «может это тень». */
   background-color: var(--surface);
   background-image: repeating-linear-gradient(
     to bottom,
     var(--surface) 0,
     var(--surface) 1123px,
-    color-mix(in oklab, var(--text) 10%, var(--surface)) 1123px,
-    color-mix(in oklab, var(--text) 10%, var(--surface)) 1155px
+    color-mix(in oklab, var(--text) 25%, var(--surface)) 1123px,
+    color-mix(in oklab, var(--text) 25%, var(--surface)) 1155px
   );
 }
 /* Убираем горизонтальные линии (`---` из старых сохранённых доков) —

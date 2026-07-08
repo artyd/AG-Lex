@@ -26,7 +26,7 @@ import { replaceAll, $mark, $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { undo, redo } from '@milkdown/kit/prose/history';
-import { buildFromRegex } from '../../lib/findingHighlight';
+import { buildFromRegex, clauseNumOf } from '../../lib/findingHighlight';
 import {
   toggleStrongCommand,
   toggleEmphasisCommand,
@@ -67,10 +67,21 @@ const findingsPlugin = $prose(() => new Plugin({
   },
   props: {
     decorations: (state) => findingsPluginKey.getState(state),
+    // Клик по inline подсветке `.md-hl` эмитит тот же callback, что и клик
+    // по левому флажку — открывает finding в правой AI-панели.
+    handleClick: (view, _pos, event) => {
+      const hit = event.target && event.target.closest && event.target.closest('.md-hl');
+      if (!hit) return false;
+      const id = hit.getAttribute('data-finding-id');
+      if (!id) return false;
+      const cb = findingsClickRef.current;
+      if (typeof cb === 'function') cb(id);
+      return true;  // proseMirror не двинет каретку
+    },
   },
 }));
 
-function _makeFlagEl(finding) {
+function _makeFlagEl(finding, stackIdx = 0) {
   const btn = document.createElement('button');
   btn.type = 'button';
   const level = finding.level || 'info';
@@ -85,32 +96,125 @@ function _makeFlagEl(finding) {
     const cb = findingsClickRef.current;
     if (typeof cb === 'function') cb(finding.id);
   };
+  // Stack: несколько флажков в одном блоке (fallback без match) — раздвигаем
+  // их по вертикали, чтобы кружочки не наезжали друг на друга.
+  if (stackIdx > 0) btn.style.top = `${4 + stackIdx * 26}px`;
   return btn;
+}
+
+/** Собрать плоский список inline-текст-нод в блоке с их PM-позициями. */
+function textNodesWithPositions(blockNode, blockPmStart) {
+  const nodes = [];
+  blockNode.descendants((node, offset) => {
+    if (node.isText && node.text) {
+      // +1 внутри блока — обходим open-token самого блока.
+      nodes.push({ text: node.text, pmStart: blockPmStart + 1 + offset });
+    }
+    return true;
+  });
+  return nodes;
+}
+
+/** Конвертировать offsets в textContent (start,end) → PM range (from,to). */
+function pmRangeForTextRange(textNodes, textStart, textEnd) {
+  let cursor = 0;
+  let from = null;
+  let to = null;
+  for (const n of textNodes) {
+    const nodeEnd = cursor + n.text.length;
+    if (from === null && textStart >= cursor && textStart <= nodeEnd) {
+      from = n.pmStart + (textStart - cursor);
+    }
+    if (to === null && textEnd >= cursor && textEnd <= nodeEnd) {
+      to = n.pmStart + (textEnd - cursor);
+    }
+    cursor = nodeEnd;
+    if (from !== null && to !== null) break;
+  }
+  return (from !== null && to !== null) ? { from, to } : null;
 }
 
 function computeFindingDecorations(doc, findings) {
   if (!Array.isArray(findings) || findings.length === 0) return DecorationSet.empty;
   // Компилируем regex один раз на весь проход — быстрее чем в inner loop.
   const compiled = findings
-    .map((f) => ({ f, re: buildFromRegex(f?.suggest?.from) }))
-    .filter((x) => x.re);
+    .map((f) => ({
+      f,
+      re: buildFromRegex(f?.suggest?.from),
+      clauseNum: clauseNumOf(f?.clause),
+    }))
+    .filter((x) => x.f);
   if (compiled.length === 0) return DecorationSet.empty;
+
   const decos = [];
-  const seenIds = new Set();
+  const flaggedIds = new Set();      // finding id → уже поставлен флажок
+  const highlightedIds = new Set();  // finding id → уже подсвечен inline
+  // Кандидат для fallback: первый блок, чей textContent содержит clause-номер.
+  // Заполняется на первом же проходе.
+  const clauseBlockOffsets = new Map();  // clauseNum → blockPmStart
+  const firstBlockOffsetRef = { pmStart: null };
+
+  // Основной проход: подсветка + флажок для каждого finding с match'ем.
   doc.forEach((node, offset) => {
     if (!node.isBlock || !node.textContent) return;
+    if (firstBlockOffsetRef.pmStart === null) firstBlockOffsetRef.pmStart = offset;
+    // Регистрируем блоки, содержащие «п. N.N» — понадобится fallback'у.
+    for (const { clauseNum } of compiled) {
+      if (!clauseNum || clauseBlockOffsets.has(clauseNum)) continue;
+      if (node.textContent.includes(clauseNum)) {
+        clauseBlockOffsets.set(clauseNum, offset);
+      }
+    }
+
+    const textNodes = textNodesWithPositions(node, offset);
     for (const { f, re } of compiled) {
-      if (seenIds.has(f.id)) continue;  // один флажок на finding — на первом матчинге
-      if (re.test(node.textContent)) {
-        seenIds.add(f.id);
+      if (!re) continue;
+      if (highlightedIds.has(f.id)) continue;
+      re.lastIndex = 0;
+      const m = re.exec(node.textContent);
+      if (!m) continue;
+      // Inline подсветка проблемной фразы.
+      const range = pmRangeForTextRange(textNodes, m.index, m.index + m[0].length);
+      if (range) {
+        const level = f.level || 'info';
+        decos.push(Decoration.inline(range.from, range.to, {
+          class: `md-hl md-hl-${level}`,
+          'data-finding-id': f.id || '',
+        }));
+        highlightedIds.add(f.id);
+      }
+      // Левый флажок — один на finding, у блока где случился первый match.
+      if (!flaggedIds.has(f.id)) {
+        flaggedIds.add(f.id);
         decos.push(Decoration.widget(offset + 1, () => _makeFlagEl(f), {
           side: -1,
           key: `flag-${f.id}`,
         }));
-        break;  // одному блоку — один флажок (первого matched finding'а)
       }
     }
   });
+
+  // Fallback: findings, для которых regex не нашёл ни одного match'а —
+  // всё равно ставим флажок. Приоритет: блок, чей текст содержит clause-номер;
+  // иначе — стек флажков на первом блоке документа.
+  let stackIdx = 0;
+  for (const { f, clauseNum } of compiled) {
+    if (flaggedIds.has(f.id)) continue;
+    const clauseOffset = clauseNum ? clauseBlockOffsets.get(clauseNum) : undefined;
+    const anchor = (clauseOffset !== undefined)
+      ? clauseOffset
+      : firstBlockOffsetRef.pmStart;
+    if (anchor === null || anchor === undefined) continue;
+    // Стек только для первого блока — если ссылка идёт на clause-блок,
+    // ставим одиночный флажок (обычно там место есть).
+    const idx = (clauseOffset !== undefined) ? 0 : stackIdx++;
+    flaggedIds.add(f.id);
+    decos.push(Decoration.widget(anchor + 1, () => _makeFlagEl(f, idx), {
+      side: -1,
+      key: `flag-fallback-${f.id}`,
+    }));
+  }
+
   return DecorationSet.create(doc, decos);
 }
 
