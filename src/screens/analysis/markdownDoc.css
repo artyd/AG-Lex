@@ -298,6 +298,21 @@ ins.md-hl-applied-new {
   outline: none;
 }
 .dl-menu-item > svg { color: var(--text-3); flex: 0 0 auto; }
+/* Активный формат в дропдауне — акцент-подсветка + чекмарк в конце строки. */
+.dl-menu-item-active {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.dl-menu-item-active > svg:first-child { color: var(--accent); }
+/* Инлайн-подпись выбранного формата в split-button — subtle-цвет, чтобы
+   не забирать внимание от «Завантажити». */
+.dl-split-fmt {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 500;
+  font-size: 12px;
+}
 
 /* --- Zoom wrapper --- scales the doc body via inherited font-size.
    Lives inside doc-scroll so the toolbar isn't scaled. */
@@ -323,6 +338,25 @@ ins.md-hl-applied-new {
 .md-doc-edit .cm-host:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* --- Save-state chip in the editor toolbar ---
+   Показывается только пока saveState !== 'idle'. Три состояния:
+   saving (нейтральный муут-цвет), saved (акцент var(--risk-low)),
+   error (var(--risk-high)). Anim-refresh на «saving» крутит иконку. */
+.save-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text-3);
+  white-space: nowrap;
+}
+.save-chip-saving svg { animation: save-spin 1s linear infinite; }
+.save-chip-saved { color: var(--risk-low); background: color-mix(in oklab, var(--risk-low) 14%, transparent); }
+.save-chip-error { color: var(--risk-high); background: color-mix(in oklab, var(--risk-high) 14%, transparent); }
+@keyframes save-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* --- Apply-fix flash ---
