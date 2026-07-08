@@ -356,11 +356,10 @@ function Library({ t, setRoute, query, clearAnalysisIncoming, onLibraryChange })
           <div className="lib-grid">
             {rows.map(c => (
               <div key={c.id} className={'lib-card lib-card-' + c.risk + (c.isRecon ? ' lib-card-recon' : '')}>
-                <button
-                  type="button"
-                  className="lib-card-open"
-                  onClick={() => openRow(c)}
-                  aria-label={c.name}>
+                {/* Front face — превью карточки (кликабельно на hover-back
+                    вертится, но клик по превью не открывает — юрист жмёт
+                    «Відкрити» на back-face). */}
+                <div className="lib-card-face lib-card-front">
                   <span className="lib-stripe" />
                   <div className="lib-card-head">
                     <span className={'lib-ic' + (c.isRecon ? ' lib-ic-recon' : '')}>
@@ -398,18 +397,31 @@ function Library({ t, setRoute, query, clearAnalysisIncoming, onLibraryChange })
                       </span>
                     </div>
                   </div>
-                  <span className="lib-card-arrow" aria-hidden="true"><Icon name="chevR" size={14} /></span>
-                </button>
-                {c.isContract ? (
-                  <button
-                    type="button"
-                    className="lib-card-del"
-                    aria-label={t.deleteContract || 'Видалити'}
-                    title={t.deleteContract || 'Видалити'}
-                    onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: c.id, name: c.name }); }}>
-                    <Icon name="trash" size={13} />
-                  </button>
-                ) : null}
+                </div>
+
+                {/* Back face — hover-меню с явными кнопками
+                    «Відкрити» / «Видалити». Для recon delete отключен. */}
+                <div className="lib-card-face lib-card-back">
+                  <div className="lib-card-back-title">{c.name}</div>
+                  <div className="lib-card-back-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm lib-card-back-btn"
+                      onClick={() => openRow(c)}>
+                      <Icon name="chevR" size={14} />
+                      <span>{t.libOpen || 'Відкрити'}</span>
+                    </button>
+                    {c.isContract ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm lib-card-back-btn lib-card-back-del"
+                        onClick={() => setPendingDelete({ id: c.id, name: c.name })}>
+                        <Icon name="trash" size={14} />
+                        <span>{t.deleteContract || 'Видалити'}</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

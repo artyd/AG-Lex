@@ -445,6 +445,27 @@ def to_display_pdf(
         _shutil.rmtree(user_install, ignore_errors=True)
 
 
+def docx_bytes_to_pdf(docx_bytes: bytes) -> bytes:
+    """Convert DOCX bytes → PDF bytes via headless LibreOffice.
+
+    Thin wrapper over `to_display_pdf`: writes the bytes to a temp .docx so we
+    can reuse the already-hardened soffice invocation (fallback paths,
+    per-call UserInstallation, timeouts, PATH shim) instead of duplicating it.
+    Callers are typically export endpoints that have DOCX-in-memory rather
+    than a file on disk (see /api/export/pdf).
+    """
+    import os as _os
+    import tempfile as _tempfile
+    fd, tmp_str = _tempfile.mkstemp(suffix=".docx", prefix="aglex_export_")
+    _os.close(fd)
+    tmp = Path(tmp_str)
+    try:
+        tmp.write_bytes(docx_bytes)
+        return to_display_pdf(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def detect_type_and_convert(path: str | Path) -> str:
     suffix = Path(path).suffix.lower()
     fn = _CONVERTERS.get(suffix)

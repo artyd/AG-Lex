@@ -416,15 +416,15 @@
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
 }
-/* Карточка = div-обёртка + внутренняя button.lib-card-open. Разделено на
-   два элемента, чтобы кнопка «Видалити» жила рядом с открытием, а не
-   nested-button внутри button (невалидный HTML). Визуальные hover/focus/
-   анимации переехали на .lib-card-open; .lib-card держит только позицию. */
+/* Карточка договора — 3D-flip на hover: front-face с превью, back-face
+   с явными кнопками «Відкрити» / «Видалити». Юрист сразу видит выбор,
+   а не гадает где кликнуть. */
 .lib-card {
   position: relative;
-  overflow: hidden;
+  min-height: 168px;
   border-radius: var(--r-md);
   animation: libCardIn 0.32s ease-out backwards;
+  perspective: 1200px;
 }
 .lib-card:nth-child(1) { animation-delay: 0.02s; }
 .lib-card:nth-child(2) { animation-delay: 0.05s; }
@@ -432,40 +432,67 @@
 .lib-card:nth-child(4) { animation-delay: 0.11s; }
 .lib-card:nth-child(5) { animation-delay: 0.14s; }
 .lib-card:nth-child(6) { animation-delay: 0.17s; }
-.lib-card-open {
-  position: relative;
-  display: flex; flex-direction: column; gap: 8px;
-  width: 100%;
-  padding: 18px 18px 16px 22px; padding-right: 38px;
+
+.lib-card-face {
+  position: absolute; inset: 0;
   border: 1px solid var(--border); border-radius: var(--r-md);
-  background: var(--surface); cursor: pointer; text-align: left;
-  font-family: inherit; color: var(--text);
-  transition: transform 0.18s cubic-bezier(.22,.61,.36,1),
-              box-shadow 0.18s, border-color 0.18s;
+  background: var(--surface);
+  transition: transform 0.5s cubic-bezier(.22,.61,.36,1),
+              border-color 0.2s, box-shadow 0.2s;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  overflow: hidden;
 }
-.lib-card-open:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent), 0 4px 10px rgba(0,0,0,0.04); }
-.lib-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.lib-card-open:active { transform: translateY(-1px); }
-.lib-card-del {
-  position: absolute; top: 8px; right: 8px; z-index: 2;
-  width: 26px; height: 26px;
+/* Front — статичная превьюшка, содержимое как раньше */
+.lib-card-front {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 18px 18px 16px 22px;
+  color: var(--text);
+  transform: rotateY(0deg);
+}
+/* Back — центрированное меню с кнопками */
+.lib-card-back {
+  display: flex; flex-direction: column;
+  justify-content: center; align-items: stretch;
+  gap: 14px; padding: 22px 20px;
+  transform: rotateY(180deg);
+  background: color-mix(in oklab, var(--accent) 4%, var(--surface));
+}
+.lib-card:hover .lib-card-front { transform: rotateY(-180deg); }
+.lib-card:hover .lib-card-back  { transform: rotateY(0deg); }
+.lib-card:hover .lib-card-face {
+  border-color: var(--accent);
+  box-shadow: 0 14px 28px color-mix(in oklab, var(--accent) 12%, transparent),
+              0 4px 10px rgba(0,0,0,0.04);
+}
+
+.lib-card-back-title {
+  font-size: 13.5px; font-weight: 650; color: var(--text-2);
+  text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-bottom: 4px;
+}
+.lib-card-back-actions {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.lib-card-back-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid transparent; border-radius: var(--r-sm);
-  background: transparent; color: var(--text-3);
-  cursor: pointer;
-  transition: color 0.14s, background 0.14s, border-color 0.14s, opacity 0.14s;
-  opacity: 0;
+  gap: 8px; width: 100%;
 }
-.lib-card:hover .lib-card-del,
-.lib-card-del:focus-visible { opacity: 1; }
-.lib-card-del:hover {
+.lib-card-back-del {
   color: var(--risk-high);
-  background: color-mix(in oklab, var(--risk-high) 12%, transparent);
+}
+.lib-card-back-del:hover {
+  background: color-mix(in oklab, var(--risk-high) 10%, transparent);
   border-color: color-mix(in oklab, var(--risk-high) 24%, transparent);
 }
-.lib-card-del:focus-visible { outline: 2px solid var(--risk-high); outline-offset: 2px; }
-/* Мобильная сборка — скрытые иконки на hover бесполезны; показываем всегда. */
-@media (hover: none) { .lib-card-del { opacity: 1; } }
+
+/* На touch-устройствах flip не по hover — сразу показываем back-face,
+   чтобы юрист не искал скрытые кнопки. */
+@media (hover: none) {
+  .lib-card-front { transform: rotateY(-180deg); }
+  .lib-card-back  { transform: rotateY(0deg); }
+}
 
 .lib-row-del {
   display: inline-flex; align-items: center; justify-content: center;
