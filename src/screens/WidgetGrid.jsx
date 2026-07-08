@@ -9,8 +9,13 @@
 import { useState, useRef, useEffect, useMemo, useLayoutEffect } from 'react';
 import { Icon } from '../ui/Icon';
 import { Modal, toast } from '../ui/components';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
+
+// Dashboard widgets that used to be seeded from the DEMO fixture (tasks,
+// library, clients, templates) now start empty and rely on real /api entities
+// once the corresponding backend hooks land. Empty widgets render "0" +
+// their label so the layout stays intact.
+const DEMO = { tasks: [], library: [], clients: [], templates: [] };
 
 const GAP = 4;
 const CELL_TARGET = 120;

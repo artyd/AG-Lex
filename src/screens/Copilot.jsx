@@ -6,10 +6,16 @@
    ============================================================ */
 import { useState, useRef, useEffect } from 'react';
 import { Icon } from '../ui/Icon';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { I18N } from '../data/i18n';
 import { roleLabel } from '../lib/labels';
+
+// Copilot was originally wired to a DEMO fixture with pre-baked library /
+// clients / tasks. That fixture has been removed to prevent stale data from
+// leaking into production. The workspace-wide "AI помічник" now falls back
+// to LX (team / matters / invoices) plus empty stubs — a full backend-driven
+// answer engine is a follow-up (see task-tracker).
+const D_STUB = { library: [], clients: [], tasks: [] };
 
 const COP_TODAY = new Date(2026, 5, 9);
 function copParseDue(due) { const m = String(due || '').split('.'); if (m.length < 2) return null; return new Date(2026, parseInt(m[1], 10) - 1, parseInt(m[0], 10)); }
@@ -17,7 +23,7 @@ function copFmtDate(d) { return d.toLocaleDateString('uk-UA', { day: '2-digit', 
 
 /* ---- answer engine ---- */
 function copilotAnswer(q) {
-  const D = DEMO;
+  const D = D_STUB;
   const s = (q || '').toLowerCase();
   const card = (icon, title, sub, route, risk) => ({ icon, title, sub, route, risk });
   const has = (...ks) => ks.some(k => s.includes(k));
@@ -126,7 +132,7 @@ function CopCards({ cards, setRoute }) {
 }
 
 function Copilot({ t, setRoute }) {
-  const D = DEMO;
+  const D = D_STUB;
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);

@@ -4,10 +4,9 @@
    ============================================================ */
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Icon } from '../ui/Icon';
-import { Badge, HelpTip, Modal, ScoreRing, toast } from '../ui/components';
+import { HelpTip, Modal, ScoreRing, toast } from '../ui/components';
 import { UserAvatar } from '../lib/labels';
 import { api } from '../lib/api';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { DiffModal, ApprovalModal, CommentsModal, DeadlinesModal, SummaryModal, TranslateModal } from './analysisModals';
 import { AnalysisView } from './analysis/AnalysisView';
@@ -54,75 +53,6 @@ export function applyFixToMarkdown(md, finding) {
   };
 }
 
-
-/* ---------- Inline highlighted document ---------- */
-function ContractDoc({ contract, fById, active, applied, highlightsOn, segRefs, onHover, onPick, onAsk, addedClauses, t }) {
-  const clickTimer = useRef(null);
-
-  const handleClick = (id) => {
-    if (clickTimer.current) return; // dblclick will clear
-    clickTimer.current = setTimeout(() => { clickTimer.current = null; onPick(id); }, 230);
-  };
-  const handleDouble = (id) => {
-    if (clickTimer.current) { clearTimeout(clickTimer.current); clickTimer.current = null; }
-    onAsk(id);
-  };
-
-  const renderPara = (para, key) => {
-    if (typeof para === 'string') return <p className="doc-p" key={key}>{para}</p>;
-    return (
-      <p className="doc-p" key={key}>
-        {para.map((seg, i) => {
-          if (typeof seg === 'string') return <span key={i}>{seg}</span>;
-          const f = fById[seg.f];
-          const isApplied = applied[seg.f];
-          const lv = isApplied ? 'low' : seg.lv;
-          const text = isApplied && f && f.suggest ? f.suggest.to : seg.t;
-          return (
-            <mark key={i}
-              ref={el => { if (el) segRefs.current[seg.f] = el; }}
-              className={'hl hl-' + lv + (active === seg.f ? ' hl-active' : '') + (isApplied ? ' hl-done' : '') + (highlightsOn ? '' : ' hl-off')}
-              onMouseEnter={(e) => !isApplied && highlightsOn && onHover(f, e)}
-              onMouseMove={(e) => !isApplied && highlightsOn && onHover(f, e)}
-              onMouseLeave={() => onHover(null)}
-              onClick={() => { onHover(null); handleClick(seg.f); }}
-              onDoubleClick={() => { onHover(null); handleDouble(seg.f); }}>
-              {isApplied ? <Icon name="check" size={13} stroke={2.6} style={{ verticalAlign: '-2px', marginRight: 2 }} /> : null}
-              {text}
-            </mark>
-          );
-        })}
-      </p>
-    );
-  };
-
-  return (
-    <div className="doc">
-      <div className="doc-head">
-        <h1 className="doc-title">{contract.title}</h1>
-        <div className="doc-meta">{contract.number} · {contract.place} · {contract.date}</div>
-      </div>
-      {contract.preamble.map((p, i) => renderPara(p, 'pr' + i))}
-      {contract.clauses.map((cl) => (
-        <section className="doc-clause" key={cl.num} id={'clause-' + cl.num}>
-          <h3 className="doc-clause-title">{cl.num}. {cl.title}</h3>
-          {cl.paras.map((p, i) => renderPara(p, cl.num + '-' + i))}
-        </section>
-      ))}
-      {addedClauses.map((m, i) => (
-        <section className="doc-clause doc-clause-added" key={'add' + i}>
-          <h3 className="doc-clause-title">{contract.clauses.length + 1 + i}. {m.title} <span className="added-tag"><Icon name="check" size={11} stroke={3} /> {t.added}</span></h3>
-          <p className="doc-p">{(contract.clauses.length + 1 + i)}.1. {m.clauseText}</p>
-        </section>
-      ))}
-      <p className="doc-p doc-closing">{contract.closing}</p>
-      <div className="doc-sign">
-        <div><div className="doc-sign-line" />Замовник</div>
-        <div><div className="doc-sign-line" />Виконавець</div>
-      </div>
-    </div>
-  );
-}
 
 /* ---------- Finding card ---------- */
 function FindingCard({ f, active, hovered, onHover, onClick, onApply, onReject, status, t }) {
@@ -206,7 +136,8 @@ function FindingCard({ f, active, hovered, onHover, onClick, onApply, onReject, 
 /* ---------- Legal basis card ---------- */
 function LegalBasis({ t, items }) {
   const [open, setOpen] = useState(false);
-  const list = Array.isArray(items) && items.length ? items : DEMO.legalBasis;
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return null;
   return (
     <div className="legal-card">
       <button className="legal-head" onClick={() => setOpen(o => !o)}>
@@ -249,16 +180,7 @@ function refsFromAnalyzeResponse(response, fallbackRefs) {
   return out.length ? out : (fallbackRefs || []);
 }
 
-// Fall back to the prototype's deterministic engine so the chat keeps working
-// when running Vite without the FastAPI backend (or with no API_KEY set).
-function deterministicAnswer(q) {
-  const lc = q.toLowerCase();
-  const hit = DEMO.chat.answers.find(e => e.keys.some(k => lc.includes(k)));
-  return hit || { a: DEMO.chat.fallback, refs: [] };
-}
-
-function Chat({ t, inject }) {
-  const D = DEMO;
+function Chat({ t, inject, contractTitle, contractMarkdown }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -269,20 +191,12 @@ function Chat({ t, inject }) {
     if (sc) sc.scrollTop = sc.scrollHeight;
   }, [msgs, busy]);
 
-  // Build the contract section payload that Claude grounds the answer on. For
-  // now we send the current DEMO contract; once the screen carries an uploaded
-  // contract in state, swap this for the active section.
+  // Build the contract section payload that Claude grounds the answer on
+  // from the currently-loaded document.
   function activeSection() {
     return {
-      title: DEMO.contract && DEMO.contract.title,
-      text: DEMO.contract
-        ? DEMO.contract.clauses.map(c => `${c.num}. ${c.title}\n` +
-            c.paras.map(p => Array.isArray(p)
-              ? p.map(seg => typeof seg === 'string' ? seg : seg.t).join('')
-              : p
-            ).join('\n')
-          ).join('\n\n')
-        : '',
+      title: contractTitle || '',
+      text: typeof contractMarkdown === 'string' ? contractMarkdown : '',
     };
   }
 
@@ -297,12 +211,14 @@ function Chat({ t, inject }) {
         refs: refsFromAnalyzeResponse(res),
         warnings: res.warnings || [],
       };
-    } catch (e) {
-      // Offline dev or quota error — degrade to deterministic prototype answer
-      // so the screen stays interactive. The bubble shows a small warning
-      // chip so the user knows it's not a real model response.
-      const det = deterministicAnswer(q);
-      return { text: det.a, refs: det.refs, offline: true };
+    } catch (_e) {
+      // Offline dev or quota error — surface a plain "unavailable" bubble so
+      // the screen stays interactive without pretending to have an answer.
+      return {
+        text: t.chatUnavailable || 'AI-помічник тимчасово недоступний. Спробуйте пізніше.',
+        refs: [],
+        offline: true,
+      };
     }
   }
 
@@ -351,12 +267,6 @@ function Chat({ t, inject }) {
             <div className="chat-orb"><Icon name="sparkle" size={22} fill={true} /></div>
             <div style={{ fontWeight: 700, fontSize: 16, marginTop: 12 }}>{t.chatTitle}</div>
             <div style={{ fontSize: 13.5, color: 'var(--text-3)', marginTop: 4, maxWidth: 300 }}>{t.chatSub}</div>
-            <div className="chat-suggest-label">{t.chatSuggest}</div>
-            <div className="chat-suggests">
-              {D.chat.suggestions.map((s, i) => (
-                <button key={i} className="chat-chip" onClick={() => send(s)}>{s}</button>
-              ))}
-            </div>
           </div>
         )}
 
@@ -408,11 +318,11 @@ export function AiPanel({
   findingStatus = {}, onApply, onReject, onApplyAll, scrollToSeg,
   chatInject,
   missingStatus = {}, onAddClause, onRejectMissing,
-  data, isDemo, hideTabs,
+  data, hideTabs,
 }) {
-  // `data` (always defined) is the merged real-or-demo bundle from
-  // ContractAnalysis. Demo-only fields (missing/keyData/summary) still come
-  // from DEMO until the backend learns to return them.
+  // `data` (always defined) is the analyzer response bundle from
+  // ContractAnalysis. Empty arrays / null when analyzer hasn't produced
+  // results yet — panels degrade to empty states in that case.
   const findings = data.findings;
   const comparison = data.comparison;
   const legalBasis = data.legalBasis;
@@ -499,11 +409,6 @@ export function AiPanel({
       <div className="aipanel-head">
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--accent)', fontWeight: 700, fontSize: 13.5, marginBottom: 12 }}>
           <Icon name="sparkle" size={16} fill={true} /> {t.aiAnalysis}
-          {isDemo ? (
-            <span style={{ marginLeft: 'auto' }}>
-              <Badge variant="muted" title={t.demoBadgeSub || ''}>{t.demoBadge || 'demo'}</Badge>
-            </span>
-          ) : null}
         </div>
         {warnings.length > 0 ? (
           <div style={{
@@ -553,7 +458,9 @@ export function AiPanel({
       </div>
 
       {tab === 'chat'
-        ? <Chat t={t} inject={chatInject} />
+        ? <Chat t={t} inject={chatInject}
+            contractTitle={data.contractTitle || ''}
+            contractMarkdown={data.contractMarkdown || ''} />
         : (
         <div className="aipanel-body">
           {tab === 'risks' && (
@@ -930,7 +837,6 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
             onAddClause={() => {}}
             onRejectMissing={() => {}}
             data={data}
-            isDemo={false}
             hideTabs={['summary', 'data', 'missing']} />
         }
       />
@@ -941,7 +847,7 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
 
 /* ---------- Protocol modal content ---------- */
 function ProtocolModal({ open, onClose, t, findings }) {
-  const list = Array.isArray(findings) ? findings : DEMO.findings;
+  const list = Array.isArray(findings) ? findings : [];
   const rows = list.filter(f => f.suggest);
   const copyAll = () => {
     const text = rows.map((f, i) => `${i + 1}. ${f.clause} — ${f.title}\n  ${t.protoCurrent}: ${f.suggest.from}\n  ${t.protoProposed}: ${f.suggest.to}\n  ${t.protoBasis}: ${f.law || '—'}`).join('\n\n');
@@ -1189,16 +1095,15 @@ function ContractAnalysisMain({ t, incoming }) {
 }
 
 function ContractAnalysisSingle({ t, incoming }) {
-  const D = DEMO;
   const { startOperation, endOperation } = useDocumentProcessing();
   // Real analysis result from POST /api/analyze/contract. Null until the
-  // round-trip completes (or never, in demo mode).
+  // round-trip completes.
   const [analysis, setAnalysis] = useState(null);
-  // 'demo'    — no incoming doc, showing DEMO with a badge
+  // 'empty'   — no incoming doc and no library-hydrated doc → show empty state
   // 'loading' — incoming.markdown is being analyzed
   // 'ready'   — analysis received, panels show real findings
-  // 'error'   — API failed, degraded to DEMO with badge
-  const [analysisStatus, setAnalysisStatus] = useState(incoming ? 'loading' : 'demo');
+  // 'error'   — API failed, screen shows an error banner
+  const [analysisStatus, setAnalysisStatus] = useState(incoming ? 'loading' : 'empty');
 
   // Library-handoff doc: when the user clicks a saved contract in Library,
   // we hydrate the doc + analysis from /api/contracts/:id instead of running
@@ -1242,22 +1147,22 @@ function ContractAnalysisSingle({ t, incoming }) {
   }, [effectiveDoc, effectiveSections]);
   const useAnalysisView = effectiveSections.length > 0;
 
-  // Merged data source: real fields override DEMO when available. PR-2 of
-  // analyze-unification: `summary`, `keyData`, `missing` now come from the
-  // analyzer too (extended schema in /api/analyze/contract). DEMO stays as
-  // the fallback for `analysisStatus === 'demo' | 'error'`.
+  // Merged data source: real fields from /api/analyze/contract. Empty
+  // fallbacks when the analyzer hasn't run yet or fails — the screen shows
+  // an empty state instead of pretending to have results.
   const data = useMemo(() => ({
-    findings: analysis?.findings ?? D.findings,
-    comparison: analysis?.comparison ?? D.comparison,
-    legalBasis: analysis?.legal_basis ?? D.legalBasis,
-    score: analysis?.score ?? D.score,
+    findings: analysis?.findings ?? [],
+    comparison: analysis?.comparison ?? [],
+    legalBasis: analysis?.legal_basis ?? [],
+    score: analysis?.score ?? null,
     warnings: analysis?.warnings ?? [],
     tokenStats: effectiveDoc?.tokenStats || null,
-    missing: analysis?.missing ?? D.missing,
-    keyData: analysis?.keyData ?? D.keyData,
-    summary: analysis?.summary ?? D.summary,
-  }), [analysis, D, effectiveDoc]);
-  const isDemo = analysisStatus === 'demo' || analysisStatus === 'error';
+    missing: analysis?.missing ?? [],
+    keyData: analysis?.keyData ?? [],
+    summary: analysis?.summary ?? '',
+    contractTitle: effectiveDoc?.filename || '',
+    contractMarkdown: editedMarkdown || '',
+  }), [analysis, effectiveDoc, editedMarkdown]);
 
   const fById = useMemo(() => Object.fromEntries(data.findings.map(f => [f.id, f])), [data.findings]);
   const [phase, setPhase] = useState('loading');
@@ -1729,10 +1634,17 @@ function ContractAnalysisSingle({ t, incoming }) {
     <div className="analysis">
       <div className="analysis-bar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-          <span className="chip"><Icon name="doc" size={13} /> {D.contract.number}</span>
+          <span className="chip"><Icon name="doc" size={13} /> {(data.keyData || []).find(k => /номер/i.test(k.label))?.value || (t.contractType || 'Договір')}</span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{D.contract.title}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{D.keyData[0].value} · {D.contract.date}</div>
+            <div style={{ fontWeight: 700, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {(effectiveDoc && effectiveDoc.filename) || (t.uploadTitle || 'Аналіз договору')}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              {[
+                (data.keyData || []).find(k => /покуп|buyer/i.test(k.label))?.value,
+                (data.keyData || [])[0]?.value,
+              ].filter(Boolean).join(' · ') || ''}
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
@@ -1998,30 +1910,25 @@ function ContractAnalysisSingle({ t, incoming }) {
               chatInject={chatInject}
               missingStatus={missingStatus}
               onAddClause={onAddClause} onRejectMissing={onRejectMissing}
-              data={data} isDemo={isDemo} />
+              data={data} />
           }
         />
       ) : (
-        // DEMO / no-upload fallback — legacy ContractDoc with inline marks
-        // stays so the prototype demo still renders sensibly.
+        // No document loaded yet — direct visitor to upload. This branch was
+        // previously a legacy DEMO fallback rendering a hard-coded contract;
+        // that fixture has been removed to prevent stale prototype data from
+        // leaking into production (see fix/library-open-real-doc-and-drop-demo).
         <div className="analysis-body">
           <div className="doc-scroll" ref={docScrollRef}>
-            <div className="view-enter">
-              <ContractDoc contract={D.contract} fById={fById} active={active} applied={applied}
-                highlightsOn={highlightsOn} segRefs={segRefs} addedClauses={addedClauses} t={t}
-                onHover={onHover} onPick={onPick} onAsk={onAsk} />
-            </div>
-            {tooltip && (
-              <div className="hl-tip" style={{ left: tooltip.x, top: tooltip.y }}>
-                <div className="hl-tip-head">
-                  <span className={'badge-risk ' + { high: 'badge-high', med: 'badge-med', low: 'badge-low' }[tooltip.f.level]}>{tooltip.f.clause}</span>
-                  <span style={{ fontWeight: 650, fontSize: 13 }}>{tooltip.f.title}</span>
-                </div>
-                <div className="hl-tip-desc">{tooltip.f.desc}</div>
-                {tooltip.f.law ? <div className="hl-tip-law"><Icon name="scales" size={11} /> {tooltip.f.law}</div> : null}
-                <div className="hl-tip-hint">{t.hoverHint}</div>
+            <div className="analysis-fallback view-enter">
+              <Icon name="upload" size={22} />
+              <div className="analysis-fallback-title">
+                {t.uploadTitle || 'Немає документа для аналізу'}
               </div>
-            )}
+              <div className="analysis-fallback-sub">
+                {t.uploadHint || 'Завантажте договір, щоб побачити тут ризики, ключові дані та резюме.'}
+              </div>
+            </div>
           </div>
           <div className="panel-wrap">
             <AiPanel t={t} tab={tab} setTab={setTab} active={active} setActive={setActive}
@@ -2031,15 +1938,15 @@ function ContractAnalysisSingle({ t, incoming }) {
               chatInject={chatInject}
               missingStatus={missingStatus}
               onAddClause={onAddClause} onRejectMissing={onRejectMissing}
-              data={data} isDemo={isDemo} />
+              data={data} />
           </div>
         </div>
       )}
 
       <ProtocolModal open={protocolOpen} onClose={() => setProtocolOpen(false)} t={t} findings={data.findings} />
       <DiffModal open={diffOpen} onClose={() => setDiffOpen(false)} t={t} />
-      <SummaryModal open={sumOpen} onClose={() => setSumOpen(false)} t={t} />
-      <TranslateModal open={trOpen} onClose={() => setTrOpen(false)} t={t} />
+      <SummaryModal open={sumOpen} onClose={() => setSumOpen(false)} t={t} data={data} contractMarkdown={editedMarkdown} />
+      <TranslateModal open={trOpen} onClose={() => setTrOpen(false)} t={t} contractMarkdown={editedMarkdown} />
       <ApprovalModal open={apprOpen} onClose={() => setApprOpen(false)} t={t} steps={apprSteps} setSteps={setApprSteps} />
       <CommentsModal open={commOpen} onClose={() => setCommOpen(false)} t={t} comments={comments} setComments={setComments} />
       <DeadlinesModal open={dlOpen} onClose={() => setDlOpen(false)} t={t} />

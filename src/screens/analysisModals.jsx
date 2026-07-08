@@ -7,22 +7,7 @@ import { Icon } from '../ui/Icon';
 import { Modal, toast } from '../ui/components';
 import { UserAvatar } from '../lib/labels';
 import { api } from '../lib/api';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
-
-// Serialize the current DEMO contract into markdown for Claude. Once an
-// uploaded contract lives in state at the screen level, swap this for the
-// active document. Kept here so both modals share the same source.
-function serializedDemoContract() {
-  if (!DEMO.contract) return '';
-  return DEMO.contract.clauses.map(c => {
-    const body = c.paras.map(p => Array.isArray(p)
-      ? p.map(seg => typeof seg === 'string' ? seg : seg.t).join('')
-      : p
-    ).join('\n');
-    return `## ${c.num}. ${c.title}\n\n${body}`;
-  }).join('\n\n');
-}
 
 /* ---- word-level diff (LCS) ---- */
 function wordDiff(a, b) {
@@ -186,16 +171,12 @@ function DeadlinesModal({ open, onClose, t }) {
   const addOne = (d) => {
     if (added.has(d.id)) return;
     setAdded(s => new Set(s).add(d.id));
-    if (!DEMO.tasks.find(x => x.id === 'auto-' + d.id))
-      DEMO.tasks.push({ id: 'auto-' + d.id, date: d.date, title: d.title, client: 'ТОВ «Северин»', type: 'deadline', risk: d.risk });
     toast(t.addedToCal, 'calendar');
   };
   const addAll = () => LX.deadlines.forEach(addOne);
   const remindOne = (o) => {
     if (remind.has(o.id) || !o.nextDate) return;
     setRemind(s => new Set(s).add(o.id));
-    if (!DEMO.tasks.find(x => x.id === 'ob-' + o.id))
-      DEMO.tasks.push({ id: 'ob-' + o.id, date: o.nextDate, title: o.title, client: 'ТОВ «Северин»', type: 'obligation', risk: o.risk });
     toast(t.obReminderSet, 'calendar');
   };
   const remindAll = () => LX.obligations.filter(o => o.nextDate).forEach(remindOne);
@@ -264,26 +245,13 @@ function DeadlinesModal({ open, onClose, t }) {
 }
 
 /* ---- Contract summary / plain-language explanation ---- */
-const SUM_PLAIN_RISK = {
-  'f-prepay': 'Ви переказуєте всі USD 15 360 наперед на індійський рахунок у HDFC Bank, Мумбаї. Якщо постачання зірветься (санкції, банкрутство, логістика) — повернути гроші буде дуже складно.',
-  'f-lang-prevail': 'У будь-якому спорі вирішальною буде англійська версія, хоча розгляд ведеться українською. Це дає Продавцю перевагу при тлумаченні термінів.',
-  'f-shelflife': 'Сорбітол постачатиметься із залишковим терміном лише 80% — це означає, що ви можете отримати товар, у якого вже минуло до 12 місяців із 5-річного терміну.',
-};
-const SUM_PLAIN_ADVICE = [
-  'Замініть 100% передоплату на акредитив або 30% передоплати + 70% проти B/L.',
-  'Зрівняйте мовний пріоритет: українська та англійська версії повинні мати однакову силу.',
-  'Зафіксуйте у контракті залишковий термін придатності не менше 90% на момент поставки.',
-  'Додайте Pre-Shipment Inspection незалежним інспектором (SGS / Bureau Veritas) у Мумбаї.',
-];
-
-function SummaryModal({ open, onClose, t }) {
-  const D = DEMO;
+function SummaryModal({ open, onClose, t, data, contractMarkdown }) {
   const [mode, setMode] = useState('pro');
-  // Phase 3.2: live summary from /api/summary. Cached per mode so toggling
+  // Live summary from /api/summary. Cached per mode so toggling
   // back doesn't re-fetch.
   const [summaries, setSummaries] = useState({});  // { pro: string, plain: string }
   const [loading, setLoading] = useState(false);
-  const [usingFallback, setUsingFallback] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const apiMode = mode === 'pro' ? 'legal' : 'plain';
   const liveSummary = summaries[mode];
@@ -291,52 +259,43 @@ function SummaryModal({ open, onClose, t }) {
   useEffect(() => {
     if (!open) return;
     if (summaries[mode] != null) return;  // cached
+    if (!contractMarkdown) return;        // nothing to summarise
     let cancelled = false;
     setLoading(true);
-    setUsingFallback(false);
+    setFailed(false);
     api.request('/api/summary', {
       method: 'POST',
-      body: { contract: serializedDemoContract(), mode: apiMode },
+      body: { contract: contractMarkdown, mode: apiMode },
     }).then(res => {
       if (cancelled) return;
-      // Audit fix #7: defensive ?. in case the server returns an unexpected shape.
       setSummaries(s => ({ ...s, [mode]: res?.summary ?? '' }));
     }).catch(_e => {
       if (cancelled) return;
-      // Surface the offline marker so the modal shows static prototype data
-      // with a small banner explaining why.
-      setUsingFallback(true);
+      setFailed(true);
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [open, mode]);
+  }, [open, mode, contractMarkdown]);
 
-  const kd = Object.fromEntries(D.keyData.map(k => [k.label, k.value]));
-  const highs = D.findings.filter(f => f.level === 'high');
-  const medN = D.findings.filter(f => f.level === 'med').length;
-  const about = `${kd['Тип Контракту'] || 'Контракт постачання'} між ${kd['Покупець']} (Покупець) та ${kd['Продавець']} (Продавець) на суму ${kd['Сума Контракту']}, готовність до ${kd['Готовність до']}.`;
-  const conclusion = 'Контракт містить розгорнуте санкційне застереження та сприятливу юрисдикцію (МКАС при ТПП України). Основні ризики — 100% передоплата без гарантії та пріоритет англійської версії при тлумаченні. Рекомендовано опрацювати ці пункти до підписання.';
-  const plainIntro = `Якщо коротко: ваша компанія (${kd['Покупець']}) купує у ${kd['Продавець']} субстанцію Sorbitol 70% BP за ${kd['Сума Контракту']}. Загалом контракт прийнятний, але є 2 критичних і 7 помірних ризиків.`;
-  const plainBottom = 'Контракт можна підписувати після опрацювання двох ключових ризиків: схеми оплати та мовного пріоритету.';
+  const findings = data?.findings || [];
+  const keyData = data?.keyData || [];
+  const missing = data?.missing || [];
+  const highs = findings.filter(f => f.level === 'high');
+  const medN = findings.filter(f => f.level === 'med').length;
 
   const copy = () => {
-    let txt;
-    if (liveSummary && !usingFallback) {
-      txt = liveSummary;
-    } else if (mode === 'pro') {
-      txt = `${t.sumAbout}: ${about}\n\n${t.sumRisks}:\n` + highs.map(f => `• ${f.clause} — ${f.title} (${f.law})`).join('\n') + `\n+ ${medN} ${t.sumModerate}\n\n${t.sumMissing}: ` + D.missing.map(m => m.title).join(', ') + `\n\n${t.sumConclusion}: ${conclusion}`;
-    } else {
-      txt = `${plainIntro}\n\n${t.sumAttention}:\n` + highs.map(f => '• ' + (SUM_PLAIN_RISK[f.id] || f.title)).join('\n') + '\n• Немає антикорупційного застереження (вимога FCPA / UK Bribery Act).\n\n' + `${t.sumAdvice}:\n` + SUM_PLAIN_ADVICE.map(a => '• ' + a).join('\n') + `\n\n${t.sumBottom}: ${plainBottom}`;
-    }
-    try { navigator.clipboard.writeText(txt); } catch (e) {}
+    if (!liveSummary) return;
+    try { navigator.clipboard.writeText(liveSummary); } catch (_e) {}
     toast(t.sumCopied, 'check');
   };
+
+  const noDoc = !contractMarkdown;
 
   return (
     <Modal open={open} onClose={onClose} icon="sparkle" title={t.sumTitle} wide
       footer={<>
-        <button className="btn btn-subtle" onClick={copy}><Icon name="doc" size={15} /> {t.sumCopy}</button>
+        <button className="btn btn-subtle" onClick={copy} disabled={!liveSummary}><Icon name="doc" size={15} /> {t.sumCopy}</button>
         <button className="btn btn-primary" onClick={onClose}>{t.close}</button>
       </>}>
       <div className="seg sum-toggle">
@@ -344,107 +303,69 @@ function SummaryModal({ open, onClose, t }) {
         <button className={mode === 'plain' ? 'on' : ''} onClick={() => setMode('plain')}><Icon name="sparkle" size={14} fill={true} /> {t.sumPlain}</button>
       </div>
 
-      {usingFallback ? (
+      {noDoc ? (
+        <div className="sum-disclaimer" style={{ marginTop: 8, color: 'var(--text-3)' }}>
+          <Icon name="alert" size={13} /> {t.sumNoDoc || 'Завантажте договір, щоб згенерувати резюме.'}
+        </div>
+      ) : failed ? (
         <div className="sum-disclaimer" style={{ marginTop: 8, color: 'var(--risk-med)' }}>
-          <Icon name="alert" size={13} /> {t.sumOffline || 'Показано демо-резюме (API недоступний)'}
+          <Icon name="alert" size={13} /> {t.sumOffline || 'AI-резюме недоступне (API помилка). Спробуйте пізніше.'}
         </div>
       ) : null}
 
       {loading && !liveSummary ? (
         <div className="tr-loading"><span className="pulse" /> {t.sumLoading || t.trTranslating || 'Генеруємо…'}</div>
-      ) : liveSummary && !usingFallback ? (
+      ) : liveSummary ? (
         <div className="sum-body view-enter" key={'live-' + mode}>
           <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 14, lineHeight: 1.55, margin: 0 }}>{liveSummary}</pre>
         </div>
-      ) : mode === 'pro' ? (
-        <div className="sum-body view-enter" key="pro">
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumAbout}</div>
-            <p className="sum-about">{about}</p>
-          </div>
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumTerms}</div>
-            <div className="sum-terms">
-              {D.keyData.map((k, i) => (
-                <div key={i} className="sum-term">
-                  <span className="sum-term-ic"><Icon name={k.icon} size={15} /></span>
-                  <span><span className="sum-term-l">{k.label}</span><span className="sum-term-v">{k.value}</span></span>
-                </div>
-              ))}
+      ) : (keyData.length || findings.length || missing.length) ? (
+        <div className="sum-body view-enter" key="offline-facts">
+          {keyData.length ? (
+            <div className="sum-sec">
+              <div className="sum-h">{t.sumTerms}</div>
+              <div className="sum-terms">
+                {keyData.map((k, i) => (
+                  <div key={i} className="sum-term">
+                    <span className="sum-term-ic"><Icon name={k.icon || 'doc'} size={15} /></span>
+                    <span><span className="sum-term-l">{k.label}</span><span className="sum-term-v">{k.value}</span></span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumRisks} <span className="sum-count">{highs.length} {t.sumCritical} · {medN} {t.sumModerate}</span></div>
-            <div className="sum-risks">
-              {highs.map(f => (
-                <div key={f.id} className="sum-risk">
-                  <span className="badge-risk badge-high" style={{ flexShrink: 0 }}>{f.clause}</span>
-                  <div><div className="sum-risk-t">{f.title}</div><div className="sum-risk-l">{f.law}</div></div>
-                </div>
-              ))}
+          ) : null}
+          {findings.length ? (
+            <div className="sum-sec">
+              <div className="sum-h">{t.sumRisks} <span className="sum-count">{highs.length} {t.sumCritical} · {medN} {t.sumModerate}</span></div>
+              <div className="sum-risks">
+                {highs.map(f => (
+                  <div key={f.id} className="sum-risk">
+                    <span className="badge-risk badge-high" style={{ flexShrink: 0 }}>{f.clause}</span>
+                    <div><div className="sum-risk-t">{f.title}</div><div className="sum-risk-l">{f.law}</div></div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumMissing}</div>
-            <div className="sum-chips">{D.missing.map((m, i) => <span key={i} className="sum-chip"><Icon name="alert" size={12} /> {m.title}</span>)}</div>
-          </div>
-          <div className="sum-callout sum-callout-warn">
-            <Icon name="checkCircle" size={17} />
-            <div><div className="sum-callout-h">{t.sumConclusion}</div><div>{conclusion}</div></div>
-          </div>
+          ) : null}
+          {missing.length ? (
+            <div className="sum-sec">
+              <div className="sum-h">{t.sumMissing}</div>
+              <div className="sum-chips">{missing.map((m, i) => <span key={i} className="sum-chip"><Icon name="alert" size={12} /> {m.title}</span>)}</div>
+            </div>
+          ) : null}
         </div>
-      ) : (
-        <div className="sum-body view-enter" key="plain">
-          <p className="sum-plain-intro">{plainIntro}</p>
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumAttention}</div>
-            <ul className="sum-bullets">
-              {highs.map(f => <li key={f.id}>{SUM_PLAIN_RISK[f.id] || f.title}</li>)}
-              <li>Немає окремого розділу про захист персональних даних, хоча послуги передбачають доступ до них.</li>
-            </ul>
-          </div>
-          <div className="sum-sec">
-            <div className="sum-h">{t.sumAdvice}</div>
-            <ul className="sum-bullets sum-bullets-ok">
-              {SUM_PLAIN_ADVICE.map((a, i) => <li key={i}>{a}</li>)}
-            </ul>
-          </div>
-          <div className="sum-callout sum-callout-warn">
-            <Icon name="alert" size={17} />
-            <div><div className="sum-callout-h">{t.sumBottom}</div><div>{plainBottom}</div></div>
-          </div>
-          <div className="sum-disclaimer">{t.sumDisclaimer}</div>
-        </div>
-      )}
+      ) : null}
     </Modal>
   );
 }
 
 /* ---- Legal document translation (UA ⇄ EN) ---- */
-const TR_GLOSS = [
-  ['Покупець', 'Buyer'], ['Продавець', 'Seller'], ['Передоплата', 'Advance payment'],
-  ['Поставка', 'Delivery'], ['Сертифікат аналізу', 'Certificate of Analysis (CoA)'],
-  ['Залишковий термін придатності', 'Remaining shelf life'], ['Форс-мажор', 'Force majeure'],
-  ['Реквізити сторін', 'Bank details'], ['Санкції', 'Sanctions'], ['МКАС при ТПП України', 'ICAC at the UCCI'],
-];
-const TR_PAIRS = [
-  { head: true, ua: 'КОНТРАКТ № 09032026/AKS · ПОСТАЧАННЯ SORBITOL 70% BP', en: 'CONTRACT No. 09032026/AKS · SUPPLY OF SORBITOL 70% BP' },
-  { ua: 'ТОВ «АНАЛІТІНФОРМ» (Покупець, Україна) та KASYAP SWEETNERS PRIVATE LIMITED (Продавець, Індія) уклали цей Контракт про таке:', en: 'ANALYTINFORM LLC (the Buyer, Ukraine) and KASYAP SWEETNERS PRIVATE LIMITED (the Seller, India) have entered into this Contract as follows:' },
-  { sec: '1', ua: 'Предмет Контракту. Продавець постачає, а Покупець придбаває субстанцію Sorbitol Solution 70% non crystallising BP (HS 2905449900), кількістю 24 МТ.', en: '1. Subject of the Contract. The Seller supplies, and the Buyer purchases, the substance Sorbitol Solution 70% non-crystallising BP (HS 2905449900), in the quantity of 24 MT.' },
-  { sec: '2', ua: 'Ціна та кількість. Загальна сума — 15 360,00 USD (640 USD/т × 24 т). Упаковка: 80 бочок по 300 кг на 20 EUR-палетах.', en: '2. Price and Quantity. The total amount is USD 15,360.00 (USD 640/MT × 24 MT). Packaging: 80 drums of 300 kg on 20 EUR pallets.' },
-  { sec: '3', ua: 'Умови поставки. CIF Гданськ, Польща (INCOTERMS 2020), MSC або Maersk. Готовність до відвантаження — не пізніше 12 квітня 2026 року.', en: '3. Delivery Terms. CIF Gdansk, Poland (INCOTERMS 2020), via MSC or Maersk shipping line. Ready for shipment no later than 12 April 2026.' },
-  { sec: '4', ua: 'Умови оплати. 100% передоплата банківським переказом на рахунок Продавця в HDFC Bank, Мумбаї (A/C 12120330000036, SWIFT HDFCINBBXXX). Валюта — USD.', en: '4. Payment Terms. 100% advance payment by wire transfer to the Seller’s account at HDFC Bank, Mumbai (A/C 12120330000036, SWIFT HDFCINBBXXX). Currency — USD.' },
-  { sec: '5', ua: 'Гарантії якості. Залишковий термін придатності не менше 80% на момент поставки. Лабораторний контроль протягом 90 днів. Спори — через відбір зразків ТПП України.', en: '5. Quality Guarantees. Remaining shelf life of not less than 80% at delivery. Lab control within 90 days. Disputes — via Ukrainian Chamber of Commerce sampling procedure.' },
-  { sec: '7', ua: 'Арбітраж та право. МКАС при ТПП України, Київ, мова — українська, право — матеріальне право України. У разі розбіжностей перевагу має англійська версія.', en: '7. Arbitration and Law. ICAC at the Ukrainian Chamber of Commerce, Kyiv; language — Ukrainian; substantive law of Ukraine. In case of any discrepancies, the English version shall prevail.' },
-  { sec: '8', ua: 'Санкції. Сторони не внесені до санкційних списків ООН, ЄС, OFAC, UK, України. У разі санкцій — право призупинити та розірвати Контракт без штрафів.', en: '8. Sanctions. The Parties are not included in the sanctions lists of the UN, EU, OFAC, UK, or Ukraine. In the event of sanctions, the right to suspend and terminate the Contract without penalties applies.' },
-];
-
-function TranslateModal({ open, onClose, t }) {
+function TranslateModal({ open, onClose, t, contractMarkdown }) {
   const [dir, setDir] = useState('uaen'); // uaen | enua
   const [loading, setLoading] = useState(false);
-  // Phase 3.2: live translation from /api/translate. Cached per direction.
+  // Live translation from /api/translate. Cached per direction.
   const [byDir, setByDir] = useState({});  // { uaen: {pairs, glossary, translation}, enua: ... }
-  const [usingFallback, setUsingFallback] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const apiDirection = dir === 'uaen' ? 'ua_en' : 'en_ua';
   const live = byDir[dir];
@@ -452,15 +373,15 @@ function TranslateModal({ open, onClose, t }) {
   useEffect(() => {
     if (!open) return;
     if (byDir[dir]) return;  // cached
+    if (!contractMarkdown) return;
     let cancelled = false;
     setLoading(true);
-    setUsingFallback(false);
+    setFailed(false);
     api.request('/api/translate', {
       method: 'POST',
-      body: { text: serializedDemoContract(), direction: apiDirection },
+      body: { text: contractMarkdown, direction: apiDirection },
     }).then(res => {
       if (cancelled) return;
-      // Audit fix #7: defensive ?. in case the server returns an unexpected shape.
       setByDir(s => ({
         ...s,
         [dir]: {
@@ -471,38 +392,37 @@ function TranslateModal({ open, onClose, t }) {
       }));
     }).catch(_e => {
       if (cancelled) return;
-      setUsingFallback(true);
+      setFailed(true);
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [open, dir]);
+  }, [open, dir, contractMarkdown]);
 
   const srcKey = dir === 'uaen' ? 'ua' : 'en';
   const tgtKey = dir === 'uaen' ? 'en' : 'ua';
   const srcLang = dir === 'uaen' ? 'УКР' : 'ENG';
   const tgtLang = dir === 'uaen' ? 'ENG' : 'УКР';
 
-  // Pick render source: live API → live; offline → static prototype data.
-  const pairsToRender = live && !usingFallback
+  const pairsToRender = live
     ? live.pairs.map(p => ({ ua: dir === 'uaen' ? p.src : p.tgt, en: dir === 'uaen' ? p.tgt : p.src }))
-    : TR_PAIRS;
-  const glossaryToRender = live && !usingFallback
+    : [];
+  const glossaryToRender = live
     ? live.glossary.map(g => [dir === 'uaen' ? g.src : g.tgt, dir === 'uaen' ? g.tgt : g.src])
-    : TR_GLOSS;
+    : [];
 
   const copy = () => {
-    const txt = live && !usingFallback
-      ? live.translation
-      : TR_PAIRS.map(p => p[tgtKey]).join('\n\n');
-    try { navigator.clipboard.writeText(txt); } catch (e) {}
+    if (!live) return;
+    try { navigator.clipboard.writeText(live.translation); } catch (_e) {}
     toast(t.trCopied, 'check');
   };
+
+  const noDoc = !contractMarkdown;
 
   return (
     <Modal open={open} onClose={onClose} icon="globe" title={t.trTitle} sub={t.trSub} wide
       footer={<>
-        <button className="btn btn-subtle" onClick={copy}><Icon name="doc" size={15} /> {t.trCopy}</button>
+        <button className="btn btn-subtle" onClick={copy} disabled={!live}><Icon name="doc" size={15} /> {t.trCopy}</button>
         <button className="btn btn-primary" onClick={onClose}>{t.close}</button>
       </>}>
       <div className="tr-bar">
@@ -512,27 +432,33 @@ function TranslateModal({ open, onClose, t }) {
         </div>
       </div>
 
-      {usingFallback ? (
+      {noDoc ? (
+        <div className="tr-note" style={{ color: 'var(--text-3)' }}>
+          <Icon name="alert" size={13} /> {t.trNoDoc || 'Завантажте договір, щоб згенерувати переклад.'}
+        </div>
+      ) : failed ? (
         <div className="tr-note" style={{ color: 'var(--risk-med)' }}>
-          <Icon name="alert" size={13} /> {t.trOffline || 'Показано демо-переклад (API недоступний)'}
+          <Icon name="alert" size={13} /> {t.trOffline || 'AI-переклад недоступний (API помилка). Спробуйте пізніше.'}
         </div>
       ) : null}
 
-      <div className="tr-gloss">
-        <div className="tr-gloss-h">{t.trGlossary}</div>
-        <div className="tr-gloss-list">
-          {glossaryToRender.map((g, i) => {
-            const ua = g[0], en = g[1];
-            return (
-              <span key={i} className="tr-gloss-item">{dir === 'uaen' ? ua : en} <Icon name="arrowR" size={11} /> <b>{dir === 'uaen' ? en : ua}</b></span>
-            );
-          })}
+      {glossaryToRender.length ? (
+        <div className="tr-gloss">
+          <div className="tr-gloss-h">{t.trGlossary}</div>
+          <div className="tr-gloss-list">
+            {glossaryToRender.map((g, i) => {
+              const ua = g[0], en = g[1];
+              return (
+                <span key={i} className="tr-gloss-item">{dir === 'uaen' ? ua : en} <Icon name="arrowR" size={11} /> <b>{dir === 'uaen' ? en : ua}</b></span>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {loading ? (
         <div className="tr-loading"><span className="pulse" /> {t.trTranslating}</div>
-      ) : (
+      ) : pairsToRender.length ? (
         <div className="tr-doc view-enter" key={dir}>
           <div className="tr-colhead"><span>{t.trSource} · {srcLang}</span><span>{t.trTarget} · {tgtLang}</span></div>
           {pairsToRender.map((p, i) => (
@@ -542,7 +468,7 @@ function TranslateModal({ open, onClose, t }) {
             </div>
           ))}
         </div>
-      )}
+      ) : null}
       <div className="tr-note"><Icon name="alert" size={13} /> {t.trNote}</div>
     </Modal>
   );

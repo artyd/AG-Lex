@@ -8,7 +8,6 @@ import { Icon } from './Icon';
 export { Icon };
 import { HelpTip } from './HelpTip';
 export { HelpTip };
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { hueOf, initialsOf } from '../lib/auth';
 import { roleLabel } from '../lib/labels';
@@ -168,9 +167,10 @@ export function Sidebar({ route, setRoute, t, riskCount, onUpload, onSettings, u
 
 /* ---- Global search (cross-workspace) ---- */
 function buildSearchIndex(t) {
-  const D = DEMO;
   const idx = [];
-  (D.library || []).forEach(c => idx.push({ type: 'contract', label: c.name, sub: c.client + ' · ' + c.date, route: 'library', risk: c.risk }));
+  // Contracts index used to come from DEMO.library. When we wire the search
+  // through to /api/contracts (async), this is where the fetched rows will
+  // be pushed.
   (LX.matters || []).forEach(m => idx.push({ type: 'matter', label: m.title, sub: m.code + ' · ' + m.client, route: 'matters' }));
   (LX.tasks || []).forEach(k => idx.push({ type: 'task', label: k.title, sub: k.matter, route: 'calendar' }));
   // Codex laws stay in the index — they now route to the new Legislation
