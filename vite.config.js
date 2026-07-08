@@ -18,11 +18,14 @@ const BACKEND_PORT = process.env.AGLEX_BACKEND_PORT || '8001'
 
 export default defineConfig({
   plugins: [react()],
-  // Treat .mjs as a first-class asset so PDF.js's `pdf.worker.min.mjs` (and
-  // any other ESM-only worker) is served with `Content-Type: application/javascript`
-  // by the dev server. Without this, Chrome refuses the dynamic import with
-  // "Failed to fetch dynamically imported module".
-  assetsInclude: ['**/*.mjs'],
+  // Treat PDF.js's `pdf.worker.min.mjs` as a first-class asset so the dev
+  // server serves it with `Content-Type: application/javascript`. Without
+  // this, Chrome refuses the dynamic import with "Failed to fetch
+  // dynamically imported module".
+  // NB: pattern was previously `**/*.mjs`, which routed every .mjs in
+  // node_modules (like @floating-ui/dom → @milkdown/*) as a static asset,
+  // breaking rolldown with "flip is not exported". Keep it tight.
+  assetsInclude: ['**/pdf.worker.min.mjs'],
   server: {
     proxy: {
       '/api': {

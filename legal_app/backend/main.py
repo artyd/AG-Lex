@@ -21,6 +21,7 @@ from . import calendar_routes as calendar_module
 from . import chat_sessions as chat_sessions_module
 from . import documents_routes as documents_routes_module
 from . import drafts as drafts_module
+from . import export_routes as export_routes_module
 from . import lawyer_chat as lawyer_chat_module
 from . import matters_routes as matters_module
 from . import notifications_routes as notifications_module
@@ -151,6 +152,9 @@ app.include_router(calendar_module.router)
 # ALL_ENTITIES loop so a future /api/documents CRUD entity (if ever added)
 # can't shadow these handlers — same pattern as matters_module.
 app.include_router(documents_routes_module.router)
+# MD→DOCX/PDF export for the edited contract. Registered ABOVE the generic
+# CRUD loop for the same shadowing reason (see CLAUDE.md rule #1).
+app.include_router(export_routes_module.router)
 
 # Phase 4.x: custom POST /api/contracts that accepts a base64-encoded display
 # PDF (`displayPdfB64`) and writes it to the BLOB column. Registered BEFORE

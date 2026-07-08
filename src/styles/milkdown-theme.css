@@ -1,0 +1,373 @@
+/* ============================================================
+   AG Lex overrides for Milkdown Crepe.
+
+   Cкопировано с стиля обычного документа: нейтральные чёрные
+   заголовки, светлый фон, никакой акцентной раскраски.
+   Плюс постоянный format-toolbar в стиле Google Docs.
+   ============================================================ */
+
+/* Edit-режим Milkdown должен занимать всю ширину .doc-scroll, чтобы
+   вокруг A4-листа осталось место для «серого desk-фона». По умолчанию
+   родительский .md-doc в markdownDoc.css:8-17 ограничен 820px — это
+   нужно read-only preview для Library. Переопределяем ТОЛЬКО для нашего
+   .md-doc-milkdown, чтобы Library-preview не поехал. */
+.md-doc.md-doc-milkdown {
+  max-width: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* Host wrapper — «рабочий стол»: серый фон вокруг листа, как в
+   Google Docs / Word Print Layout. Лист (ProseMirror) — узкий, по центру,
+   с тенью. Гэпы между «листами» рисуются background-градиентом
+   внутри ProseMirror'а. */
+.milkdown-host {
+  min-height: 480px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 6px);
+  background: color-mix(in oklab, var(--text) 10%, var(--surface));
+  /* НЕ ставим overflow: hidden — иначе длинный договор обрезается по
+     min-height и не видно последующих A4-листов. Скролл — на .doc-scroll
+     родителе. */
+  transition: border-color 0.15s;
+  padding: 24px 0 40px;
+  display: flex;
+  justify-content: center;
+}
+.milkdown-host:focus-within {
+  border-color: var(--border-strong, var(--border));
+}
+/* «Стопка листов» — A4 ширины, центрирована, с общей тенью. Внутри
+   ProseMirror'а между листами рисуем серые щели (см. ниже). */
+.milkdown-host .milkdown {
+  width: 100%;
+  max-width: 794px; /* A4 210mm × 96dpi */
+  background: transparent;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10);
+  border-radius: 3px;
+}
+
+/* ============================================================
+   Единый editor-toolbar (Google-Docs-like).
+
+   Живёт в `.doc-edit-toolbar.md-editor-toolbar` (см. ContractAnalysis),
+   рендерится над редактором через AnalysisView.docToolbar-slot.
+   Содержит: undo/redo | стили (P/H1/H2/H3) | B/I | списки | zoom |
+   spacer | download-split справа.
+   ============================================================ */
+.doc-edit-toolbar.md-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  flex-wrap: wrap;
+  min-height: 44px;
+}
+.md-tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui, inherit);
+  font-size: 13.5px;
+  font-weight: 500;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  user-select: none;
+  line-height: 1;
+}
+.md-tb-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.md-tb-btn:active:not(:disabled) {
+  background: var(--surface-3, var(--surface-2));
+  border-color: var(--border);
+}
+.md-tb-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.md-tb-btn > strong,
+.md-tb-btn > em {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+.md-tb-sep {
+  width: 1px;
+  height: 22px;
+  margin: 0 6px;
+  background: var(--border);
+  display: inline-block;
+  flex: 0 0 auto;
+}
+/* Font-size selector в стиле общего тулбара */
+.md-tb-select {
+  height: 32px;
+  min-width: 60px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui, inherit);
+  font-size: 13px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+  appearance: auto;
+}
+.md-tb-select:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong, var(--border));
+}
+.md-tb-select:focus {
+  outline: none;
+  border-color: var(--text);
+}
+.md-tb-zoom {
+  min-width: 46px;
+  padding: 0 6px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.md-tb-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+/* Download-split вписан в общий тулбар: убираем лишние отступы */
+.doc-edit-toolbar.md-editor-toolbar .dl-split {
+  margin-left: auto;
+}
+
+.md-editor-error {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--risk-med, #e0a800);
+  background: color-mix(in oklab, var(--risk-med, #e0a800) 12%, transparent);
+  border-radius: var(--r-md, 6px);
+  color: var(--text);
+  font-size: 13px;
+}
+.md-editor-error-hint {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* ============================================================
+   ProseMirror shell — типографика "как в договоре".
+   Все заголовки — нейтральный var(--text) (без accent'ов).
+   ============================================================ */
+.milkdown-host .milkdown,
+.milkdown-host .milkdown .editor,
+.milkdown-host .milkdown .ProseMirror {
+  background: var(--surface);
+  color: var(--text);
+  /* Sans-serif стек — DejaVu Sans в оригинале, fallback на системные */
+  font-family: 'DejaVu Sans', Verdana, 'Segoe UI', Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.45;
+  /* Минимальные боковые поля по просьбе юриста — редактор ощущается
+     как обычный текстовый блок, не как «страница с широкими полями». */
+  padding: 16px 24px;
+  border: none;
+  outline: none;
+  caret-color: var(--text);
+  min-height: 420px;
+}
+.milkdown-host .milkdown .ProseMirror {
+  padding: 16px 24px;
+  /* Разрыв страниц: каждые 1123px (A4 = 297mm × 96dpi) — серая «щель»
+     32px, чтобы каждый лист визуально отделился от следующего, как в
+     Google Docs Print Layout. `repeating-linear-gradient` сам повторяет
+     паттерн, доп. background-size/repeat не нужны — раньше они ломали
+     рендер и щель не появлялась. Контраст щели ~10% чтобы юрист её
+     реально видел, не как «может это тень». */
+  background-color: var(--surface);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--surface) 0,
+    var(--surface) 1123px,
+    color-mix(in oklab, var(--text) 10%, var(--surface)) 1123px,
+    color-mix(in oklab, var(--text) 10%, var(--surface)) 1155px
+  );
+}
+/* Убираем горизонтальные линии (`---` из старых сохранённых доков) —
+   «чистый лист» без полосок между блоками. */
+.milkdown-host .milkdown .ProseMirror hr {
+  display: none;
+}
+
+/* --- Findings-flags: маркеры проблемных пунктов слева от блока,
+   выступают в desk-зону за пределом A4-листа. Клик открывает finding
+   в AI-панели. Цвет — по severity. --- */
+.milkdown-host .milkdown .ProseMirror > * {
+  /* Блокам нужен position: relative, чтобы widget-flag внутри них
+     позиционировался абсолютно относительно параграфа. */
+  position: relative;
+}
+.md-finding-flag {
+  position: absolute;
+  left: -34px;
+  top: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.12s, box-shadow 0.12s;
+  z-index: 2;
+  outline: none;
+}
+.md-finding-flag:hover {
+  transform: scale(1.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.md-finding-flag-high { background: var(--risk-high, #dc2626); }
+.md-finding-flag-med  { background: var(--risk-med, #f59e0b); }
+.md-finding-flag-low  { background: var(--risk-low, #10b981); }
+.md-finding-flag-info { background: var(--info, #3b82f6); }
+
+.milkdown-host .milkdown .ProseMirror h1,
+.milkdown-host .milkdown .ProseMirror h2,
+.milkdown-host .milkdown .ProseMirror h3,
+.milkdown-host .milkdown .ProseMirror h4,
+.milkdown-host .milkdown .ProseMirror h5,
+.milkdown-host .milkdown .ProseMirror h6 {
+  color: var(--text);
+  font-weight: 700;
+  /* Наследуем sans-serif от .ProseMirror (DejaVu Sans / Verdana),
+     а не глобальный --font-doc (Source Serif). */
+  font-family: inherit;
+  letter-spacing: 0;
+}
+/* Размеры заголовков — как в kontrakt_postachannya.pdf:
+   h1 — 14pt (титул документа),
+   h2 — 11pt (нумерованные секции «1. ПРЕДМЕТ»),
+   h3 — 12pt (подзаголовки),
+   h4/h5/h6 — 11pt. Все bold, нейтральный чёрный. */
+.milkdown-host .milkdown .ProseMirror h1 { font-size: 14pt; margin: 12pt 0 6pt; text-align: center; }
+.milkdown-host .milkdown .ProseMirror h2 { font-size: 11pt; margin: 10pt 0 4pt; }
+.milkdown-host .milkdown .ProseMirror h3 { font-size: 12pt; margin: 9pt 0 4pt; text-align: center; }
+.milkdown-host .milkdown .ProseMirror h4,
+.milkdown-host .milkdown .ProseMirror h5,
+.milkdown-host .milkdown .ProseMirror h6 { font-size: 11pt; margin: 8pt 0 3pt; font-weight: 700; }
+
+.milkdown-host .milkdown .ProseMirror p {
+  /* Word-подобный интервал: 6pt между абзацами. Не слишком плотно,
+     не слишком воздушно. */
+  margin: 3pt 0 6pt;
+  color: var(--text);
+  text-align: justify;
+}
+.milkdown-host .milkdown .ProseMirror strong { font-weight: 700; }
+.milkdown-host .milkdown .ProseMirror em { font-style: italic; }
+.milkdown-host .milkdown .ProseMirror a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong, var(--border));
+}
+.milkdown-host .milkdown .ProseMirror blockquote {
+  border-left: 3px solid var(--border-strong, var(--border));
+  padding-left: 0.9em;
+  color: var(--text-2);
+  font-style: italic;
+  margin: 0.8em 0;
+}
+.milkdown-host .milkdown .ProseMirror table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+}
+.milkdown-host .milkdown .ProseMirror table td,
+.milkdown-host .milkdown .ProseMirror table th {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  color: var(--text);
+}
+.milkdown-host .milkdown .ProseMirror table th {
+  background: var(--surface-2);
+  font-weight: 650;
+}
+.milkdown-host .milkdown .ProseMirror ul,
+.milkdown-host .milkdown .ProseMirror ol {
+  padding-left: 1.6em;
+  color: var(--text);
+}
+.milkdown-host .milkdown .ProseMirror li { margin: 0.2em 0; }
+.milkdown-host .milkdown .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+.milkdown-host .milkdown .ProseMirror code {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.94em;
+  color: var(--text);
+}
+.milkdown-host .milkdown .ProseMirror pre {
+  background: var(--surface-2);
+  padding: 10px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  color: var(--text);
+}
+
+/* ============================================================
+   Bind Crepe design-tokens to AG Lex tokens.
+
+   frame.css у Crepe объявляет `--crepe-*` на `.milkdown` — та же
+   специфичность, что и у нас; наш файл импортируется ПОСЛЕ frame.css,
+   значит по каскаду выигрывает. Плюс дублируем на :root — тулбары и
+   поповеры Crepe иногда рендерятся вне `.milkdown`-контейнера.
+   ============================================================ */
+:root,
+.milkdown-host .milkdown {
+  --crepe-color-background: var(--surface);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--surface-2);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-2);
+  --crepe-color-outline: var(--border);
+  /* Нейтральные, НЕ красные/синие акценты — как в оригинальном документе */
+  --crepe-color-primary: var(--text);
+  --crepe-color-secondary: var(--surface-2);
+  --crepe-color-on-secondary: var(--text);
+  --crepe-color-inverse: var(--surface-2);
+  --crepe-color-on-inverse: var(--text);
+  --crepe-color-hover: var(--surface-2);
+  --crepe-color-selected: color-mix(in oklab, var(--text) 10%, transparent);
+  --crepe-color-inline-area: var(--surface-2);
+  --crepe-color-inline-code: var(--text);
+  --crepe-color-error: var(--risk-high, #b91c1c);
+  --crepe-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --crepe-shadow-2: 0 3px 6px rgba(0, 0, 0, 0.08);
+  /* Sans-serif стек — совпадает с редактором. --font-doc = serif, для
+     Crepe-tooltip'ов и UI-элементов используем UI-шрифт. */
+  --crepe-font-title: 'DejaVu Sans', Verdana, 'Segoe UI', Arial, sans-serif;
+  --crepe-font-default: 'DejaVu Sans', Verdana, 'Segoe UI', Arial, sans-serif;
+  --crepe-font-code: ui-monospace, SFMono-Regular, monospace;
+}

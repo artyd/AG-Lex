@@ -14,8 +14,11 @@ import { AnalysisView } from './analysis/AnalysisView';
 import { reconcileToAnalysisProps } from '../lib/reconcileAdapter';
 import { popReconOpenId, saveHistory as saveReconHistory } from '../lib/reconcileStorage';
 import { useDocumentProcessing } from '../contexts/DocumentProcessingContext';
-import { EditableDoc } from './analysis/EditableDoc';
-import { downloadMd, downloadTxt, downloadDocx, printAsPdf, sectionsToMarkdown } from '../lib/exportDoc';
+import { MilkdownEditor } from './analysis/MilkdownEditor';
+import {
+  downloadMd, downloadTxt, downloadDocx, printAsPdf, sectionsToMarkdown,
+  downloadPdfFromServer,
+} from '../lib/exportDoc';
 import { buildFromRegex } from '../lib/findingHighlight';
 
 const LEVEL_COLOR = {
@@ -1286,6 +1289,10 @@ function ContractAnalysisSingle({ t, incoming }) {
   // scrollToPos — куда прокрутить редактор после Додати розділ. Заменяет
   // scrollToIdx (индекс секции) на позицию в markdown-строке.
   const [scrollToPos, setScrollToPos] = useState(null);
+  // Milkdown format-API: заполняется MilkdownEditor через onReady, null
+  // до готовности редактора. Тулбар-кнопки читают editorApiRef.current
+  // прямо в onClick, поэтому re-render не нужен.
+  const editorApiRef = useRef(null);
 
   const [protocolOpen, setProtocolOpen] = useState(false);
   // missingStatus[idx] = та же форма, что и findingStatus. resolvedVia:
@@ -1695,7 +1702,7 @@ function ContractAnalysisSingle({ t, incoming }) {
       ...prev,
       [idx]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'add-button' },
     }));
-    const head = m.title ? `\n\n---\n\n## ${m.title}\n\n` : '\n\n';
+    const head = m.title ? `\n\n## ${m.title}\n\n` : '\n\n';
     const body = m.clauseText || '';
     setEditedMarkdown(prev => {
       const glue = prev && !prev.endsWith('\n') ? head : head.replace(/^\n+/, '');
@@ -1810,24 +1817,72 @@ function ContractAnalysisSingle({ t, incoming }) {
           t={t}
           docZoom={zoom / 100}
           docToolbar={
-            <div className="doc-edit-toolbar">
-              <span className="doc-edit-mode-label">
-                <Icon name="pen" size={14} /> {t.editMode || 'Редагування'}
-              </span>
+            <div className="doc-edit-toolbar md-editor-toolbar">
+              {/* --- Format group: undo / redo --- */}
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.undo?.()}
+                title="Відмінити (Ctrl+Z)" aria-label="Відмінити">↶</button>
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.redo?.()}
+                title="Повторити (Ctrl+Shift+Z)" aria-label="Повторити">↷</button>
 
-              <div className="sep" />
+              <span className="md-tb-sep" />
 
+              {/* --- Font size: применяется к выделенному фрагменту --- */}
+              <select
+                className="md-tb-select"
+                title="Розмір шрифта (застосовується до виділеного тексту)"
+                aria-label="Розмір шрифта"
+                defaultValue="12"
+                onMouseDown={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  editorApiRef.current?.setFontSize?.(Number(e.target.value));
+                }}>
+                {Array.from({ length: 25 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+
+              <span className="md-tb-sep" />
+
+              {/* --- Inline formatting --- */}
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.bold?.()}
+                title="Жирний (Ctrl+B)" aria-label="Жирний"><strong>B</strong></button>
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.italic?.()}
+                title="Курсив (Ctrl+I)" aria-label="Курсив"><em>I</em></button>
+
+              <span className="md-tb-sep" />
+
+              {/* --- Lists --- */}
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.bullet?.()}
+                title="Маркований список" aria-label="Маркований список">•</button>
+              <button type="button" className="md-tb-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => editorApiRef.current?.ordered?.()}
+                title="Нумерований список" aria-label="Нумерований список">1.</button>
+
+              <span className="md-tb-sep" />
+
+              {/* --- Zoom --- */}
               <button type="button"
-                className="btn btn-ghost btn-sm btn-icon"
+                className="md-tb-btn"
                 onClick={() => setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP))}
                 disabled={zoom <= ZOOM_MIN}
                 title={t.zoomOut || 'Зменшити'}
                 aria-label={t.zoomOut || 'Зменшити'}>
                 <Icon name="minus" size={14} />
               </button>
-              <span className="zoom-label" aria-live="polite">{zoom}%</span>
+              <span className="md-tb-zoom" aria-live="polite">{zoom}%</span>
               <button type="button"
-                className="btn btn-ghost btn-sm btn-icon"
+                className="md-tb-btn"
                 onClick={() => setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP))}
                 disabled={zoom >= ZOOM_MAX}
                 title={t.zoomIn || 'Збільшити'}
@@ -1835,7 +1890,7 @@ function ContractAnalysisSingle({ t, incoming }) {
                 <Icon name="plus" size={14} />
               </button>
 
-              <div className="sep" />
+              <div className="md-tb-spacer" />
 
               {saveState !== 'idle' ? (
                 <span className={'save-chip save-chip-' + saveState} aria-live="polite">
@@ -1862,6 +1917,19 @@ function ContractAnalysisSingle({ t, incoming }) {
                   { key: 'docx',  label: t.exportDocx  || 'Word (.docx)',
                     icon: 'doc',
                     run: () => downloadDocx(editedMarkdown, effectiveDoc?.filename) },
+                  // Server-side MD→DOCX→PDF через soffice (см. legal_app/backend/export_routes.py).
+                  // Toast + console.error fallback если soffice отвалился на бэке.
+                  { key: 'pdf-server', label: t.exportPdfServer || 'PDF (сервер)',
+                    icon: 'doc',
+                    run: async () => {
+                      try {
+                        await downloadPdfFromServer(editedMarkdown, effectiveDoc?.filename);
+                      } catch (err) {
+                        toast?.((t.exportPdfServerFailed || 'PDF-експорт недоступний, спробуйте DOCX'));
+                        // eslint-disable-next-line no-console
+                        console.error('[export/pdf]', err);
+                      }
+                    } },
                   { key: 'print', label: t.exportPdf   || 'PDF (друк)',
                     icon: 'doc',
                     run: () => printAsPdf() },
@@ -1911,12 +1979,15 @@ function ContractAnalysisSingle({ t, incoming }) {
             </div>
           }
           docOverride={
-            <EditableDoc
+            <MilkdownEditor
               filename={(effectiveDoc && effectiveDoc.filename) || 'Договір'}
               markdown={editedMarkdown}
               onChange={setEditedMarkdown}
               flashRange={flashRange}
               scrollToPos={scrollToPos}
+              onReady={(api) => { editorApiRef.current = api; }}
+              findings={data.findings}
+              onFlagClick={(id) => { setActive(id); scrollFindingCard(id); }}
             />
           }
           panel={

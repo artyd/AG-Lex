@@ -508,6 +508,9 @@
   transition: transform 0.18s cubic-bezier(.22,.61,.36,1),
               box-shadow 0.18s, border-color 0.18s;
 }
+.lib-card:not(.lib-card-flippable) .lib-card-open:hover {
+  transform: translateY(-3px);
+}
 /* Hover-визуал (тень/подъём) переносим на .lib-card, чтобы он оставался
    видимым даже когда front-face повернулся вокруг Y (backface-visibility
    скрывает сам button, но outer div остаётся в потоке). */

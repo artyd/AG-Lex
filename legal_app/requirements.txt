@@ -10,6 +10,7 @@ sqlite-vec
 pymupdf4llm
 mammoth
 openpyxl
+python-docx
 bcrypt
 python-jose[cryptography]
 python-multipart
