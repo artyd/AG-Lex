@@ -17,7 +17,6 @@ import { Icon, Modal, SectionTitle, toast } from '../ui/components';
 import { UserAvatar } from '../lib/labels';
 import { api } from '../lib/api';
 import { useMatters, useMatterDetail, selectDisputes } from './matters/useMatters';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 
 // ----- Static config ---------------------------------------------------------
@@ -416,9 +415,8 @@ function DisputeDetail({ d, detail, t, setRoute, onBack, onAddCourt, onAddHearin
 
   const addCal = () => {
     if (!result) return;
-    const id = 'lit-' + ruleId + '-' + iso(result) + '-' + d.id;
-    if (!DEMO.tasks.find(x => x.id === id))
-      DEMO.tasks.push({ id, date: iso(result), title: rule.label + ' — справа ' + (d.caseNumber || d.code), client: d.client, type: 'deadline', risk: 'high' });
+    // Persistence to a real /api/tasks endpoint is a follow-up; toast alone
+    // was previously enough because the DEMO fixture doubled as storage.
     setAdded(true);
     toast(t.litAddedCal, 'calendar');
     setTimeout(() => setAdded(false), 1600);

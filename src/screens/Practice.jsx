@@ -4,7 +4,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Modal, SectionTitle, riskDot, toast } from '../ui/components';
 import { UserAvatar, roleLabel, prioColor } from '../lib/labels';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { api } from '../lib/api';
 import { useMatters, useMatterDetail, adaptCard } from './matters/useMatters';
@@ -369,12 +368,11 @@ function TabOverview({ m, t }) {
 }
 
 function TabDocuments({ m, t, setRoute }) {
-  // Seed from the demo library, then append any documents the user attaches
-  // in this session. Persistence to a /api/matters/{id}/documents endpoint
-  // is a separate piece of work; for now the file picker at least *does*
-  // something — adds the entry to the list and shows a confirmation toast.
-  const initialDocs = DEMO.library.filter(c => c.client === m.client);
-  const [docs, setDocs] = useState(initialDocs);
+  // Documents attached to a matter. The list starts empty until the user
+  // picks files via the button below. A durable /api/matters/{id}/documents
+  // endpoint is a follow-up — this tab was previously seeded from the DEMO
+  // fixture, but that leaked stale prototype rows into every matter.
+  const [docs, setDocs] = useState([]);
   const fileRef = useRef(null);
 
   const onPick = (e) => {
@@ -538,9 +536,6 @@ function TabTasks({ m, t }) {
 function TabDates({ m, t }) {
   const items = [];
   if (m.nextDeadline) items.push({ id: 'd0', date: m.nextDeadline.date, label: m.nextDeadline.label, kind: m.nextDeadline.kind || 'proc' });
-  DEMO.tasks.filter(tk => tk.client === m.client).forEach(tk => {
-    items.push({ id: 'd-' + tk.id, date: tk.date, label: tk.title, kind: tk.type === 'meeting' ? 'court' : 'proc' });
-  });
   items.sort((a, b) => a.date.localeCompare(b.date));
   return (
     <div className="card mt-card-pad">

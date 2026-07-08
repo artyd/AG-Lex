@@ -10,7 +10,6 @@ import { roleLabel } from './lib/labels';
 import { lxLoadSession, lxLogout, initialsOf, hueOf, AUTH_LOGOUT_EVENT, refreshSession } from './lib/auth';
 import { api, ApiError } from './lib/api';
 import { connect as realtimeConnect, disconnect as realtimeDisconnect, subscribe as realtimeSubscribe } from './lib/realtime';
-import { DEMO } from './data/demo';
 import { LX } from './data/lx';
 import { I18N } from './data/i18n';
 import { Auth } from './screens/Auth';
@@ -275,21 +274,11 @@ function AppShell() {
     setContractUploadOpen(true);
   };
   // Real path: POST the file to /api/upload, get back {markdown, sections,
-  // token_stats}, hand them to ContractAnalysis via the `incoming` prop. The
-  // demo path (opts.demo) bypasses upload entirely and lets ContractAnalysis
-  // fall back to DEMO so the screen stays useful without a backend.
-  const startUpload = async (opts = {}) => {
-    const isDemo = Boolean(opts.demo) || !contractFile;
-    if (isDemo) {
-      setContractUploadOpen(false);
-      setUploadOpen(false);
-      setContractFile(null);
-      setAnalysisIncoming(null);
-      setAnalyzeNonce(n => n + 1);
-      setRoute('analyze');
-      toast(L.uploadDone, 'sparkle');
-      return;
-    }
+  // token_stats}, hand them to ContractAnalysis via the `incoming` prop.
+  // The click without a file is a no-op — the button is disabled in that
+  // state; the DEMO fallback branch has been removed.
+  const startUpload = async () => {
+    if (!contractFile) return;
     // Close the modal and jump to the analyze route IMMEDIATELY so the
     // AnalyzingOverlay paints right after the click — soffice + Claude take
     // 5–15 s and the user shouldn't stare at a frozen modal. The pending
@@ -544,14 +533,6 @@ function AppShell() {
             <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>{L.uploadHint}</div>
           </button>
         )}
-        <div className="upload-demo">
-          <span className="upload-demo-ic"><Icon name="sparkle" size={14} fill={true} /></span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{L.uploadDemoLabel}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 1 }}>{L.uploadDemoSub}</div>
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => startUpload({ demo: true })} disabled={contractUploading}>{L.uploadDemoBtn}</button>
-        </div>
       </Modal>
 
       {/* Pair upload — contract + handover (two square dropzones, one CTA) */}

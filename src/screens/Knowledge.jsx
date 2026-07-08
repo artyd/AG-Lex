@@ -8,7 +8,6 @@ import { Modal, ScoreRing, SectionTitle, toast } from '../ui/components';
 import { roleLabel } from '../lib/labels';
 import { initialsOf, hueOf } from '../lib/auth';
 import { api, ApiError } from '../lib/api';
-import { DEMO } from '../data/demo';
 import { LX } from '../data/lx';
 import { useTeamApi } from './permissions/useTeamApi';
 
@@ -451,8 +450,10 @@ function Team({ t, user }) {
 
 /* ---------- Batch analysis ---------- */
 function Batch({ t, setRoute }) {
-  const D = DEMO;
-  const items = D.library;
+  // Batch used to run against the DEMO library. That fixture is gone;
+  // hook this up to `api.contracts.list()` in a follow-up. For now it
+  // renders an empty selection state.
+  const items = [];
   const [sel, setSel] = useState(() => new Set(items.filter(c => c.status !== 'done').map(c => c.id)));
   const [phase, setPhase] = useState('idle'); // idle | running | done
   const [pct, setPct] = useState(0);
