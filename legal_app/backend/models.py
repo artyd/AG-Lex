@@ -196,6 +196,10 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     rows_json           TEXT NOT NULL,
     findings_json       TEXT NOT NULL,
     docs_json           TEXT NOT NULL,
+    -- Language & style findings (A–I chek-list). Distinct from findings_json
+    -- so the FE renders "Table 3 звірка" / "Мова & стиль" tabs; nullable so
+    -- old rows created before the language check pass through as [].
+    language_findings_json TEXT,
     contract_markdown   TEXT,           -- raw source MD (Phase 3.3)
     handover_markdown   TEXT,           -- raw source MD (Phase 3.3)
     contract_html       TEXT,           -- source HTML for display (Phase 3.3+)
@@ -204,6 +208,18 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     handover_display_pdf BLOB,          -- display PDF (Phase 4.x, served via /api)
     contract_display_pdf_error TEXT,    -- JSON {kind, message} when soffice failed (Phase 4.x)
     handover_display_pdf_error TEXT,    -- JSON {kind, message} when soffice failed (Phase 4.x)
+    -- Original uploaded contract bytes (DOCX). Used by the "download with
+    -- corrections" endpoint so we can walk the source paragraphs with
+    -- python-docx and preserve fonts/tables — instead of rebuilding the file
+    -- from markdown (which loses everything). Nullable: PDF uploads and
+    -- historical rows don't carry a blob.
+    contract_original_blob BLOB,
+    contract_original_ext  TEXT,        -- ".docx" or ".doc" (post-normalization always ".docx")
+    -- Per-language markdown streams (bilingual DOCX → 2 columns → 2 markdowns).
+    -- КОНТР-УКР / КОНТР-АНГЛ tabs read from these directly so the editor
+    -- shows clean prose instead of `| col | col |` GFM rows.
+    contract_markdown_en TEXT,
+    contract_markdown_ua TEXT,
     created_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reconciliations_user ON reconciliations(user_id);
@@ -452,6 +468,55 @@ def migrate_reconciliations(conn) -> None:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_html TEXT")
     if "handover_html" not in cols:
         conn.execute("ALTER TABLE reconciliations ADD COLUMN handover_html TEXT")
+    conn.commit()
+
+
+def migrate_reconciliations_language_findings(conn) -> None:
+    """Add `language_findings_json` for the A–I language & style check.
+
+    Idempotent. Old rows keep NULL — the FE adapter treats it as `[]`.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
+    if "language_findings_json" not in cols:
+        conn.execute(
+            "ALTER TABLE reconciliations ADD COLUMN language_findings_json TEXT"
+        )
+    conn.commit()
+
+
+def migrate_reconciliations_original_blob(conn) -> None:
+    """Add original DOCX blob storage for the preserve-visual-formatting download.
+
+    The 'Download DOCX' button opens the source .docx via python-docx, walks
+    paragraphs, applies accepted `suggest.from → suggest.to` replacements at
+    the run level, and streams the result — instead of rebuilding from
+    markdown (which loses fonts, tables, signature blocks). Idempotent.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
+    if "contract_original_blob" not in cols:
+        conn.execute(
+            "ALTER TABLE reconciliations ADD COLUMN contract_original_blob BLOB"
+        )
+    if "contract_original_ext" not in cols:
+        conn.execute(
+            "ALTER TABLE reconciliations ADD COLUMN contract_original_ext TEXT"
+        )
+    conn.commit()
+
+
+def migrate_reconciliations_bilingual(conn) -> None:
+    """Add per-language markdown streams for bilingual contracts.
+
+    The reconcile screen splits the contract into КОНТР-УКР and КОНТР-АНГЛ
+    tabs so each language reads as prose (not `| col | col |` GFM). We
+    populate these at ingest time by walking the mammoth HTML and pulling
+    left/right column bodies. Idempotent.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reconciliations)").fetchall()}
+    if "contract_markdown_en" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_markdown_en TEXT")
+    if "contract_markdown_ua" not in cols:
+        conn.execute("ALTER TABLE reconciliations ADD COLUMN contract_markdown_ua TEXT")
     conn.commit()
 
 

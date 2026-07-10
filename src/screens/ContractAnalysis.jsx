@@ -108,16 +108,23 @@ function FindingCard({ f, active, hovered, onHover, onClick, onApply, onReject, 
             <span className="suggest-tag">{t.original}</span>
             <span>«{f.suggest.from}»</span>
           </div>
-          <div className="suggest-row suggest-to">
-            <span className="suggest-tag suggest-tag-good"><Icon name="wand" size={12} /> {t.proposed}</span>
-            <span>«{f.suggest.to}»</span>
-          </div>
+          {f.suggest.to ? (
+            <div className="suggest-row suggest-to">
+              <span className="suggest-tag suggest-tag-good"><Icon name="wand" size={12} /> {t.proposed}</span>
+              <span>«{f.suggest.to}»</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
       {!isResolved ? (
         <div className="todo-actions" onClick={e => e.stopPropagation()}>
-          {f.suggest ? (
+          {/* Language findings sometimes carry `suggest.from` for highlighting
+              but leave `suggest.to` empty (diagnostic-only, e.g. "UA paragraph
+              missing"). Only surface the Apply-fix button when there is an
+              actual replacement to write — otherwise "Apply" would blank out
+              the highlighted phrase without any user-visible correction. */}
+          {f.suggest && f.suggest.to ? (
             <button className="btn btn-sm btn-primary"
               onClick={() => onApply(f.id)}>
               <Icon name="wand" size={13} /> {t.aiFixShort || 'AI-виправлення'}
@@ -331,6 +338,12 @@ export function AiPanel({
   const summary = data.summary;
   const warnings = data.warnings;
   const [filter, setFilter] = useState('all');
+  // Reconciliation splits findings across two domains: the 15-category
+  // Table 3 comparison (kind ≠ 'lang') and the A–I language & style check
+  // (kind === 'lang'). We keep a second filter so counsel can flip between
+  // them without losing the level filter. Defaults to `all` so single-
+  // contract flows (which have no `lang` findings) don't see the extra chips.
+  const [domain, setDomain] = useState('all');
 
   const getFindingState = (id) => findingStatus[id]?.state || 'pending';
   const getMissingState = (i) => missingStatus[i]?.state || 'pending';
@@ -345,7 +358,10 @@ export function AiPanel({
   const scoreLabel = liveScore >= 80 ? t.scoreLow : liveScore >= 58 ? t.scoreMed : t.scoreHigh;
   const scoreColor = liveScore >= 75 ? 'var(--risk-low)' : liveScore >= 55 ? 'var(--risk-med)' : 'var(--risk-high)';
 
-  const fixable = findings.filter(f => f.suggest);
+  // Only findings with a concrete replacement (`suggest.to` non-empty) count
+  // as "fixable" — diagnostic language findings that only highlight the phrase
+  // are still visible in the list, but Apply-all shouldn't try to blank them.
+  const fixable = findings.filter(f => f.suggest && f.suggest.to);
   // «Все правки решены»: либо принято, либо отклонено — не осталось pending.
   const allFixed = fixable.every(f => getFindingState(f.id) !== 'pending');
   const pendingFixableCount = fixable.filter(f => getFindingState(f.id) === 'pending').length;
@@ -379,9 +395,21 @@ export function AiPanel({
     return withMeta; // сохраняем оригинальный i для onAddClause/onRejectMissing
   }, [missing, missingStatus]);
 
+  // Compose the two filters. The domain filter runs first so the level
+  // counts (openHigh / openMed) still count *all* findings while the visible
+  // list narrows to the picked domain — otherwise flipping to «Мова» would
+  // silently zero the header stats.
+  const langFindings = sortedFindings.filter((f) => f.kind === 'lang');
+  const riskFindings = sortedFindings.filter((f) => f.kind !== 'lang');
+  const hasLang = langFindings.length > 0;
+  const domainScoped = domain === 'lang'
+    ? langFindings
+    : domain === 'recon'
+      ? riskFindings
+      : sortedFindings;
   const filtered = filter === 'all'
-    ? sortedFindings
-    : sortedFindings.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
+    ? domainScoped
+    : domainScoped.filter(f => f.level === (filter === 'crit' ? 'high' : 'med'));
 
   // Reconcile callers pass hideTabs=['summary','data','missing'] because
   // those concepts (executive summary, contract metadata, missing clauses)
@@ -466,6 +494,17 @@ export function AiPanel({
           {tab === 'risks' && (
             <div className="view-enter" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <LegalBasis t={t} items={legalBasis} />
+              {hasLang && (
+                <div className="seg seg-sm" role="tablist" aria-label="finding-domain"
+                     style={{ display: 'flex', gap: 4 }}>
+                  <button className={domain === 'all' ? 'on' : ''} onClick={() => setDomain('all')}
+                          type="button">Усі ({riskFindings.length + langFindings.length})</button>
+                  <button className={domain === 'recon' ? 'on' : ''} onClick={() => setDomain('recon')}
+                          type="button">Table 3 звірка ({riskFindings.length})</button>
+                  <button className={domain === 'lang' ? 'on' : ''} onClick={() => setDomain('lang')}
+                          type="button">Мова & стиль ({langFindings.length})</button>
+                </div>
+              )}
               <div className="risk-toolbar">
                 <div className="seg seg-sm">
                   {[['all', t.filterAll], ['crit', t.filterCrit], ['mod', t.filterMod]].map(([id, lbl]) => (
@@ -698,10 +737,33 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
   const [active, setActive] = useState(null);
   const [hovered, setHovered] = useState(null);
   const [tab, setTab] = useState('risks');
-  // Локальный findingStatus для сверок: reconcile-режим не переписывает
-  // editedSections (тут нет одного «главного» договора), только помечает
-  // findings принятыми/отклонёнными для дальнейшего экспорта.
   const [findingStatus, setFindingStatus] = useState({});
+  // Reconcile has three source tabs — the contract split by language
+  // (КОНТР-УКР / КОНТР-АНГЛ) and the handover / ПД (read-only reference).
+  // Bilingual DOCX contracts are stored as two parallel markdown streams
+  // on the backend (see docx_to_bilingual_markdown) so each language reads
+  // as clean prose instead of `| col | col |` GFM rows. When the backend
+  // has no split (older row / monolingual doc), we fall back to the full
+  // markdown for both language tabs.
+  const [docTab, setDocTab] = useState('ua');
+  const contractUaSrc = (run && (run.contractMarkdownUa || run.contractMarkdown || '')) || '';
+  const contractEnSrc = (run && (run.contractMarkdownEn || run.contractMarkdown || '')) || '';
+  const handoverMarkdownSrc = (run && (run.handoverMarkdown || '')) || '';
+  const [editedContractUa, setEditedContractUa] = useState(contractUaSrc);
+  const [editedContractEn, setEditedContractEn] = useState(contractEnSrc);
+  const [editedHandoverMd, setEditedHandoverMd] = useState(handoverMarkdownSrc);
+  useEffect(() => { setEditedContractUa(contractUaSrc); }, [contractUaSrc]);
+  useEffect(() => { setEditedContractEn(contractEnSrc); }, [contractEnSrc]);
+  useEffect(() => { setEditedHandoverMd(handoverMarkdownSrc); }, [handoverMarkdownSrc]);
+  // Format-command API exposed by MilkdownEditor via onReady. Toolbar buttons
+  // read it in onClick — no re-render needed.
+  const editorApiRef = useRef(null);
+  // Highlighted-range flash after Apply-fix. Same shape as the single-
+  // contract flow.
+  const [flashRange, setFlashRange] = useState(null);
+  // Doc zoom (70–150%). Same UX as the single-contract toolbar so counsel's
+  // muscle memory carries over.
+  const [zoom, setZoom] = useState(100);
 
   const data = useMemo(() => ({
     findings: (adapted && adapted.findings) || [],
@@ -780,6 +842,54 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
     toast(t.cmpExported, 'doc');
   }
 
+  /** Stream the original contract DOCX with every accepted language/risk
+   *  fix applied — bytes come from POST /api/reconciliations/{id}/contract-
+   *  edited.docx, which walks the persisted `contract_original_blob` with
+   *  python-docx. The button silently no-ops when the run doesn't have
+   *  a backing id (fresh mock-mode payloads that were never persisted). */
+  async function downloadEditedDocx() {
+    if (!run || !run.id) {
+      toast(t.exportDocxUnavailable || 'DOCX недоступний для цього прогону', 'alert');
+      return;
+    }
+    // Collect the `{from, to}` list for findings the user accepted. `adapted`
+    // already merged risk + language findings into one list, and each has a
+    // `suggest` when it was applicable — that's the source of truth so
+    // Apply-fix and Download-DOCX operate on the same replacements.
+    const replacements = [];
+    for (const f of (adapted?.findings || [])) {
+      if (findingStatus[f.id]?.state !== 'accepted') continue;
+      const from = f.suggest?.from;
+      const to = f.suggest?.to;
+      if (from && to) replacements.push({ from, to });
+    }
+    try {
+      const blob = await api.downloadReconciliationDocx(run.id, replacements);
+      const filename = ((run.contractFile || 'contract').replace(/\.(docx?|pdf|xlsx?)$/i, '')) + '-edited.docx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast(t.exportDocxSaved || 'DOCX збережено', 'doc');
+    } catch (err) {
+      if (err && err.status === 404) {
+        toast(
+          t.exportDocxNoOriginal
+            || 'Оригінал .docx не збережений (PDF-джерело). Скачайте markdown-версію.',
+          'alert',
+        );
+      } else {
+        toast(t.exportDocxFailed || 'Не вдалося сформувати DOCX', 'alert');
+      }
+      // eslint-disable-next-line no-console
+      console.error('[reconcile-docx]', err);
+    }
+  }
+
   // Pending state: upload modal has closed and POST /api/reconcile is in
   // flight. Show the analyzing overlay until `run` shows up.
   if (pending || !run) {
@@ -806,27 +916,237 @@ export function ReconcileResult({ t, run, pending, onBack, onRestart }) {
           </span>
           <button className="btn btn-ghost btn-sm" onClick={addEditsToTasks}><Icon name="calendar" size={15} /> {t.cmpToTasks}</button>
           <button className="btn btn-ghost btn-sm" onClick={exportReport}><Icon name="download" size={15} /> {t.cmpReexport}</button>
+          <button className="btn btn-ghost btn-sm" onClick={downloadEditedDocx}
+            title={t.exportDocxTitle || 'Скачати договір у форматі .docx (з прийнятими правками)'}>
+            <Icon name="doc" size={15} /> {t.exportDocx || 'Word (.docx)'}
+          </button>
           {onRestart ? (
             <button className="btn btn-primary btn-sm" onClick={onRestart}><Icon name="refresh" size={15} /> {t.cmpRun}</button>
           ) : null}
         </div>
       </div>
       <AnalysisView
-        documents={adapted.documents}
-        findings={adapted.findings}
+        // Single-doc mode: we drive the tab toggle ourselves via docToolbar
+        // so we can gate findings and Apply-fix per active tab. Passing one
+        // document suppresses AnalysisView's built-in tab strip.
+        documents={[{
+          label: docTab === 'handover'
+            ? (run.handoverFile || t.cmpSlotHandover || 'Передача справ')
+            : (run.contractFile || t.cmpSlotContract || 'Договір'),
+          filename: docTab === 'handover' ? (run.handoverFile || '') : (run.contractFile || ''),
+          sections: [],
+        }]}
+        // Findings gating:
+        //  • KOHTP-УКР → risk findings + language findings tagged ua/mixed/unknown
+        //  • KOHTP-АНГЛ → risk findings + language findings tagged en/mixed/unknown
+        //  • ПД        → no findings (read-only reference to what the
+        //                purchasing team agreed with the supplier)
+        findings={(() => {
+          if (docTab === 'handover') return [];
+          const all = adapted.findings || [];
+          return all.filter((f) => {
+            if (f.kind !== 'lang') return true; // risk findings apply to both languages
+            const lang = String(f._language || '').toLowerCase();
+            if (docTab === 'ua') return lang !== 'en';
+            /* en */ return lang !== 'ua' && lang !== 'ru';
+          });
+        })()}
         active={active}
         setActive={setActive}
         hovered={hovered}
         setHovered={setHovered}
         t={t}
+        docZoom={zoom / 100}
+        docToolbar={
+          <div className="doc-edit-toolbar md-editor-toolbar">
+            {/* --- КОНТР-УКР / КОНТР-АНГЛ / ПД source tab --- */}
+            <div className="seg seg-sm" role="tablist" aria-label="doc-source"
+                 style={{ marginRight: 6 }}>
+              <button
+                type="button"
+                className={docTab === 'ua' ? 'on' : ''}
+                onClick={() => { setDocTab('ua'); setActive(null); }}
+                title={`${run.contractFile || 'Договір'} — українська версія`}
+              >КОНТР-УКР</button>
+              <button
+                type="button"
+                className={docTab === 'en' ? 'on' : ''}
+                onClick={() => { setDocTab('en'); setActive(null); }}
+                title={`${run.contractFile || 'Договір'} — англійська версія`}
+              >КОНТР-АНГЛ</button>
+              <button
+                type="button"
+                className={docTab === 'handover' ? 'on' : ''}
+                onClick={() => { setDocTab('handover'); setActive(null); }}
+                title={run.handoverFile || 'Передача справ'}
+              >ПД</button>
+            </div>
+
+            <span className="md-tb-sep" />
+
+            {/* --- Undo / Redo --- */}
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.undo?.()}
+              title="Відмінити (Ctrl+Z)" aria-label="Відмінити">↶</button>
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.redo?.()}
+              title="Повторити (Ctrl+Shift+Z)" aria-label="Повторити">↷</button>
+
+            <span className="md-tb-sep" />
+
+            {/* --- Font size on selected fragment --- */}
+            <select
+              className="md-tb-select"
+              title="Розмір шрифта (застосовується до виділеного тексту)"
+              aria-label="Розмір шрифта"
+              defaultValue="12"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => { editorApiRef.current?.setFontSize?.(Number(e.target.value)); }}>
+              {Array.from({ length: 25 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+
+            <span className="md-tb-sep" />
+
+            {/* --- Inline formatting --- */}
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.bold?.()}
+              title="Жирний (Ctrl+B)" aria-label="Жирний"><strong>B</strong></button>
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.italic?.()}
+              title="Курсив (Ctrl+I)" aria-label="Курсив"><em>I</em></button>
+
+            <span className="md-tb-sep" />
+
+            {/* --- Lists --- */}
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.bullet?.()}
+              title="Маркований список" aria-label="Маркований список">•</button>
+            <button type="button" className="md-tb-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editorApiRef.current?.ordered?.()}
+              title="Нумерований список" aria-label="Нумерований список">1.</button>
+
+            <span className="md-tb-sep" />
+
+            {/* --- Zoom --- */}
+            <button type="button" className="md-tb-btn"
+              onClick={() => setZoom(z => Math.max(70, z - 10))}
+              disabled={zoom <= 70}
+              title={t.zoomOut || 'Зменшити'} aria-label={t.zoomOut || 'Зменшити'}>
+              <Icon name="minus" size={14} />
+            </button>
+            <span className="md-tb-zoom" aria-live="polite">{zoom}%</span>
+            <button type="button" className="md-tb-btn"
+              onClick={() => setZoom(z => Math.min(150, z + 10))}
+              disabled={zoom >= 150}
+              title={t.zoomIn || 'Збільшити'} aria-label={t.zoomIn || 'Збільшити'}>
+              <Icon name="plus" size={14} />
+            </button>
+
+            <div className="md-tb-spacer" />
+
+            <span style={{ fontSize: 11.5, color: 'var(--text-3)', marginRight: 6 }}>
+              {docTab === 'handover'
+                ? (run.handoverFile || '')
+                : `${run.contractFile || ''} · ${docTab === 'ua' ? 'укр' : 'англ'}`}
+            </span>
+
+            {/* --- Download (preserve-original DOCX with accepted fixes) --- */}
+            <button type="button" className="btn btn-ghost btn-sm"
+              onClick={downloadEditedDocx}
+              title={t.exportDocxTitle || 'Скачати договір у форматі .docx (з прийнятими правками)'}
+              style={{ marginRight: 4 }}>
+              <Icon name="download" size={14} /> {t.exportDocx || 'Word (.docx)'}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm"
+              onClick={() => {
+                // Client-side markdown export of the currently visible tab.
+                const md = docTab === 'handover'
+                  ? editedHandoverMd
+                  : (docTab === 'en' ? editedContractEn : editedContractUa);
+                const base = docTab === 'handover'
+                  ? (run.handoverFile || 'handover')
+                  : `${run.contractFile || 'contract'}-${docTab}`;
+                downloadMd(md, base);
+              }}
+              title="Markdown (.md)">
+              <Icon name="doc" size={14} /> .md
+            </button>
+          </div>
+        }
+        docOverride={
+          <MilkdownEditor
+            key={docTab /* remount so Milkdown reloads the fresh markdown */}
+            filename={docTab === 'handover'
+              ? (run.handoverFile || t.cmpSlotHandover || 'Передача справ')
+              : `${run.contractFile || t.cmpSlotContract || 'Договір'} (${docTab === 'ua' ? 'укр' : 'англ'})`}
+            markdown={docTab === 'ua'
+              ? editedContractUa
+              : docTab === 'en' ? editedContractEn : editedHandoverMd}
+            onChange={docTab === 'ua'
+              ? setEditedContractUa
+              : docTab === 'en' ? setEditedContractEn : setEditedHandoverMd}
+            flashRange={flashRange}
+            onReady={(api) => { editorApiRef.current = api; }}
+            findings={(() => {
+              if (docTab === 'handover') return [];
+              return (adapted.findings || []).filter((f) => {
+                if (f.kind !== 'lang') return true;
+                const lang = String(f._language || '').toLowerCase();
+                if (docTab === 'ua') return lang !== 'en';
+                return lang !== 'ua' && lang !== 'ru';
+              });
+            })()}
+            onFlagClick={(id) => setActive(id)}
+          />
+        }
         panel={
           <AiPanel t={t} tab={tab} setTab={setTab}
             active={active} setActive={setActive}
             hovered={hovered} setHovered={setHovered}
             findingStatus={findingStatus}
-            onApply={(id) => setFindingStatus((s) => ({
-              ...s, [id]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'ai-button' },
-            }))}
+            onApply={(id) => {
+              const f = (adapted?.findings || []).find((x) => x.id === id);
+              if (f && f.suggest && f.suggest.to) {
+                // Try applying the fix to whichever language stream contains
+                // the `suggest.from` substring. Risk findings often quote
+                // English clauses; language findings carry `_language` so
+                // we can route them directly.
+                const preferLang = f.kind === 'lang'
+                  ? String(f._language || '').toLowerCase()
+                  : null;
+                const tryOrder = preferLang === 'ua' || preferLang === 'ru'
+                  ? ['ua', 'en']
+                  : preferLang === 'en' ? ['en', 'ua'] : ['ua', 'en'];
+                let applied = false;
+                for (const lang of tryOrder) {
+                  const cur = lang === 'ua' ? editedContractUa : editedContractEn;
+                  const { markdown: next, changedRange } = applyFixToMarkdown(cur, f);
+                  if (next !== cur) {
+                    if (lang === 'ua') setEditedContractUa(next);
+                    else setEditedContractEn(next);
+                    setFlashRange(changedRange || null);
+                    if (docTab !== lang) setDocTab(lang);
+                    applied = true;
+                    break;
+                  }
+                }
+                // If no substring match on either language, still mark the
+                // finding accepted (manual-edit workflow) so counsel isn't
+                // stuck with a phantom pending row.
+                if (!applied) setFlashRange(null);
+              }
+              setFindingStatus((s) => ({
+                ...s, [id]: { state: 'accepted', resolvedAt: Date.now(), resolvedVia: 'ai-button' },
+              }));
+            }}
             onReject={(id) => setFindingStatus((s) => ({
               ...s, [id]: { state: 'rejected', resolvedAt: Date.now(), resolvedVia: 'reject-button' },
             }))}
@@ -1057,7 +1377,18 @@ function ContractAnalysis({ t, incoming }) {
 function useReconcileHandoff(hasIncoming) {
   // null sentinel = handoff skipped or no key found. undefined = lookup in
   // flight (only happens when hasIncoming is false AND a key existed).
-  const [run, setRun] = useState(hasIncoming ? null : undefined);
+  //
+  // We peek the localStorage key synchronously on init (without popping) so
+  // a refresh with no pending re-open lands directly on `null` — otherwise
+  // the initial render would flash the analyzing overlay for one frame
+  // before the effect below cleared it.
+  const [run, setRun] = useState(() => {
+    if (hasIncoming) return null;
+    if (typeof localStorage === 'undefined') return null;
+    try {
+      return localStorage.getItem('lex.recon.open') ? undefined : null;
+    } catch (_e) { return null; }
+  });
   useEffect(() => {
     if (hasIncoming) { setRun(null); return; }
     const id = popReconOpenId();

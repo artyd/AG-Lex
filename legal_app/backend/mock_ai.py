@@ -233,10 +233,86 @@ def mock_reconciliation() -> dict[str, Any]:
             "footnote": "Зірочкою позначені обов'язкові поля для звіряння.",
         },
     }
+    # Block-3 language & style findings — A–I checklist. Chosen so e2e can
+    # exercise: an Apply-fix path (F: quotes replacement), a diagnostic-only
+    # finding (E: bilingual paragraph missing), and severity spread.
+    language_findings = [
+        {
+            "id": "lang-F-1",
+            "category": "F",
+            "severity": "should",
+            "language": "en",
+            "location": "п. 3.1 (Price)",
+            "quote": '"USD 1,280 per MT"',
+            "explanation": (
+                "У документі змішані стилі лапок: у контракті стоять прямі \"…\", "
+                "а решта тексту використовує англійські curly-quotes. Для типографської "
+                "консистентності треба або лишити прямі всюди, або звести до curly."
+            ),
+            "suggest": {
+                "from": '"USD 1,280 per MT"',
+                "to": "“USD 1,280 per MT”",
+            },
+            "bilingual": False,
+        },
+        {
+            "id": "lang-H-1",
+            "category": "H",
+            "severity": "must",
+            "language": "en",
+            "location": "п. 2.3 (Delivery basis)",
+            "quote": "FCA Mumbai per Incoterms 2020.",
+            "explanation": (
+                "Incoterms 2020 і Incoterms® 2020 — це різні написання. Офіційна редакція ICC "
+                "вимагає символа ®. Крім того, місто краще вказати офіційно як Mumbai (Bombay) або лише Mumbai."
+            ),
+            "suggest": {
+                "from": "FCA Mumbai per Incoterms 2020.",
+                "to": "FCA Mumbai per Incoterms® 2020.",
+            },
+            "bilingual": False,
+        },
+        {
+            "id": "lang-E-1",
+            "category": "E",
+            "severity": "should",
+            "language": "mixed",
+            "location": "п. 4.1 (Payment terms)",
+            "quote": "70% within 14 days of B/L",
+            "explanation": (
+                "UA-версія п. 4.1 говорить «протягом 14 днів з дати коносамента», що коректно; "
+                "англійська версія використовує B/L без розшифрування. Для узгодженості додати повне "
+                "слово Bill of Lading при першому згадуванні."
+            ),
+            "suggest": {
+                "from": "70% within 14 days of B/L",
+                "to": "70% within 14 days of Bill of Lading (B/L)",
+            },
+            "bilingual": True,
+        },
+        {
+            "id": "lang-A-1",
+            "category": "A",
+            "severity": "nice",
+            "language": "ua",
+            "location": "п. 4.1 (Оплата)",
+            "quote": "30% передоплата, 70% протягом 14 днів з дати коносамента.",
+            "explanation": (
+                "Після «передоплата» варто додати уточнення «(авансовий платіж)» — це формулювання "
+                "суду часто вимагають у справах про повернення коштів."
+            ),
+            "suggest": {
+                "from": "30% передоплата,",
+                "to": "30% передоплата (авансовий платіж),",
+            },
+            "bilingual": False,
+        },
+    ]
     return {
         "pair": pair,
         "rows": rows,
         "findings": findings,
+        "language_findings": language_findings,
         "docs": docs,
         "usage": {"input_tokens": 0, "output_tokens": 0},
         "model": "mock",
