@@ -50,6 +50,20 @@ ROW_STATUSES = ["ok", "mismatch", "flag", "absent", "positive"]
 SEVERITIES = ["must", "should", "nice", "flag"]
 VERIFIED_STATES = ["VERIFIED", "FLAG"]
 
+# Language & style categories from the counsel checklist (Блок 3 of
+# ContractCheckAgent / LanguageStyleCheckAgent):
+#   A — orthography / punctuation / grammar
+#   B — style & tone (neutral-business register)
+#   C — defined terms (consistent capitalisation & usage)
+#   D — numbering & cross-references
+#   E — EN ↔ UA/RU bilingual correspondence
+#   F — typography (quotes, non-breaking spaces, date & currency format)
+#   G — party addresses & requisites
+#   H — logistics terms (Incoterms, delivery dates, places)
+#   I — tables & specifications (units, number format)
+LANGUAGE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+LANGUAGE_SEVERITIES = ["must", "should", "nice"]
+
 
 # Part of a paragraph in the rendered contract/handover. ALWAYS an object so
 # the schema doesn't need `oneOf` (Anthropic strict mode rejects it). For
@@ -67,10 +81,46 @@ _PART_SCHEMA: dict[str, Any] = {
 }
 
 
+# Language finding shape. Distinct from `findings[]` (procurement / Table 3
+# comparison) so the FE can render two tabs — «Table 3 звірка» vs «Мова &
+# стиль» — without collapsing the domains. `suggest.from` / `suggest.to`
+# unlock in-editor Apply-fix on the contract text; `to` may stay empty when
+# the finding is diagnostic-only (e.g. bilingual paragraph missing on one
+# side). `language` badges the natural language of the quote so FE can pick
+# the right font/direction; `bilingual` marks category-E mismatches.
+_LANGUAGE_FINDING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "id", "category", "severity", "language", "location",
+        "quote", "explanation", "suggest", "bilingual",
+    ],
+    "properties": {
+        "id": {"type": "string"},
+        "category": {"type": "string", "enum": LANGUAGE_CATEGORIES},
+        "severity": {"type": "string", "enum": LANGUAGE_SEVERITIES},
+        "language": {"type": "string", "enum": ["en", "ua", "ru", "mixed", "unknown"]},
+        "location": {"type": "string"},
+        "quote": {"type": "string"},
+        "explanation": {"type": "string"},
+        "suggest": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["from", "to"],
+            "properties": {
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+            },
+        },
+        "bilingual": {"type": "boolean"},
+    },
+}
+
+
 RECONCILIATION_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["pair", "rows", "findings", "docs"],
+    "required": ["pair", "rows", "findings", "language_findings", "docs"],
     "properties": {
         "pair": {
             "type": "object",
@@ -118,6 +168,10 @@ RECONCILIATION_JSON_SCHEMA: dict[str, Any] = {
                     "rec": {"type": "string"},
                 },
             },
+        },
+        "language_findings": {
+            "type": "array",
+            "items": _LANGUAGE_FINDING_SCHEMA,
         },
         "docs": {
             "type": "object",
@@ -203,6 +257,9 @@ RECONCILIATION_PROMPT = """Ти — старший юрист, який звір
 2. Для кожної категорії склади один елемент `rows[]` із полями key, name (людська назва українською),
    t3 (значення з передачі справ), contract (значення з контракту), location (де саме в контракті),
    status, reason (1–2 речення, чому такий статус), rec (порада, що з цим робити; для status=ok можна порожньо).
+   ВАЖЛИВО: `contract` МАЄ бути ДОСЛІВНОЮ підстрокою з тексту контракту (без «…», без переформатування
+   пробілів чи лапок, без перекладу), щоб FE-редактор міг знайти цю фразу і підсвітити її. Якщо значення
+   у контракті відсутнє — постав status=flag або absent і залишай `contract` порожнім рядком.
 3. Статуси: ok — значення збігаються; mismatch — є в обох, але різні (напр. 25 kg vs 200 кг);
    flag — є в одному, відсутнє/неоднозначне в іншому; absent — немає в обох; positive — контракт додає
    корисне, чого в передачі справ не було.
@@ -231,10 +288,43 @@ RECONCILIATION_PROMPT = """Ти — старший юрист, який звір
    ключові значення → конкретні `cat` і `st`). Заповнюй усі поля; якщо у документі чогось немає —
    ставь порожній рядок або `star: false`.
 
+8. МОВНО-СТИЛІСТИЧНА ПЕРЕВІРКА КОНТРАКТУ (`language_findings[]`) — прочитай весь текст
+   контракту й побудуй окремий список знахідок за чек-листом A–I. Це саме той шар, який
+   у нас виконує LanguageStyleCheckAgent — він не змінює юридичного змісту, лише виправляє
+   форму. Категорії:
+   • A — орфографія / пунктуація / граматика (обидві мовні версії);
+   • B — стиль і тон (нейтрально-діловий регістр, відсутність розмовних зворотів);
+   • C — визначені терміни (однакова капіталізація й послідовне вживання);
+   • D — нумерація та крос-посилання (наприклад «відповідно до п. 5.2»);
+   • E — білінгвальна відповідність EN ↔ UA/RU (смислові розбіжності, пропущені абзаци);
+   • F — типографіка (лапки, нерозривні пробіли, формат дат DD.MM.YYYY, формат валюти);
+   • G — адреси та реквізити сторін (повнота, збіг найменування у тексті та підписах);
+   • H — логістичні терміни (правильне написання Incoterms, узгодженість місця поставки);
+   • I — таблиці та специфікації (одиниці виміру, формат чисел).
+   Для кожної знахідки заповни:
+   `id` — короткий унікальний рядок (напр. «lang-A-1»);
+   `category` — рівно один символ A–I;
+   `severity` — must (юридично значуще або блокує підписання) / should (важливо, але не блокує) /
+   nice (косметичне покращення);
+   `language` — «en», «ua», «ru», «mixed» (обидві версії одразу) або «unknown»;
+   `location` — де саме в контракті (пункт, підпункт, розділ підписів тощо);
+   `quote` — точна цитата з контракту (стисла, до 200 символів);
+   `explanation` — 1–2 речення, у чому саме проблема;
+   `suggest.from` — рядок, який треба замінити (має буквально зустрічатися в контракті, щоб
+   FE-редактор міг зробити Apply-fix); `suggest.to` — рекомендований варіант. Якщо знахідка
+   діагностична (наприклад «в UA-версії відсутній абзац»), лишай `to` порожнім рядком.
+   `bilingual` — true, якщо знахідка з категорії E (розбіжність між мовами); інакше false.
+   Категорія E — лише коли ти впевнений: якщо документ одномовний, категорія E не застосовується.
+   Не вигадуй помилок «про запас»; якщо помилок немає — поверни `language_findings: []`.
+
 ВИМОГИ ДО ТОНУ:
 - Українською, без канцеляризму, як старший практик.
 - Конкретні цифри й посилання. Якщо чогось не видно з тексту — пиши status=flag і пояснюй, що бракує.
 - Не дублюй знахідок. Не вигадуй законодавчих посилань — їх давати не потрібно у цьому форматі.
+- ЗОЛОТЕ ПРАВИЛО ДЛЯ ПІДСВІТКИ:
+  • `rows[].contract` — ДОСЛІВНА підстрока контракту (без «…», без переформатування),
+  • `language_findings[].suggest.from` — ДОСЛІВНА підстрока контракту (те саме правило),
+  інакше Apply-fix і інлайн-підсвітка у редакторі не спрацюють.
 - Поверни СТРОГО JSON за наданою схемою.
 """
 
@@ -301,6 +391,10 @@ def reconcile(
     pair = _normalise_pair(parsed.get("pair") or {})
     rows = [_normalise_row(r) for r in parsed.get("rows") or []]
     findings = [_normalise_finding(f) for f in parsed.get("findings") or []]
+    language_findings = [
+        _normalise_language_finding(f)
+        for f in parsed.get("language_findings") or []
+    ]
     docs = _normalise_docs(parsed.get("docs") or {})
 
     usage = response.usage
@@ -308,6 +402,7 @@ def reconcile(
         "pair": pair,
         "rows": rows,
         "findings": findings,
+        "language_findings": language_findings,
         "docs": docs,
         "usage": {
             "input_tokens": usage.input_tokens,
@@ -366,6 +461,37 @@ def _normalise_finding(f: dict) -> dict:
         "location": f.get("location") or "",
         "issue": f.get("issue") or "",
         "rec": f.get("rec") or "",
+    }
+
+
+def _normalise_language_finding(f: dict) -> dict:
+    """Clamp language-check finding to safe defaults so downstream code (adapter,
+    Milkdown highlight regex) never crashes on a malformed Claude response."""
+    category = f.get("category") or "A"
+    if category not in LANGUAGE_CATEGORIES:
+        category = "A"
+    severity = f.get("severity") or "should"
+    if severity not in LANGUAGE_SEVERITIES:
+        severity = "should"
+    language = f.get("language") or "unknown"
+    if language not in {"en", "ua", "ru", "mixed", "unknown"}:
+        language = "unknown"
+    suggest_raw = f.get("suggest") or {}
+    if not isinstance(suggest_raw, dict):
+        suggest_raw = {}
+    return {
+        "id": f.get("id") or "lang-unknown",
+        "category": category,
+        "severity": severity,
+        "language": language,
+        "location": f.get("location") or "",
+        "quote": f.get("quote") or "",
+        "explanation": f.get("explanation") or "",
+        "suggest": {
+            "from": suggest_raw.get("from") or "",
+            "to": suggest_raw.get("to") or "",
+        },
+        "bilingual": bool(f.get("bilingual")),
     }
 
 

@@ -225,6 +225,32 @@ export const api = {
   reconciliations: entity('reconciliations'),
   contracts: entity('contracts'),
   reconcile: (formData) => multipart('/api/reconcile', formData),
+  /* POST /api/reconciliations/{id}/contract-edited.docx — stream the source
+   * DOCX with accepted fixes applied at the run level. Body carries the
+   * `replacements: [{from, to}]` list; the endpoint returns the .docx bytes
+   * directly (not JSON), so the caller wraps the response and triggers a
+   * browser download. Falls back to /api/export/docx (markdown rebuild) when
+   * the reconciliation has no original blob (PDF-sourced contracts). */
+  downloadReconciliationDocx: async (reconciliationId, replacements) => {
+    const url = `/api/reconciliations/${encodeURIComponent(reconciliationId)}/contract-edited.docx`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replacements: replacements || [] }),
+    });
+    if (r.status === 401) lxSessionExpired();
+    if (!r.ok) {
+      let detail = `${r.status} ${r.statusText}`;
+      try {
+        const body = await r.json();
+        if (body && body.detail) {
+          detail = typeof body.detail === 'string' ? body.detail : (body.detail.detail || detail);
+        }
+      } catch (_e) { /* non-JSON */ }
+      throw new ApiError(detail, { status: r.status });
+    }
+    return r.blob();
+  },
   upload,
   analyzeContract,
   documents,

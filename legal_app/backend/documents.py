@@ -62,11 +62,123 @@ def pdf_to_markdown(path: str | Path) -> str:
 
 
 def docx_to_markdown(path: str | Path) -> str:
-    """Mammoth renders Word styling (headings, lists, tables) into Markdown."""
+    """DOCX → GFM markdown that preserves tables.
+
+    Mammoth's `convert_to_markdown` drops table structure entirely (walks the
+    tree as if it were flat paragraphs), so a bilingual DOCX like the sample
+    contracts arrives as one wall of prose — no `| col | col |` rows at all.
+    We instead ask mammoth for HTML (which keeps `<table>/<tr>/<td>` intact)
+    and hand that to `markdownify`, which emits real GFM pipe tables. Milkdown
+    Crepe (Table feature is on) renders them as editable table cells.
+
+    Falls back to mammoth's markdown converter if `markdownify` isn't
+    importable — keeps the module usable in dev environments that haven't
+    installed the extra dep yet. Result is the same GFM ATX-heading style,
+    `-` bullets, `**bold**` — matches what the Milkdown editor round-trips.
+    """
     import mammoth
     with open(str(path), "rb") as f:
-        result = mammoth.convert_to_markdown(f)
-    return result.value
+        html = mammoth.convert_to_html(f).value
+    try:
+        from markdownify import markdownify as _to_md
+    except ImportError:
+        with open(str(path), "rb") as f:
+            return mammoth.convert_to_markdown(f).value
+    return _to_md(
+        html,
+        heading_style="ATX",
+        bullets="-",
+        strong_em_symbol="*",
+    )
+
+
+def docx_to_bilingual_markdown(path: str | Path) -> dict[str, str]:
+    """Split a bilingual DOCX into per-language markdown streams.
+
+    AG Lex contracts are typically two-column tables — English on the left,
+    Ukrainian on the right (or the other way round). Rendering the raw
+    `| col | col |` GFM in the editor makes the text hard to read: every
+    line becomes a wide pipe row. Instead we walk the mammoth HTML tree,
+    extract each row's two cells, and emit two parallel markdown streams
+    the counsel can read + edit as ordinary prose.
+
+    Returns `{en, ua, full}`:
+      - `en`  — left-column stream (prose markdown, no tables)
+      - `ua`  — right-column stream (prose markdown, no tables)
+      - `full`— the current GFM output from `docx_to_markdown` (kept so the
+                downstream Claude call still sees the bilingual structure
+                and can flag cross-language mismatches).
+
+    Fallback: when `markdownify` / BeautifulSoup aren't importable, or when
+    the DOCX has no 2-column tables at all (single-language contract),
+    `en` and `ua` both fall back to `full` so the editor still has *something*
+    to render.
+
+    NOTE on column ordering: we currently assume col-0 is English and col-1
+    is Ukrainian. For the KASYAP/PRIME FORCE sample this holds; if a future
+    template flips them, we can add a heuristic (langdetect) at ingest time.
+    """
+    full = docx_to_markdown(path)
+    try:
+        import mammoth
+        from bs4 import BeautifulSoup
+        from markdownify import markdownify as _to_md
+    except ImportError:
+        return {"en": full, "ua": full, "full": full}
+
+    with open(str(path), "rb") as f:
+        html = mammoth.convert_to_html(f).value
+    soup = BeautifulSoup(html, "html.parser")
+
+    col0_parts: list[str] = []
+    col1_parts: list[str] = []
+    # Paragraphs OUTSIDE tables (headings, signature blocks in some templates).
+    # We stitch them into both streams so neither language loses context.
+    shared_parts: list[str] = []
+
+    # `soup.body` is None because mammoth emits a bare-fragment HTML — walk
+    # the top-level nodes directly.
+    top = list(soup.children)
+    for node in top:
+        name = getattr(node, "name", None)
+        if not name:
+            continue
+        if name == "table":
+            for row in node.find_all("tr", recursive=False):
+                cells = row.find_all(["td", "th"], recursive=False)
+                if len(cells) >= 2:
+                    col0_parts.append("".join(str(c) for c in cells[0].contents))
+                    col1_parts.append("".join(str(c) for c in cells[1].contents))
+                elif len(cells) == 1:
+                    single = "".join(str(c) for c in cells[0].contents)
+                    col0_parts.append(single)
+                    col1_parts.append(single)
+        else:
+            shared_parts.append(str(node))
+
+    if not col0_parts and not col1_parts:
+        # No bilingual tables — likely a monolingual contract. Fall back so
+        # the editor renders the full prose in both tabs.
+        return {"en": full, "ua": full, "full": full}
+
+    def _stream_to_md(cell_parts: list[str]) -> str:
+        # Interleave: shared paragraphs go BEFORE the table body. The typical
+        # bilingual DOCX has almost nothing outside the table (page numbers
+        # at most), so ordering only matters for signature blocks — which
+        # usually live in shared_parts and should appear at the top.
+        html_join = "\n".join(shared_parts + cell_parts)
+        return _to_md(
+            html_join,
+            heading_style="ATX",
+            bullets="-",
+            strong_em_symbol="*",
+        )
+
+    return {
+        "en": _stream_to_md(col0_parts),
+        "ua": _stream_to_md(col1_parts),
+        "full": full,
+    }
 
 
 def xlsx_to_markdown(path: str | Path) -> str:

@@ -54,8 +54,12 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await hubCompare.click();
 
   // Pair modal has two square slots — distinct file inputs by accept.
-  const contractInput = page.locator('.modal input[type="file"][accept=".pdf,.docx"]').first();
-  const handoverInput = page.locator('.modal input[type="file"][accept=".pdf,.docx,.xlsx"]').first();
+  // The contract input is the only one that lacks .xlsx; the handover input
+  // always includes it. Match on the presence/absence of .xlsx so this
+  // survives adding new extensions (like .doc, added in the language-check
+  // feature).
+  const contractInput = page.locator('.modal input[type="file"][accept*=".docx"]:not([accept*=".xlsx"])').first();
+  const handoverInput = page.locator('.modal input[type="file"][accept*=".xlsx"]').first();
   await contractInput.setInputFiles(FIXTURES.contractPair);
   await handoverInput.setInputFiles(FIXTURES.handover);
 
@@ -74,6 +78,20 @@ test('upload contract + handover pair → see reconciliation result', async ({ p
   await expect(page.locator('.md-doc').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.analysis-tabs')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('.finding').first()).toBeVisible({ timeout: 30_000 });
+
+  // Language & style (A–I) findings from mock_reconciliation surface as
+  // extra cards + the domain toggle (Table 3 / Мова & стиль) appears.
+  // Mock fixture emits 4 language findings across A/E/F/H.
+  await expect(page.getByRole('button', { name: /Мова.*стиль/ })).toBeVisible();
+  await expect(page.locator('.finding').filter({ hasText: /\[F\]|\[H\]|\[E\]|\[A\]/ }).first())
+    .toBeVisible();
+
+  // Preserve-original DOCX button lives in the analysis bar. We don't
+  // trigger the download here (Playwright's download event would race the
+  // 404 from mock mode — the DB row has no `contract_original_blob` since
+  // AGLEX_MOCK_AI short-circuits the ingest pipeline), we only check the
+  // button rendered so future regressions are caught.
+  await expect(page.getByRole('button', { name: /Word.*\.docx/ })).toBeVisible();
 });
 
 test('Litigation portfolio renders KPI row, filters and an empty state on a clean DB', async ({ page }) => {

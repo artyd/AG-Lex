@@ -84,6 +84,18 @@ function AppShell() {
     const stored = localStorage.getItem('lx_route');
     if (!stored) return 'dashboard';
     if (DEPRECATED_ROUTES.has(stored)) return DEPRECATED_ROUTES.get(stored);
+    // The analyze route needs in-memory state (upload payload / reconcile run)
+    // to render anything meaningful. On a hard refresh that state is gone —
+    // the only way we can still hydrate is if Library stashed a run id in
+    // `lex.recon.open`. Without that fallback, restoring 'analyze' shows the
+    // "analyzing" overlay for nothing. Send the user to the dashboard so
+    // they see a real page instead of a spurious loading spinner.
+    if (stored === 'analyze') {
+      try {
+        const reconKey = localStorage.getItem('lex.recon.open');
+        if (!reconKey) return 'dashboard';
+      } catch (_e) { return 'dashboard'; }
+    }
     return stored;
   });
   const exitGuard = useExitGuard(isProcessing);
@@ -546,8 +558,8 @@ function AppShell() {
               : <><Icon name="scan" size={15} /> {L.cmpRun}</>}
           </button>
         </>}>
-        <input ref={pairContractRef} type="file" accept=".pdf,.docx" style={{ display: 'none' }} onChange={onPairContractChange} />
-        <input ref={pairHandoverRef} type="file" accept=".pdf,.docx,.xlsx" style={{ display: 'none' }} onChange={onPairHandoverChange} />
+        <input ref={pairContractRef} type="file" accept=".pdf,.docx,.doc" style={{ display: 'none' }} onChange={onPairContractChange} />
+        <input ref={pairHandoverRef} type="file" accept=".pdf,.docx,.doc,.xlsx" style={{ display: 'none' }} onChange={onPairHandoverChange} />
         <div className="pair-slots">
           {[
             { file: pairContractFile, setFile: setPairContractFile, ref: pairContractRef,

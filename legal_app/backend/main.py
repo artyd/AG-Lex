@@ -3,6 +3,7 @@
 API routes are all defined above the SPA static mount so they win the route
 match against `/{full_path:path}`.
 """
+import io
 import os
 import tempfile
 from contextlib import asynccontextmanager
@@ -49,7 +50,10 @@ from .models import (
     migrate_drafts,
     migrate_matters,
     migrate_reconciliations,
+    migrate_reconciliations_bilingual,
     migrate_reconciliations_display_pdf,
+    migrate_reconciliations_language_findings,
+    migrate_reconciliations_original_blob,
     migrate_users,
 )
 from .pipeline import analyze
@@ -98,6 +102,9 @@ async def lifespan(app: FastAPI):
         migrate_matters(conn)
         migrate_reconciliations(conn)
         migrate_reconciliations_display_pdf(conn)
+        migrate_reconciliations_language_findings(conn)
+        migrate_reconciliations_original_blob(conn)
+        migrate_reconciliations_bilingual(conn)
         migrate_contracts_display_pdf(conn)
         auth_module.seed_test_user(conn)
         auth_module.seed_viktoria_user(conn)
@@ -246,11 +253,99 @@ for _entity in ALL_ENTITIES:
 # 25 MB cap on uploaded contracts — large enough for typical PDFs, small enough
 # to keep a careless mis-upload from filling /tmp.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-SUPPORTED_EXTS = {".pdf", ".docx"}
-# Reconciliation accepts the contract in .pdf/.docx and the handover in
-# .pdf/.docx/.xlsx (procurement often hands over Table 3 as Excel).
-RECONCILE_CONTRACT_EXTS = {".pdf", ".docx"}
-RECONCILE_HANDOVER_EXTS = {".pdf", ".docx", ".xlsx"}
+SUPPORTED_EXTS = {".pdf", ".docx", ".doc"}
+# Reconciliation accepts the contract in .pdf/.docx/.doc and the handover in
+# .pdf/.docx/.doc/.xlsx (procurement often hands over Table 3 as Excel, and
+# counterparties occasionally still ship legacy Word 97 files).
+RECONCILE_CONTRACT_EXTS = {".pdf", ".docx", ".doc"}
+RECONCILE_HANDOVER_EXTS = {".pdf", ".docx", ".doc", ".xlsx"}
+
+
+def _normalize_doc_to_docx(raw_bytes: bytes, *, role: str) -> bytes:
+    """Convert legacy .doc bytes → .docx via headless LibreOffice.
+
+    Reuses the same soffice binary + fallback lookup that drives the
+    display-PDF pipeline (see documents.to_display_pdf). We don't share the
+    exact function because that one always emits PDF; here we need .docx so
+    mammoth + python-docx can parse it downstream. Raises HTTPException(415)
+    on any failure so the FE surfaces a real error instead of silently
+    treating the .doc as an empty markdown.
+    """
+    import shutil as _shutil
+    import subprocess as _subprocess
+    import sys as _sys
+    import tempfile as _tempfile
+    from .config import get_settings as _get_settings
+
+    _settings = _get_settings()
+    soffice = _settings.SOFFICE_PATH or "soffice"
+    resolved = _shutil.which(soffice)
+    if not resolved:
+        for cand in (
+            "/usr/bin/soffice",
+            "/usr/lib/libreoffice/program/soffice",
+            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ):
+            hit = _shutil.which(cand)
+            if hit:
+                resolved = hit
+                break
+    if not resolved:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Legacy .doc {role} file requires LibreOffice on the server for "
+                f"conversion to .docx, but soffice was not found. Please re-upload "
+                f"as .docx or install LibreOffice."
+            ),
+        )
+    workdir = _tempfile.mkdtemp(prefix=f"aglex_docx_{role}_")
+    user_install = _tempfile.mkdtemp(prefix="aglex_lo_user_")
+    src_path = Path(workdir) / "input.doc"
+    src_path.write_bytes(raw_bytes)
+    try:
+        proc = _subprocess.run(
+            [
+                resolved, "--headless", "--nologo", "--nofirststartwizard",
+                "--nolockcheck", f"-env:UserInstallation=file://{user_install}",
+                "--convert-to", "docx", "--outdir", workdir, str(src_path),
+            ],
+            timeout=_settings.DISPLAY_PDF_TIMEOUT,
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="replace")[-240:]
+            print(
+                f"[_normalize_doc_to_docx] soffice exit {proc.returncode} for {role}: {tail!r}",
+                file=_sys.stderr, flush=True,
+            )
+            raise HTTPException(
+                status_code=415,
+                detail=f"Could not convert legacy .doc {role} file to .docx.",
+            )
+        produced = Path(workdir) / "input.docx"
+        if not produced.is_file():
+            hits = list(Path(workdir).glob("*.docx"))
+            if hits:
+                produced = hits[0]
+        if not produced.is_file():
+            raise HTTPException(
+                status_code=415,
+                detail=f"LibreOffice produced no .docx output for {role} file.",
+            )
+        return produced.read_bytes()
+    except _subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Conversion of legacy .doc {role} file timed out.",
+        )
+    finally:
+        import shutil as _sh
+        _sh.rmtree(workdir, ignore_errors=True)
+        _sh.rmtree(user_install, ignore_errors=True)
 
 
 @app.get("/health")
@@ -623,16 +718,24 @@ def analyze_contract_endpoint(
 
 async def _ingest_upload(
     file: UploadFile, allowed: set[str], role: str,
-) -> tuple[str, str, bytes | None, dict | None, str]:
+) -> tuple[str, str, bytes | None, dict | None, str, bytes, str]:
     """Reusable: validate + persist to a temp file + convert to MD, HTML, PDF.
 
-    Returns (markdown, html, display_pdf_bytes, display_pdf_error, original_filename).
+    Returns
+        (markdown, html, display_pdf_bytes, display_pdf_error, original_filename,
+         original_bytes, original_suffix)
+
     Markdown feeds Claude; HTML is the source-side fallback; the display PDF
-    is what the FE renders pixel-perfect via PDF.js. The PDF is best-effort:
-    when soffice is missing or crashes we log, return None for the bytes, AND
-    populate display_pdf_error = {"kind": "...", "message": "..."} so the
-    caller can persist the reason — that lets the 404 from the display
-    endpoint tell the user *why* without SSH/journal access.
+    is what the FE renders pixel-perfect via PDF.js. `original_bytes` and
+    `original_suffix` are the post-normalization DOCX (see the `.doc → .docx`
+    soffice pass below) — persisted so the "download with corrections" flow
+    can walk the original DOCX with python-docx and keep fonts/tables intact.
+
+    The PDF is best-effort: when soffice is missing or crashes we log, return
+    None for the bytes, AND populate display_pdf_error = {"kind": "...",
+    "message": "..."} so the caller can persist the reason — that lets the
+    404 from the display endpoint tell the user *why* without SSH/journal
+    access.
 
     Raises HTTPException on any validation failure of the input file. The
     temp file is deleted before returning.
@@ -651,6 +754,14 @@ async def _ingest_upload(
             status_code=413,
             detail=f"{role.title()} file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
         )
+    # Legacy .doc → .docx normalization. mammoth + python-docx don't parse
+    # the 1997-era binary Word format; soffice converts it in-place (already
+    # required for display PDFs, so no new runtime dep). We swap the temp
+    # file, the suffix, and raw_bytes so every downstream stage sees a
+    # regular .docx — including the run-level `contract_original_blob`.
+    if suffix == ".doc":
+        raw_bytes = _normalize_doc_to_docx(raw_bytes, role=role)
+        suffix = ".docx"
     fd, tmp_str = tempfile.mkstemp(suffix=suffix, prefix=f"aglex_{role}_")
     os.close(fd)
     tmp_path = Path(tmp_str)
@@ -698,7 +809,10 @@ async def _ingest_upload(
                 )
                 display_pdf = None
                 display_pdf_error = {"kind": kind, "message": str(e)}
-        return markdown, html, display_pdf, display_pdf_error, file.filename or ""
+        return (
+            markdown, html, display_pdf, display_pdf_error,
+            file.filename or "", raw_bytes, suffix,
+        )
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -716,12 +830,56 @@ async def reconcile_endpoint(
     and handed to Claude with the reconciliation schema. The result is
     persisted to `reconciliations` so it shows up in Library/History.
     """
-    contract_md, contract_html, contract_pdf, contract_pdf_err, contract_name = await _ingest_upload(
-        contract_file, RECONCILE_CONTRACT_EXTS, "contract",
-    )
-    handover_md, handover_html, handover_pdf, handover_pdf_err, handover_name = await _ingest_upload(
-        handover_file, RECONCILE_HANDOVER_EXTS, "handover",
-    )
+    (
+        contract_md, contract_html, contract_pdf, contract_pdf_err,
+        contract_name, contract_original_bytes, contract_original_suffix,
+    ) = await _ingest_upload(contract_file, RECONCILE_CONTRACT_EXTS, "contract")
+    (
+        handover_md, handover_html, handover_pdf, handover_pdf_err,
+        handover_name, _handover_original_bytes, _handover_original_suffix,
+    ) = await _ingest_upload(handover_file, RECONCILE_HANDOVER_EXTS, "handover")
+    # Bilingual split for the contract: mammoth HTML → BeautifulSoup → col-0/1.
+    # Best-effort — a monolingual contract or a non-DOCX source falls back to
+    # `full` for both streams so the editor still has content on each tab.
+    import sys as _sys
+    import traceback as _tb
+    contract_md_en = None
+    contract_md_ua = None
+    if contract_original_suffix == ".docx" and contract_original_bytes:
+        import tempfile as _tempfile2
+        _fd, _tmp = _tempfile2.mkstemp(suffix=".docx", prefix="aglex_bili_")
+        os.close(_fd)
+        _tmp_path = Path(_tmp)
+        try:
+            _tmp_path.write_bytes(contract_original_bytes)
+            from .documents import docx_to_bilingual_markdown as _bili
+            _split = _bili(_tmp_path)
+            contract_md_en = _split.get("en") or None
+            contract_md_ua = _split.get("ua") or None
+            print(
+                f"[/api/reconcile] bilingual split OK: en={len(contract_md_en or '')}b "
+                f"ua={len(contract_md_ua or '')}b full={len(_split.get('full') or '')}b",
+                file=_sys.stderr, flush=True,
+            )
+        except Exception as _e:  # noqa: BLE001
+            print(
+                f"[/api/reconcile] bilingual split failed: {_e!r}\n{_tb.format_exc()}",
+                file=_sys.stderr, flush=True,
+            )
+        finally:
+            _tmp_path.unlink(missing_ok=True)
+    else:
+        print(
+            f"[/api/reconcile] bilingual split SKIPPED — suffix={contract_original_suffix!r} "
+            f"bytes={len(contract_original_bytes) if contract_original_bytes else 0}",
+            file=_sys.stderr, flush=True,
+        )
+    # Belt-and-suspenders: never persist NULLs. If the split didn't produce a
+    # stream (mono-lingual contract, PDF input, silent failure), fall back to
+    # the full mammoth markdown so both language tabs still have something to
+    # render — even if it's identical to the full doc.
+    contract_md_en = contract_md_en or contract_md
+    contract_md_ua = contract_md_ua or contract_md
 
     try:
         result = reconciliation_module.reconcile(contract_md, handover_md)
@@ -731,6 +889,7 @@ async def reconcile_endpoint(
     pair = result["pair"]
     rows = result["rows"]
     findings = result["findings"]
+    language_findings = result.get("language_findings") or []
     docs = result["docs"]
     verdict, must_count, should_count = reconciliation_module.compute_verdict(findings)
 
@@ -747,6 +906,7 @@ async def reconcile_endpoint(
         "pair": pair,
         "rows": rows,
         "findings": findings,
+        "languageFindings": language_findings,
         "docs": docs,
         # Phase 3.3: ship the raw source back so the FE can render the
         # original look (tables, layout) instead of Claude's compressed docs.
@@ -754,6 +914,8 @@ async def reconcile_endpoint(
         # token-cheap version and a fallback for older parsers.
         "contractMarkdown": contract_md,
         "handoverMarkdown": handover_md,
+        "contractMarkdownEn": contract_md_en,
+        "contractMarkdownUa": contract_md_ua,
         "contractHtml": contract_html,
         "handoverHtml": handover_html,
         "createdAt": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -782,6 +944,18 @@ async def reconcile_endpoint(
             ),
         )
         conn.commit()
+    # Persist the (post-normalization) contract bytes so /download-edited.docx
+    # can open the real source with python-docx instead of rebuilding from
+    # markdown. Only DOCX gets stored — PDF contracts can't be edited in
+    # place (that path falls back to the export_routes markdown rebuild).
+    if contract_original_suffix == ".docx" and contract_original_bytes:
+        conn.execute(
+            "UPDATE reconciliations "
+            "SET contract_original_blob = ?, contract_original_ext = ? "
+            "WHERE id = ?",
+            (contract_original_bytes, contract_original_suffix, inserted["id"]),
+        )
+        conn.commit()
         print(
             f"[/api/reconcile] {inserted['id']}: BLOB saved — "
             f"contract={len(contract_pdf) if contract_pdf else 0} bytes "
@@ -806,6 +980,12 @@ async def reconcile_endpoint(
     inserted["handoverDisplayPdfUrl"] = (
         f"/api/reconciliations/{inserted['id']}/handover-display.pdf"
     )
+    if contract_original_suffix == ".docx" and contract_original_bytes:
+        # The FE wires the "Download DOCX" button to this URL when a blob
+        # exists; falls back to /api/export/docx (markdown rebuild) otherwise.
+        inserted["contractOriginalDocxUrl"] = (
+            f"/api/reconciliations/{inserted['id']}/contract-edited.docx"
+        )
     return inserted
 
 
@@ -902,6 +1082,143 @@ def reconciliation_handover_display_pdf(
     return _stream_display_pdf(
         conn, "reconciliations", "handover_display_pdf", rid,
         err_col="handover_display_pdf_error",
+    )
+
+
+class _EditedDocxRequest(BaseModel):
+    # Payload from the FE download button: the applied fixes as a list of
+    # verbatim `from`/`to` pairs. We walk the original DOCX with python-docx
+    # and replace `from` → `to` at run level so fonts, tables, and the
+    # signature block survive the round-trip. Empty replacements[] just
+    # returns the pristine original — useful as a "download source" button.
+    replacements: list[dict] = Field(
+        default_factory=list,
+        description="Applied fixes: [{from: str, to: str}, ...]",
+        max_length=500,
+    )
+
+
+def _apply_docx_replacements(
+    docx_bytes: bytes, replacements: list[dict],
+) -> bytes:
+    """Return a copy of `docx_bytes` with each `from` → `to` substituted.
+
+    Runs are the smallest formatted unit in python-docx; when the match sits
+    inside a single run, we edit `run.text` in place and every font/size/bold
+    attribute survives verbatim. When it straddles run boundaries (Word
+    frequently splits paragraphs at every autocorrect / spellcheck point) we
+    fall back to a paragraph-level rewrite: concatenate all runs, replace,
+    then overwrite run[0] with the fixed text and clear the tail. That loses
+    intra-paragraph run formatting for the replaced text but keeps the
+    paragraph's own alignment/style — good enough for typical A-I fixes
+    (spelling, quotes, unit formatting) and never damages other paragraphs.
+    Tables walk the same replacement logic per cell.
+    """
+    from docx import Document as _Document
+
+    doc = _Document(io.BytesIO(docx_bytes))
+
+    def _rewrite_paragraph(p) -> None:
+        for rep in replacements:
+            frm = (rep.get("from") or "").strip()
+            to = rep.get("to") or ""
+            if not frm:
+                continue
+            # Try single-run replacement first — preserves per-run formatting.
+            hit_single = False
+            for run in p.runs:
+                if frm in run.text:
+                    run.text = run.text.replace(frm, to)
+                    hit_single = True
+                    break
+            if hit_single:
+                continue
+            # Cross-run fallback: rewrite the whole paragraph.
+            joined = "".join(run.text for run in p.runs)
+            if frm not in joined:
+                continue
+            new_joined = joined.replace(frm, to)
+            if p.runs:
+                p.runs[0].text = new_joined
+                for extra in p.runs[1:]:
+                    extra.text = ""
+
+    for p in doc.paragraphs:
+        _rewrite_paragraph(p)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    _rewrite_paragraph(p)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@app.post(
+    "/api/reconciliations/{rid}/contract-edited.docx",
+    dependencies=[Depends(current_user)],
+    include_in_schema=False,
+)
+def reconciliation_contract_edited_docx(
+    rid: str,
+    body: _EditedDocxRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> Response:
+    """Stream the source DOCX with accepted fixes applied.
+
+    Falls back to 404 when the row lacks an original blob (PDF-sourced
+    contracts or legacy rows). The FE checks for `contractOriginalDocxUrl`
+    on the reconcile payload and picks between this endpoint and the
+    /api/export/docx markdown rebuild.
+    """
+    row = conn.execute(
+        "SELECT contract_original_blob, contract_original_ext, contract_file "
+        "FROM reconciliations WHERE id = ?",
+        (rid,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="reconciliation not found")
+    blob, ext, contract_name = row[0], row[1], row[2]
+    if not blob:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": "original DOCX not stored for this reconciliation",
+                "kind": "no-original",
+            },
+        )
+    try:
+        edited = _apply_docx_replacements(bytes(blob), body.replacements)
+    except Exception as e:
+        import sys as _sys
+        print(
+            f"[contract-edited.docx] {rid}: replacement failed: {e!r}",
+            file=_sys.stderr, flush=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not apply corrections to source DOCX: {e}",
+        ) from e
+    base = Path(contract_name or "contract").stem or "contract"
+    filename = f"{base}-edited.docx"
+    from urllib.parse import quote as _url_quote
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "contract-edited.docx"
+    rfc5987 = _url_quote(filename, safe="")
+    return Response(
+        content=edited,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_fallback}"; '
+                f"filename*=UTF-8''{rfc5987}"
+            ),
+            "Content-Length": str(len(edited)),
+            "Cache-Control": "no-store",
+        },
     )
 
 

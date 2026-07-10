@@ -15,6 +15,71 @@
 
 const SEV_TO_LEVEL = { must: 'high', should: 'med', nice: 'low', flag: 'info' };
 
+// Human labels for the A–I categories from LanguageStyleCheckAgent. Kept
+// here (not in a translations file) because the labels are legal-workflow
+// specific and shouldn't be translated per locale — the counsel checklist
+// itself is Ukrainian.
+const LANG_CATEGORY_LABEL = {
+  A: 'Орфографія, пунктуація, граматика',
+  B: 'Стиль і тон',
+  C: 'Визначені терміни',
+  D: 'Нумерація і крос-посилання',
+  E: 'Білінгвальна відповідність EN ↔ UA/RU',
+  F: 'Типографіка',
+  G: 'Адреси і реквізити сторін',
+  H: 'Логістичні терміни (Incoterms)',
+  I: 'Таблиці і специфікації',
+};
+
+/** Fold reconciliation.language_findings[] into the analyze-shaped finding
+ *  list so ContractAnalysis's FindingCard + Apply-fix work verbatim.
+ *
+ *  Mapping:
+ *   - id       ← `lang-<A-I>-<seq>` from Claude; falls back to a synthesized
+ *                 id so React lists have a stable key.
+ *   - level    ← must→high, should→med, nice→low (same as SEV_TO_LEVEL).
+ *   - clause   ← finding.location, e.g. «п. 3.1 (Price)».
+ *   - title    ← the checklist category label (A–I), so the FindingCard
+ *                 header immediately signals which shelf of the checklist
+ *                 this belongs to. The Claude explanation goes in desc.
+ *   - suggest  ← the real `{from, to}` — non-empty `to` means the Apply-fix
+ *                 button in the editor toolbar can perform the replacement.
+ *   - kind='lang' + `_category`, `_language`, `_bilingual` — surfaced to the
+ *                 UI so the split-tab view can filter and badge them.
+ */
+export function languageToFindings(run) {
+  const list = (run && run.languageFindings) || (run && run.language_findings) || [];
+  return list.map((f, idx) => {
+    const category = String(f.category || 'A').toUpperCase();
+    const label = LANG_CATEGORY_LABEL[category] || 'Мова та стиль';
+    let suggestFrom = (f.suggest && f.suggest.from) || f.quote || '';
+    const suggestTo = (f.suggest && f.suggest.to) || '';
+    // Same validation as risk findings — if the phrase Claude quoted doesn't
+    // literally appear anywhere in the contract streams, painting a phantom
+    // highlight would only mislead. Prefer null so the FindingCard speaks
+    // for itself.
+    if (suggestFrom && !_existsInAnyStream(suggestFrom.trim(), run)) {
+      suggestFrom = '';
+    }
+    return {
+      id: String(f.id || `lang-${category}-${idx}`),
+      kind: 'lang',
+      level: SEV_TO_LEVEL[f.severity] || 'med',
+      clause: f.location || '',
+      weight: 1,
+      title: `[${category}] ${label}`,
+      desc: f.explanation || '',
+      severity: f.severity || 'should',
+      law: null,
+      suggest: suggestFrom ? { from: suggestFrom, to: suggestTo } : null,
+      _category: category,
+      _language: f.language || 'unknown',
+      _bilingual: Boolean(f.bilingual),
+      _source: 'Мова та стиль',
+    };
+  });
+}
+
 const ROW_STATUS_TO_NOTE = {
   ok: 'ok',
   mismatch: 'deviate',
@@ -56,29 +121,101 @@ export function snippetForCat(docs, cat) {
   return best || null;
 }
 
+// Placeholder markers the reconciliation prompt sometimes emits into
+// rows[].contract when the contract is silent on a field (empty string is
+// preferred per the prompt, but historically Claude has produced these).
+// If we let them into `suggest.from`, buildFromRegex would look for
+// "NOT SPECIFIED IN CONTRACT" literal in the mammoth markdown and always
+// miss — so we treat them as absent.
+const _CONTRACT_PLACEHOLDER_RE = /^(?:—|-|—|<absent>|n\/?a|not\s+specified|не\s+вказано|відсутнє?)$/i;
+
+function _isUsableContractPhrase(s) {
+  if (!s || typeof s !== 'string') return false;
+  const trimmed = s.trim();
+  if (trimmed.length < 3) return false;      // "≥5" style single-token annotations
+  if (_CONTRACT_PLACEHOLDER_RE.test(trimmed)) return false;
+  return true;
+}
+
+function _existsInAnyStream(needle, run) {
+  if (!needle || !run) return false;
+  const streams = [
+    run.contractMarkdown, run.contractMarkdownEn, run.contractMarkdownUa,
+  ].filter((s) => typeof s === 'string' && s.length > 0);
+  // Permissive fallback: when no markdown is available (older runs, unit
+  // tests that only wire `docs`), trust the caller's phrase. The runtime
+  // highlighter falls back to a gutter flag if the regex misses anyway.
+  if (streams.length === 0) return true;
+  return streams.some((h) => h.includes(needle));
+}
+
 /** Convert reconcile findings to the analyze-contract finding shape so the
- *  existing AiPanel / FindingCard / overlay code paths Just Work. */
+ *  existing AiPanel / FindingCard / overlay code paths Just Work.
+ *
+ *  `suggest.from` derivation, in preference order:
+ *    1. `row.contract` — the actual value Claude extracted from the contract
+ *       text. The prompt now requires this to be a verbatim substring, so
+ *       it's the highest-fidelity source we have for the inline highlight.
+ *    2. `snippetForCat(docs, cat)` — the annotation fragment from
+ *       `docs.contract.sections[].uaP/enP`. Kept as a fallback because
+ *       older reconciliations don't guarantee verbatim `row.contract`, but
+ *       these annotations are frequently paraphrased so the highlight can
+ *       still miss.
+ *    3. `null` — no inline decoration; FindingCard still renders + gutter
+ *       flag still fires on the clause-number block.
+ *
+ *  Post-derivation validation: if the chosen phrase doesn't literally
+ *  appear in any of the persisted contract streams, we drop `suggest` to
+ *  `null` so the editor doesn't paint a phantom flag on the first block
+ *  (that used to happen when `NOT SPECIFIED IN CONTRACT` fell through).
+ */
 export function reconcileToFindings(run) {
   const list = (run && run.findings) || [];
   const docs = (run && run.docs) || null;
+  const rowByCat = {};
+  for (const r of ((run && run.rows) || [])) {
+    if (r && r.key) rowByCat[r.key] = r;
+  }
   return list.map((f) => {
-    // Derive an inline snippet from docs.contract so findingsToHighlights has
-    // something concrete to grep for. When no snippet exists (e.g. category
-    // wasn't highlighted in docs), suggest stays null and the highlighter
-    // falls back to the clause-number anchor.
-    const snippet = snippetForCat(docs, f.cat);
+    const row = rowByCat[f.cat] || null;
+    const t3Val = row && row.t3 ? String(row.t3).trim() : '';
+    const contractVal = row && row.contract ? String(row.contract).trim() : '';
+    // Preferred source: verbatim `row.contract`. Fallback: sections snippet.
+    let anchor = null;
+    if (_isUsableContractPhrase(contractVal)) anchor = contractVal;
+    if (!anchor) {
+      const snippet = snippetForCat(docs, f.cat);
+      if (_isUsableContractPhrase(snippet)) anchor = snippet;
+    }
+    // Validate against the real markdown — if the anchor isn't a literal
+    // substring, `buildFromRegex` will fail silently and we'd paint a
+    // gutter flag on a random block. Better to render no highlight and
+    // let the FindingCard speak for itself.
+    if (anchor && !_existsInAnyStream(anchor, run)) anchor = null;
+
+    // Compose an actionable description: the recommendation plus a compact
+    // "ПД / Договір" delta so the card explains *what to change* without
+    // requiring a jump to the comparison table.
+    const deltaLines = [];
+    if (t3Val) deltaLines.push(`ПД: «${t3Val}»`);
+    if (contractVal) deltaLines.push(`Договір: «${contractVal}»`);
+    const desc = [f.rec || '', deltaLines.join(' · ')].filter(Boolean).join(' — ');
+    // For `mismatch` rows we can propose the T3 value verbatim; for `absent`
+    // or `flag` there is nothing concrete to insert, so we leave `to` empty
+    // and let the FindingCard fall back to diagnostic-only mode.
+    const canApply = anchor && t3Val && row && row.status === 'mismatch';
     return {
       id: String(f.cat || f.id || ''),
       level: SEV_TO_LEVEL[f.severity] || 'info',
       clause: f.location || '',
       weight: 1,
       title: f.issue || '',
-      desc: f.rec || '',
+      desc,
       severity: f.severity,
       law: null,
-      // `to` stays empty — reconcile doesn't propose rewrites; we only use
-      // `from` as a text anchor for the PDF overlay.
-      suggest: snippet ? { from: snippet, to: '' } : null,
+      suggest: anchor
+        ? { from: anchor, to: canApply ? t3Val : '' }
+        : null,
       _source: f.source || null,
       _verified: f.verified || null,
     };
@@ -181,15 +318,26 @@ export function handoverToSections(docs) {
 
 /** Full bundle AnalysisView consumes: findings + comparison + score +
  *  legalBasis + warnings + documents (two-tab strip for the reconcile
- *  case). Empty legalBasis since /api/reconcile doesn't emit law refs. */
+ *  case). Empty legalBasis since /api/reconcile doesn't emit law refs.
+ *
+ *  Findings merge two sources: the 15-category Table 3 comparison (kind:
+ *  "risk" — implicit, no `kind` field) and the A–I language & style
+ *  findings (kind: "lang"). The FindingsPanel splits them into two tabs
+ *  but they share the same Milkdown highlight machinery. */
 export function reconcileToAnalysisProps(run, t = {}) {
   const docs = (run && run.docs) || null;
+  const riskFindings = reconcileToFindings(run);
+  const langFindings = languageToFindings(run);
   return {
-    findings: reconcileToFindings(run),
+    findings: [...riskFindings, ...langFindings],
     comparison: reconcileToComparison(run),
     legalBasis: [],
     score: reconcileToScore(run),
     warnings: [],
+    // Convenience flag the ContractAnalysis screen reads to render the
+    // «Table 3 / Мова & стиль» tab header. Kept out of `findings` so a
+    // downstream consumer doesn't have to iterate to know the split exists.
+    hasLanguageFindings: langFindings.length > 0,
     documents: [
       {
         label: (run && run.contractFile) || t.cmpSlotContract || 'Договір',
