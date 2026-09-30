@@ -56,6 +56,7 @@ from .mcp_acl import (
 )
 from .mcp_dispatch import MCP_PATH
 from .mcp_firm_tools import register_firm_tools
+from .mcp_live_tools import register_live_tools
 from .oauth_server import ALL_SCOPES, SCOPE_AI, AgLexOAuthProvider
 from .oauth_store import denied_matter_ids, document_denied, documents_all_denied, log_mcp_call
 
@@ -87,6 +88,11 @@ AI_DAY_S = 24 * 3600.0
 WRITE_LIMIT_PER_DAY = 200
 WRITE_TOOLS = frozenset({"firm_create_task", "firm_add_note", "firm_link_citation", "firm_create_draft"})
 AI_TOOLS = frozenset({"ai_analyze_contract", "ai_reconcile"})
+LIVE_TOOLS = frozenset({"ua_get_act", "ua_act_card", "ua_recent_changes", "ua_verify_citation", "ua_court_decision"})
+# Each live call may cost a request to rada/court (6 s apart, IP-ban risk):
+# far below the general 120/min read limit.
+LIVE_LIMIT_PER_MIN = 10
+LIVE_LIMIT_PER_DAY = 300
 DEFAULT_DOC_CHARS = 20_000
 MAX_DOC_CHARS = 100_000
 
@@ -499,6 +505,9 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
         if tool in AI_TOOLS:
             if used(AI_TOOLS, RATE_WINDOW_S) >= AI_LIMIT_PER_MIN or used(AI_TOOLS, AI_DAY_S) >= AI_LIMIT_PER_DAY:
                 raise ToolError("AI budget reached for now (per-minute/day limit); try later.")
+        elif tool in LIVE_TOOLS:
+            if used(LIVE_TOOLS, RATE_WINDOW_S) >= LIVE_LIMIT_PER_MIN or used(LIVE_TOOLS, AI_DAY_S) >= LIVE_LIMIT_PER_DAY:
+                raise ToolError("Official-source lookup limit reached (10/min, 300/day); try later.")
         elif tool in WRITE_TOOLS:
             if used(WRITE_TOOLS, AI_DAY_S, ok_only=True) >= WRITE_LIMIT_PER_DAY:
                 raise ToolError("Daily limit of AI-made changes reached; continue in AG Lex directly.")
@@ -512,7 +521,7 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
             # (scope/role/profile) call must not burn the day's quota.
             if tool.startswith("ai_") and SCOPE_AI in p.scopes and "ai" in p.capabilities and not p.restricted:
                 check_budget(conn, p.user["id"], tool)
-            elif tool in WRITE_TOOLS:
+            elif tool in WRITE_TOOLS or tool in LIVE_TOOLS:
                 check_budget(conn, p.user["id"], tool)
             ok = False
             try:
@@ -539,6 +548,7 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
                     log.warning("mcp audit write failed: %r", e)
 
     register_firm_tools(mcp, run)  # stage 2: writes, billing, AI (mcp_firm_tools.py)
+    register_live_tools(mcp, run)  # stage 3: live official sources (mcp_live_tools.py)
 
     @mcp.tool(annotations=_READ_ONLY)
     def whoami() -> dict:

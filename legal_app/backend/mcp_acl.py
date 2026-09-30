@@ -31,7 +31,7 @@ from .rbac import has_capability
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 # Kinds of data a tool can expose. Restricted clients get only these:
-RESTRICTED_ALLOWED_KINDS = frozenset({"matters", "tasks", "calendar", "codex"})
+RESTRICTED_ALLOWED_KINDS = frozenset({"matters", "tasks", "calendar", "codex", "law"})
 
 
 @dataclass
