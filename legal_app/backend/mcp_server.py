@@ -2,7 +2,10 @@
 
 Stage 1 (DESIGN.md §4): read-only tools over matters, tasks, calendar,
 documents and the local codex, plus the `search` / `fetch` pair ChatGPT
-connectors and Deep Research require.
+connectors and Deep Research require. Stage 2 tools (writes, billing, AI)
+live in `mcp_firm_tools.py`. All tools honour `mcp_policy` (ai_external=deny):
+matters/clients directly; documents via the firm-wide switch, per-document
+flags and (best effort, no client link yet) denied client names in titles.
 
 Wiring:
 - `build_mcp_asgi()` builds a fresh `MCPServer` + Starlette app. The SDK's
@@ -18,10 +21,13 @@ Every tool call is written to `mcp_audit` (oauth_store.log_mcp_call).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
@@ -32,15 +38,26 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, Re
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from fastapi import HTTPException
+from pydantic import ValidationError
 from mcp.types import ToolAnnotations
 from starlette.types import ASGIApp
 
 from .calendar_routes import list_events
 from .matters_routes import _hydrate_case, list_matters
-from .mcp_acl import Principal, can_see, is_matter_member, principal_from_token, require
+from .mcp_acl import (
+    POLICY_DENIED_MSG,
+    Principal,
+    can_see,
+    check_matter_policy,
+    is_matter_member,
+    principal_from_token,
+    require,
+)
 from .mcp_dispatch import MCP_PATH
-from .oauth_server import ALL_SCOPES, AgLexOAuthProvider
-from .oauth_store import log_mcp_call
+from .mcp_firm_tools import register_firm_tools
+from .oauth_server import ALL_SCOPES, SCOPE_AI, AgLexOAuthProvider
+from .oauth_store import denied_matter_ids, document_denied, documents_all_denied, log_mcp_call
 
 log = logging.getLogger("aglex.mcp")
 
@@ -64,6 +81,12 @@ _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_w
 MAX_LIMIT = 50
 RATE_LIMIT_CALLS = 120
 RATE_WINDOW_S = 60.0
+AI_LIMIT_PER_MIN = 5
+AI_LIMIT_PER_DAY = 100
+AI_DAY_S = 24 * 3600.0
+WRITE_LIMIT_PER_DAY = 200
+WRITE_TOOLS = frozenset({"firm_create_task", "firm_add_note", "firm_link_citation", "firm_create_draft"})
+AI_TOOLS = frozenset({"ai_analyze_contract", "ai_reconcile"})
 DEFAULT_DOC_CHARS = 20_000
 MAX_DOC_CHARS = 100_000
 
@@ -141,6 +164,9 @@ def list_matters_impl(
 ) -> dict:
     require(p, kind="matters")
     cards = list_matters(user=p.user, conn=conn)
+    denied = denied_matter_ids(conn)
+    hidden = sum(1 for c in cards if c["id"] in denied)
+    cards = [c for c in cards if c["id"] not in denied]
     q = query.strip().lower()
     if q:
         # Restricted clients must not be able to probe client names via search.
@@ -153,13 +179,17 @@ def list_matters_impl(
         cards = [c for c in cards if (c.get("status") or "") == status]
     if p.restricted:
         cards = [_redact_matter(c) for c in cards]
-    return {"matters": cards[: _clamp(limit)], "total": len(cards)}
+    out = {"matters": cards[: _clamp(limit)], "total": len(cards)}
+    if hidden and not p.restricted:
+        out["hidden_by_policy"] = hidden
+    return out
 
 
 def get_matter_impl(conn: sqlite3.Connection, p: Principal, matter_id: str) -> dict:
     require(p, kind="matters")
     if not is_matter_member(conn, p, matter_id):
         raise ToolError("Matter not found or you are not a member of it.")
+    check_matter_policy(conn, matter_id)
     case = _hydrate_case(conn, matter_id)
     if case is None:
         raise ToolError("Matter not found or you are not a member of it.")
@@ -192,6 +222,11 @@ def list_tasks_impl(
         """
     ]
     args: list[Any] = [p.text_id]
+    denied = sorted(denied_matter_ids(conn))
+    if denied:
+        # one JSON param instead of N placeholders (SQLite's 999-variable cap)
+        sql.append("AND m.id NOT IN (SELECT value FROM json_each(?))")
+        args.append(json.dumps(denied))
     if matter_code:
         sql.append("AND t.matter = ?")
         args.append(matter_code)
@@ -224,6 +259,9 @@ def calendar_impl(
         user_text_id=p.text_id,
         conn=conn,
     )
+    denied = denied_matter_ids(conn)
+    if denied:
+        events = [e for e in events if e.get("case_id") not in denied]
     if not both:
         if date_from:
             events = [e for e in events if (e.get("date") or "") >= date_from]
@@ -237,6 +275,8 @@ def search_documents_impl(conn: sqlite3.Connection, p: Principal, query: str, li
     # permission (`pdata`); never for restricted (ChatGPT) clients (DESIGN.md §6).
     require(p, kind="documents")
     require(p, capability="pdata", kind="documents")
+    if documents_all_denied(conn):
+        raise ToolError(POLICY_DENIED_MSG)
     q = query.strip()
     if not q:
         raise ToolError("query is required")
@@ -259,6 +299,7 @@ def search_documents_impl(conn: sqlite3.Connection, p: Principal, query: str, li
                 "word_count": r[4], "created_at": r[5], "snippet": _snippet(r[6], q),
             }
             for r in rows
+            if not document_denied(conn, r[0], r[2], r[1])
         ]
     }
 
@@ -274,6 +315,8 @@ def get_document_impl(
     ).fetchone()
     if row is None:
         raise ToolError("Document not found.")
+    if document_denied(conn, row[0], row[2], row[1]):
+        raise ToolError(POLICY_DENIED_MSG)
     content = row[7] or ""
     cap = _clamp(max_chars, 1000, MAX_DOC_CHARS)
     return {
@@ -380,8 +423,19 @@ def fetch_impl(conn: sqlite3.Connection, p: Principal, base_url: str, id: str) -
 # server assembly
 # ---------------------------------------------------------------------------
 
+_CONTENT_ARGS = {"text", "quote", "comment", "document_markdown"}
+
+
 def _summarize_args(args: dict) -> dict:
-    return {k: (v[:200] if isinstance(v, str) else v) for k, v in args.items()}
+    """Short args verbatim; free-text content as length + sha256 (enough to
+    trace an injected write without copying client content into the log)."""
+    out = {}
+    for k, v in args.items():
+        if k in _CONTENT_ARGS and isinstance(v, str):
+            out[k] = {"len": len(v), "sha256": hashlib.sha256(v.encode("utf-8")).hexdigest()[:16]}
+        else:
+            out[k] = v[:200] if isinstance(v, str) else v
+    return out
 
 
 def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPServer, ASGIApp]:
@@ -428,11 +482,38 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
                 raise ToolError("Too many AG Lex calls; wait a minute and retry.")
             q.append(now)
 
+    def check_budget(conn: sqlite3.Connection, user_id: int, tool: str) -> None:
+        """Token-spending AI calls and additive writes have per-user budgets
+        counted from `mcp_audit`, so they survive restarts (unlike the
+        in-memory 120/min read limiter)."""
+        now = datetime.now(tz=timezone.utc)
+
+        def used(tools: frozenset[str], seconds: float, ok_only: bool = False) -> int:
+            marks = ",".join("?" * len(tools))
+            return conn.execute(
+                f"SELECT COUNT(*) FROM mcp_audit WHERE user_id = ? AND tool IN ({marks}) AND ts >= ?"
+                + (" AND ok = 1" if ok_only else ""),
+                (user_id, *sorted(tools), (now - timedelta(seconds=seconds)).isoformat()),
+            ).fetchone()[0]
+
+        if tool in AI_TOOLS:
+            if used(AI_TOOLS, RATE_WINDOW_S) >= AI_LIMIT_PER_MIN or used(AI_TOOLS, AI_DAY_S) >= AI_LIMIT_PER_DAY:
+                raise ToolError("AI budget reached for now (per-minute/day limit); try later.")
+        elif tool in WRITE_TOOLS:
+            if used(WRITE_TOOLS, AI_DAY_S, ok_only=True) >= WRITE_LIMIT_PER_DAY:
+                raise ToolError("Daily limit of AI-made changes reached; continue in AG Lex directly.")
+
     def run(tool: str, args: dict, fn: Callable[..., dict]) -> dict:
         token = get_access_token()
         with conn_factory() as conn:
             p = principal_from_token(conn, token)
             check_rate(p.user["id"])
+            # Only charge a budget for calls that can actually run — a refused
+            # (scope/role/profile) call must not burn the day's quota.
+            if tool.startswith("ai_") and SCOPE_AI in p.scopes and "ai" in p.capabilities and not p.restricted:
+                check_budget(conn, p.user["id"], tool)
+            elif tool in WRITE_TOOLS:
+                check_budget(conn, p.user["id"], tool)
             ok = False
             try:
                 result = fn(conn, p)
@@ -440,6 +521,11 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
                 return result
             except ToolError:
                 raise
+            except HTTPException as e:  # reused REST handlers (404/403/422)
+                raise ToolError(str(e.detail)) from e
+            except ValidationError as e:  # request models built from tool args
+                msgs = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
+                raise ToolError(f"Invalid input — {msgs}") from e
             except Exception as e:  # noqa: BLE001 — don't leak sqlite/HTTP internals to the client
                 log.exception("mcp tool %s failed", tool)
                 raise ToolError("Internal error in AG Lex. The call was logged.") from e
@@ -451,6 +537,8 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
                                  tool=tool, ok=ok, args=_summarize_args(args))
                 except Exception as e:  # noqa: BLE001 — audit must never mask the tool result
                     log.warning("mcp audit write failed: %r", e)
+
+    register_firm_tools(mcp, run)  # stage 2: writes, billing, AI (mcp_firm_tools.py)
 
     @mcp.tool(annotations=_READ_ONLY)
     def whoami() -> dict:

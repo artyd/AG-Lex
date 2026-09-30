@@ -11,7 +11,9 @@
 | Cursor | Settings → MCP → Add → `{"aglex": {"url": "https://<домен>/mcp"}}` | Полный |
 | ChatGPT | Settings → Connectors → Developer mode → Create → адрес `/mcp`, OAuth | **Ограниченный**: справи, задачі, календар, кодекс. Без документів, білінгу, клієнтів (політика фірми для Plus/Pro) |
 
-Отключить: удалить коннектор в клиенте, или через API AG Lex:
+Отключить: удалить коннектор в клиенте, или в AG Lex: «Доступ» →
+«AI-підключення (MCP)» → «Відключити». Там же администратор закрывает
+конфиденциальных клиентов/дела от внешних AI. То же через API:
 - свои подключения — `GET /api/me/connected-apps`, `DELETE /api/me/connected-apps/{client_id}`;
 - администратор (право `manage`) — `GET /api/admin/connected-apps`,
   `DELETE /api/admin/connected-apps/{client_id}/{user_id}`.
