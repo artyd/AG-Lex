@@ -7,6 +7,7 @@ app fails loud if they are missing in production.
 """
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -24,6 +25,26 @@ class Settings(BaseSettings):
     DB_PATH: str = Field(default=str(BASE_DIR / "database" / "legal.sqlite"))
     JWT_SECRET: str = Field(default="dev-only-change-me")
     EMBED_MODEL: str = Field(default="paraphrase-multilingual-MiniLM-L12-v2")
+
+    # MCP server + its OAuth issuer (DESIGN: docs/mcp/DESIGN.md). Must be the
+    # public HTTPS origin in production (Claude.ai / ChatGPT refuse plain
+    # HTTP); http://localhost is accepted for local testing.
+    PUBLIC_BASE_URL: str = Field(
+        default="http://localhost:8000",
+        description="Public origin of AG Lex, e.g. https://lex.example.com (no trailing slash).",
+    )
+    MCP_ENABLED: bool = Field(default=True, description="Serve /mcp + OAuth endpoints.")
+    # The seeded demo partner `test@aglex.ua` has its password in the repo.
+    # Off by default: login, API tokens (incl. already-issued JWTs), WS and
+    # MCP consent all refuse it. Tests / e2e / local dev turn it on.
+    DEMO_LOGIN_ENABLED: bool = Field(default=False)
+    REGISTRATION_MODE: Literal["closed", "open"] = Field(
+        default="closed",
+        description=(
+            "closed: /api/auth/register only for the first user or a `manage` caller. "
+            "open: anyone, any role — dev/tests only, never on a public origin."
+        ),
+    )
 
     FRONTEND_DIR: str = Field(
         default=str(BASE_DIR.parent / "dist"),

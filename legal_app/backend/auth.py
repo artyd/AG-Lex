@@ -13,10 +13,19 @@ Security choices:
   - JWT HS256 signed with `settings.JWT_SECRET`. Payload: `sub` (user_id),
     `role`, `exp`. 24-hour TTL per Phase 2.1 doc.
   - Single endpoint surface returns generic "Invalid email or password" on
-    login failure — no user-enumeration leak via timing or distinct messages.
+    login failure — no user-enumeration leak via timing or distinct messages
+    (unknown emails are checked against a dummy hash so timing matches).
+  - The seeded demo account (TEST_USER_EMAIL, password in this file) is
+    refused everywhere unless DEMO_LOGIN_ENABLED — see `login_blocked`.
+  - Registration is closed by default (`REGISTRATION_MODE=closed`): only the
+    very first account (empty `users`) or a caller with the `manage`
+    capability can create users, and only they pick the role. Staff are
+    normally added via Team → invite. `open` is for dev/tests only — with a
+    public origin it would let anyone mint a partner account.
 """
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -119,6 +128,20 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def login_blocked(user: dict | None) -> bool:
+    """True for the public-password demo account when demo login is off."""
+    return bool(user) and user["email"] == TEST_USER_EMAIL and not get_settings().DEMO_LOGIN_ENABLED
+
+
+# A real bcrypt hash of a random secret, built at import so even the first
+# unknown-email login costs the same as a real one.
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
+
+
+def _dummy_hash() -> str:
+    return _DUMMY_HASH
+
+
 def create_access_token(user_id: int, role: str) -> str:
     settings = get_settings()
     now = datetime.now(tz=timezone.utc)
@@ -201,8 +224,12 @@ def create_user(
 
 
 def seed_test_user(conn: sqlite3.Connection) -> None:
-    """Create the demo `test@aglex.ua` account if missing (Phase 2.1 step 3)."""
-    if get_user_by_email(conn, TEST_USER_EMAIL):
+    """Create the demo `test@aglex.ua` account if missing (Phase 2.1 step 3).
+
+    Only with DEMO_LOGIN_ENABLED. An existing row on a prod volume is left in
+    place (its data is referenced elsewhere) but `login_blocked` refuses it.
+    """
+    if not get_settings().DEMO_LOGIN_ENABLED or get_user_by_email(conn, TEST_USER_EMAIL):
         return
     create_user(
         conn,
@@ -270,6 +297,8 @@ def current_user(
     user = get_user_by_id(conn, user_id)
     if user is None:
         raise _credentials_exception("User no longer exists")
+    if login_blocked(user):
+        raise _credentials_exception("Demo account is disabled")
     return user
 
 
@@ -290,8 +319,39 @@ def _user_out(user: dict) -> UserOut:
     )
 
 
+def _token_user(conn: sqlite3.Connection, token: Optional[str]) -> dict | None:
+    if not token:
+        return None
+    try:
+        return get_user_by_id(conn, int(decode_token(token).get("sub")))
+    except (JWTError, TypeError, ValueError):
+        return None
+
+
+def _registration_allowed(conn: sqlite3.Connection, token: Optional[str]) -> bool:
+    if get_settings().REGISTRATION_MODE == "open":
+        return True
+    (count,) = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+    if count == 0:  # bootstrap: first account on a fresh DB
+        return True
+    actor = _token_user(conn, token)
+    if actor is None or login_blocked(actor):
+        return False
+    from .rbac import has_capability  # local: rbac imports this module
+    return has_capability(conn, actor["role"], "manage")
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(req: RegisterRequest, conn: sqlite3.Connection = Depends(get_db)) -> TokenResponse:
+def register(
+    req: RegisterRequest,
+    conn: sqlite3.Connection = Depends(get_db),
+    token: Optional[str] = Depends(_oauth2_scheme),
+) -> TokenResponse:
+    if not _registration_allowed(conn, token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Реєстрація закрита. Попросіть адміністратора надіслати запрошення.",
+        )
     user = create_user(
         conn,
         email=req.email,
@@ -299,6 +359,12 @@ def register(req: RegisterRequest, conn: sqlite3.Connection = Depends(get_db)) -
         role=req.role,
         password=req.password,
     )
+    actor = _token_user(conn, token)
+    if actor is not None:
+        # A `manage` caller creating staff here is an invite — log it like team.py does.
+        from . import audit as audit_module  # local: keep auth.py import-light
+        audit_module.log(conn, actor=actor, action=audit_module.ACTION_INVITE,
+                         target=user["email"], meta={"role": user["role"], "via": "register"})
     token = create_access_token(user["id"], user["role"])
     return TokenResponse(access_token=token, user=_user_out(user))
 
@@ -308,7 +374,8 @@ def login(req: LoginRequest, conn: sqlite3.Connection = Depends(get_db)) -> Toke
     user = get_user_by_email(conn, req.email)
     # Same response for "no such user" and "wrong password" to avoid
     # user-enumeration via the response body or timing differences.
-    if user is None or not verify_password(req.password, user["password_hash"]):
+    hashed = user["password_hash"] if user else _dummy_hash()
+    if not verify_password(req.password, hashed) or user is None or login_blocked(user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
