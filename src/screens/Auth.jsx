@@ -7,7 +7,9 @@ import { Icon } from '../ui/Icon';
 import { apiLogin, apiRegister } from '../lib/auth';
 
 export function Auth({ t, lang, setLang, theme, setTheme, onAuth }) {
-  const [mode, setMode] = useState('signup');
+  // Registration is invite-only in production (REGISTRATION_MODE=closed),
+  // so land on sign-in; sign-up only succeeds on an empty DB or in dev.
+  const [mode, setMode] = useState('signin');
   const [f, setF] = useState({ name: '', email: '', pass: '', pass2: '', role: 'lawyer' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);

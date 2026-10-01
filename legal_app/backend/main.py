@@ -25,6 +25,8 @@ from . import drafts as drafts_module
 from . import export_routes as export_routes_module
 from . import lawyer_chat as lawyer_chat_module
 from . import matters_routes as matters_module
+from . import mcp_dispatch
+from . import mcp_grants_routes as mcp_grants_module
 from . import notifications_routes as notifications_module
 from . import team as team_module
 from .audit import init_audit_schema
@@ -56,6 +58,7 @@ from .models import (
     migrate_reconciliations_original_blob,
     migrate_users,
 )
+from .oauth_store import init_oauth_schema, purge_expired_oauth
 from .pipeline import analyze
 from .search import hybrid_search
 from .rbac import (
@@ -97,6 +100,8 @@ async def lifespan(app: FastAPI):
         documents_routes_module.init_documents_schema(conn)  # documents + document_errors
         init_permissions_schema(conn) # permissions matrix (Phase 2.3)
         init_audit_schema(conn)       # audit log (Phase 2.3)
+        init_oauth_schema(conn)       # MCP OAuth clients/codes/tokens + mcp_audit
+        purge_expired_oauth(conn)
         migrate_drafts(conn)
         migrate_users(conn)
         migrate_matters(conn)
@@ -138,10 +143,35 @@ async def lifespan(app: FastAPI):
         daemon=True,
     ).start()
 
-    yield
+    # MCP (docs/mcp/DESIGN.md). Built fresh per lifespan: the SDK session
+    # manager can only run() once per instance. A bad PUBLIC_BASE_URL must
+    # not take the whole app down — MCP paths then answer 503.
+    mcp_server = None
+    if settings.MCP_ENABLED:
+        try:
+            from .mcp_server import build_mcp_asgi  # lazy: SDK import errors stay contained
+            mcp_server, mcp_asgi = build_mcp_asgi(
+                base_url=settings.PUBLIC_BASE_URL,
+                conn_provider=lambda: app.dependency_overrides.get(get_db, get_db)(),
+            )
+        except Exception as _e:  # noqa: BLE001
+            print(f"[lifespan] MCP disabled: {_e!r}")
+    if mcp_server is None:
+        yield
+        return
+    async with mcp_server.session_manager.run():
+        mcp_dispatch.set_active_app(mcp_asgi)
+        try:
+            yield
+        finally:
+            mcp_dispatch.set_active_app(None)
 
 
 app = FastAPI(title="AG Lex", version="0.1.0", lifespan=lifespan)
+# Pure-ASGI dispatch: /mcp, /authorize, /token, /register, /revoke,
+# /oauth/*, /.well-known/oauth-* go to the MCP app; everything else is
+# untouched. Must sit in front of the SPA catch-all (see mcp_dispatch.py).
+app.add_middleware(mcp_dispatch.McpDispatchMiddleware)
 app.include_router(auth_module.router)
 app.include_router(team_module.router)
 app.include_router(assist_module.router)
@@ -162,6 +192,7 @@ app.include_router(documents_routes_module.router)
 # MD→DOCX/PDF export for the edited contract. Registered ABOVE the generic
 # CRUD loop for the same shadowing reason (see CLAUDE.md rule #1).
 app.include_router(export_routes_module.router)
+app.include_router(mcp_grants_module.router)  # connected MCP apps: list/revoke
 
 # Phase 4.x: custom POST /api/contracts that accepts a base64-encoded display
 # PDF (`displayPdfB64`) and writes it to the BLOB column. Registered BEFORE
@@ -399,6 +430,10 @@ async def realtime_endpoint(
         user_id = int(payload["sub"])
     except (JWTError, KeyError, TypeError, ValueError):
         # 1008 = "policy violation" — what browsers see for "401 over WS".
+        await websocket.close(code=1008)
+        return
+    ws_user = auth_module.get_user_by_id(conn, user_id)
+    if ws_user is None or auth_module.login_blocked(ws_user):
         await websocket.close(code=1008)
         return
 

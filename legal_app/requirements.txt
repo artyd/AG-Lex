@@ -15,5 +15,6 @@ python-docx
 bcrypt
 python-jose[cryptography]
 python-multipart
+mcp>=2.2,<3
 pytest
 httpx

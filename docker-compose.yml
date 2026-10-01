@@ -35,6 +35,16 @@ services:
       # Node.js document-converter microservice (Mammoth + Turndown + Tesseract).
       # Falls back to legacy in-process conversion when the service isn't up.
       CONVERTER_URL: ${CONVERTER_URL:-http://converter:3031}
+      # MCP connector (docs/mcp/DESIGN.md). Public HTTPS origin, no trailing
+      # slash — it is the OAuth issuer and the /mcp resource URL. Until it is
+      # set to https://…, Claude.ai / ChatGPT cannot connect (local
+      # Claude Code / MCP Inspector over http://localhost still work).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8002}
+      MCP_ENABLED: ${MCP_ENABLED:-true}
+      # Self-signup is invite-only in prod; `open` is for local dev/tests only.
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-closed}
+      # Demo partner test@aglex.ua (password in repo) — keep off in prod.
+      DEMO_LOGIN_ENABLED: ${DEMO_LOGIN_ENABLED:-false}
     volumes:
       - aglex_db:/app/legal_app/database
       - aglex_data:/app/legal_app/data

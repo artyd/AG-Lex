@@ -29,6 +29,8 @@ for suffix in ("", "-wal", "-shm"):
             pass
 
 os.environ["AGLEX_MOCK_AI"] = "1"
+# Specs sign in as the seeded demo user (disabled by default in prod).
+os.environ["DEMO_LOGIN_ENABLED"] = "1"
 os.environ["DB_PATH"] = str(DB_PATH)
 # Fresh JWT secret so test tokens are bounded to this run.
 os.environ.setdefault("JWT_SECRET", "e2e-only-not-a-secret")

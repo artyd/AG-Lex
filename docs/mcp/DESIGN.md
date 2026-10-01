@@ -1,0 +1,275 @@
+# AG Lex MCP — дизайн
+
+Статус: **этап 1 реализован** (ветка `feat/mcp-server`) · 2026-09-30
+
+## 1. Цель
+
+Дать сотрудникам «Альянс Груп 95» доступ к AG Lex (дела, документы, биллинг,
+кодекс, AI-пайплайны) из Claude.ai / Claude Desktop, ChatGPT, Claude Code /
+Cursor и из нашего `lawyer_chat` — через один MCP-сервер. Законодательство
+берём **по запросу из официальных источников**, свой корпус законов не храним.
+
+## 2. Принятые решения
+
+| Тема | Решение |
+|------|---------|
+| Размещение | `/mcp` (Streamable HTTP) внутри текущего FastAPI, `--workers 1` |
+| Клиенты v1 | Claude.ai/Desktop, ChatGPT (connectors), Claude Code/Cursor, `lawyer_chat` |
+| Auth | AG Lex = OAuth 2.1 Authorization Server (PKCE + DCR), RBAC + ACL как в UI |
+| Аудитория | Только сотрудники фирмы |
+| Данные фирмы | Дела, задачи, календарь, документы, договоры, биллинг, клиенты, AI-tools |
+| Запись | Чтение + безопасная запись (задача, заметка, черновик, привязка статьи). Без удаления и без изменения биллинга |
+| Законы | **Гибрид:** Ansvar Gateway — основной источник законов; наш MCP — данные фирмы + локальные кодексы + тонкие live-адаптеры там, где Ansvar не покрывает |
+| Хранение | Никакого корпуса. Только TTL-кэш HTTP-ответов (1–24 ч) в отдельном SQLite |
+| Локальный кодекс | Остаётся (5 кодексов, sqlite-vec) + сверка с live-редакцией |
+| «Что нового» | Tool `list_recent_changes` — live-запрос к ленте ВРУ, без хранения |
+| Цитирование | URL первоисточника, статус акта, `verify_citation`, связи между актами |
+| Тайна | Флаг `ai_external=deny` на клиенте/деле; аудит каждого вызова |
+| ChatGPT | У сотрудников Plus/Pro (данные могут идти в обучение) → ChatGPT-клиенты получают урезанный профиль: кодекс, live-законы, дела/задачи/календарь без документов, биллинга и клиентов |
+| AI-tools | Без лимита вызовов, расход токенов пишется в `audit` |
+| Ansvar | Free-тариф, каждый юрист подключает сам; `lawyer_chat` без Ansvar до решения по тарифу |
+| Домен | Существующий домен AG Lex + `/mcp`; HTTPS добавляем в этапе 1 (Let's Encrypt на edge nginx) |
+| Порядок | Этапы, каждый — отдельный PR |
+
+## 3. Архитектура
+
+```
+ Claude.ai / ChatGPT / Cursor / Claude Code
+        │  OAuth 2.1 (PKCE, DCR)          ┌──────────────────────────────┐
+        ├────────────────────────────────►│ gateway.ansvar.eu/mcp        │
+        │   (второй коннектор, свой       │ законы УА + ЕС, check_currency│
+        │    аккаунт Ansvar)              │ validate_citation, EU basis  │
+        │                                 └──────────────────────────────┘
+        │  OAuth 2.1 → AG Lex
+        ▼
+  nginx :8002 ── /mcp, /.well-known/*, /oauth/* ──► backend :8000 (FastAPI, 1 worker)
+                                                     ├─ mcp_server.py   (MCPServer, tools)
+                                                     ├─ oauth_server.py (AS provider, consent page)
+                                                     ├─ mcp_acl.py      (единый ACL-слой для tools)
+                                                     ├─ live_sources/   (rada, court, ccu, supreme)
+                                                     │    └─ cache.sqlite (TTL)
+                                                     └─ существующие модули (search, crud, documents…)
+  lawyer_chat.py ──(Anthropic MCP connector)──► наш /mcp + Ansvar gateway
+```
+
+Почему два коннектора, а не прокси Ansvar через наш сервер: у Ansvar свой
+OAuth и тарифы на пользователя. Проксирование означало бы один общий аккаунт
+для всей фирмы и хранение чужих токенов. Прокси возможен позже, если Ansvar
+выдаст сервисный ключ уровня team/company.
+
+## 4. Инструменты (tools)
+
+Префиксы: `firm_*` — данные фирмы, `codex_*` — локальный кодекс, `ua_*` —
+live-адаптеры. Каждый tool: RBAC-capability + ACL + запись в `audit`.
+
+### Этап 1 — чтение
+
+| Tool | Capability | ACL | Источник |
+|------|-----------|-----|----------|
+| `search` / `fetch` | view | по типу объекта | Обязательная пара для ChatGPT Deep Research: поиск по делам, документам и кодексу |
+| `firm_list_matters(q, status)` | view | `case_members` | `matters_routes` |
+| `firm_get_matter(id)` | view | member | `_hydrate_case` |
+| `firm_list_tasks(matter?, assignee?, due_before?)` | view | через `matters.code → case_members` | `tasks` |
+| `firm_calendar(from, to, only_mine)` | view | как `calendar_routes` | union-запрос |
+| `firm_search_documents(q)` / `firm_get_document(id)` | view | **новое правило**, см. §6 | `documents` |
+| `codex_search(q, source?, limit)` | view | — | `search.hybrid_search` |
+| `codex_get_article(source, number)` | view | — | `articles` |
+| `whoami()` | — | — | роль, capabilities, scopes |
+
+### Этап 2 — запись, AI, биллинг
+
+| Tool | Capability | Примечание |
+|------|-----------|-----------|
+| `firm_create_task`, `firm_add_note`, `firm_create_draft` | edit | member дела, `activity_log` |
+| `firm_link_citation(matter, url, quote)` | edit | привязка статьи/решения к делу |
+| `firm_list_time_entries`, `firm_list_invoices`, `firm_list_clients` | billing / view | только чтение |
+| `ai_analyze_contract(document_id)` | ai | тратит наши токены Anthropic; лимита нет, расход в `audit` |
+| `ai_reconcile(contract_id, handover_id)` | ai | то же |
+
+### Этап 3 — live-адаптеры (только то, чего нет у Ansvar)
+
+| Tool | Источник | Примечание |
+|------|----------|-----------|
+| `ua_get_act(nreg, as_of?)` | zakon.rada.gov.ua | редакция на дату (`/ed{YYYYMMDD}`), статус, URL |
+| `ua_list_recent_changes(since, topic?)` | zakon.rada.gov.ua / data.rada.gov.ua | «что нового» |
+| `ua_verify_citation(text)` | rada + локальный кодекс | «ст. 625 ЦКУ» → существует? текст совпадает? действующая редакция? |
+| `ua_court_decision(id \| case_number)` | reyestr.court.gov.ua | по номеру/ID, **без обхода капчи** |
+| `ua_supreme_positions(q)` | supreme.court.gov.ua | правовые позиции ВС |
+| `ua_ccu_decisions(q)` | ccu.gov.ua | решения КСУ |
+| `ua_related_acts(nreg)` | rada: «Пов'язані документи» | связи «вносит изменения / ссылается» |
+
+EUR-Lex и HUDOC: сначала проверяем покрытие Ansvar (право ЕС у них есть,
+HUDOC — вероятно нет). Свой адаптер HUDOC — этап 5, если нужен.
+
+Все ответы `ua_*` возвращают `{source_url, retrieved_at, status, edition_date}`.
+
+## 5. OAuth 2.1 (AG Lex как Authorization Server)
+
+- SDK `mcp` 2.x (`MCPServer`), `OAuthAuthorizationServerProvider` +
+  `create_auth_routes`. Эндпоинты: `/.well-known/oauth-authorization-server`,
+  `/.well-known/oauth-protected-resource`, `/oauth/authorize`, `/oauth/token`,
+  `/oauth/register`, `/oauth/revoke`.
+- `/oauth/authorize` → серверная страница логина и согласия (email + пароль из
+  `users`, список запрашиваемых scopes) → код авторизации (≥160 бит, TTL 5 мин).
+- **Отдельные токены, не текущие JWT.** Сейчас JWT живут 1 год, без `aud`,
+  `scope` и отзыва. Для MCP нужны непрозрачные токены: в БД хранится только
+  хэш, access живёт 1 ч, refresh 30 дней с ротацией, есть `aud=<base>/mcp`,
+  scopes и отзыв. Страница «Подключённые приложения» в профиле AG Lex с кнопкой
+  «Отозвать».
+- Scopes: `aglex.read`, `aglex.write`, `aglex.ai`, `aglex.billing`.
+  Эффективное право = scope ∩ RBAC capability роли (проверка на каждом вызове,
+  т.к. роль может смениться).
+- DCR открыт (Claude.ai и ChatGPT требуют), но redirect_uri — allowlist
+  (`claude.ai`, `claude.com`, `chatgpt.com`, `localhost`).
+- **Профиль клиента** определяется при регистрации по redirect_uri:
+  `chatgpt.com` → `profile=restricted` (Plus/Pro могут обучаться на данных):
+  без `firm_*_documents`, биллинга, клиентов, AI-tools и записи.
+  Остальные → `profile=full`. Профиль хранится в `oauth_clients` и
+  проверяется в `mcp_acl.py` на каждом вызове.
+- Новые таблицы: `oauth_clients`, `oauth_codes`, `oauth_tokens`
+  (`CREATE IF NOT EXISTS`, конвенция №5).
+- Новая env `PUBLIC_BASE_URL` (issuer / resource URL).
+
+## 6. ACL — найденные дыры
+
+Разведка кода показала, что в REST сейчас:
+
+- `documents` — **нет ACL**: любой авторизованный читает любой документ
+  (`user_id` хранится, но не проверяется).
+- `tasks`, `time_entries`, `invoices`, `clients` через generic CRUD —
+  только аутентификация (+ `billing` для invoices), без привязки к делу.
+
+Через MCP эти данные уходят во внешний AI, поэтому **MCP не копирует эти
+дыры**. Все tools идут через `mcp_acl.py`:
+- документы: как в UI — видны всем сотрудникам (решение 2026-09-30);
+  **кроме** ChatGPT-профиля, где документы не отдаются вовсе;
+- задачи и время — через `matters.code → case_members`;
+- клиенты/счета — capability `billing` + участие хотя бы в одном деле клиента
+  (partner/admin — всё);
+- флаг `ai_external=deny` на клиенте/деле → tool возвращает «скрыто политикой
+  фирмы» вместо данных.
+
+Закрытие тех же дыр в REST/UI — отдельная задача (не в этом проекте, но
+заведём в `docs/BUGS.md`).
+
+## 7. Live-источники и кэш
+
+- `httpx.AsyncClient`, честный User-Agent, ≤1 запрос/с на хост, ретраи с
+  backoff, таймаут 20 с.
+- `legal_app/database/live_cache.sqlite`: `(url, fetched_at, status, body)`,
+  TTL: тексты актов 24 ч, ленты изменений 1 ч, решения судов 7 дней. Автоочистка.
+  Это кэш, не корпус — удаление файла ничего не ломает.
+- data.rada.gov.ua — регистрируем open-data токен (env `RADA_OPENDATA_TOKEN`).
+- ЕГРСР: только прямые URL решений по ID/номеру и открытые наборы
+  data.gov.ua. Обход капчи не делаем.
+
+## 8. `lawyer_chat` как MCP-клиент (этап 4)
+
+Anthropic Messages API → MCP connector (`mcp_servers=[...]`): наш `/mcp`
+(сервисный токен с правами текущего пользователя) + Ansvar gateway.
+Затрагивает `claude_client.py` / `lawyer_chat.py` / `prompts.py` → ревью
+`ai-prompt-guardian` (кэш промптов, стоимость). Открытый вопрос — токен Ansvar
+для серверной стороны (§11).
+
+## 9. Инфраструктура
+
+- `requirements.txt`: `mcp>=2.2,<3` (pin после проверки на Python 3.12 в Docker;
+  локальный venv — 3.14).
+- `main.py`: `app.mount("/mcp", …)` и OAuth-роуты **до** SPA catch-all
+  (`main.py:1241`), `mcp.session_manager.run()` внутри lifespan.
+- `nginx/default.conf`: `location /mcp` (`proxy_buffering off`,
+  `proxy_http_version 1.1`, `proxy_read_timeout 3600s`), `location /.well-known/`,
+  `location /oauth/` → backend.
+- `transport_security`: allowlist хоста продакшена (иначе SDK отвечает только
+  localhost).
+- Нужен публичный HTTPS-домен (Claude.ai/ChatGPT не ходят на голый IP/порт 8002).
+
+## 10. Этапы (каждый — PR)
+
+1. **Каркас + OAuth + read-tools** (§4 этап 1, §5, §6, nginx). Тесты: pytest на
+   ACL каждого tool, OAuth-флоу через httpx, MCP Inspector вручную, подключение
+   к Claude.ai.
+2. **Запись + биллинг + AI-tools + флаг тайны.**
+3. **Live-адаптеры** `ua_*` + TTL-кэш.
+4. **`lawyer_chat` через MCP connector** (наш + Ansvar).
+5. **HUDOC / EUR-Lex** — по результатам проверки покрытия Ansvar.
+
+Затрагиваемые business-critical файлы и ревьюеры:
+`main.py` (вручную), `auth.py`-смежный `oauth_server.py` + `mcp_acl.py`
+(`auth-rbac-reviewer`), новые таблицы в `database.py`/`models.py`
+(`migration-safety-reviewer`), этап 4 — `ai-prompt-guardian`.
+
+## 11. Решения по открытым вопросам (2026-09-30)
+
+1. Домен — существующий домен AG Lex, HTTPS настраиваем в этапе 1
+   (certbot/Let's Encrypt на edge nginx). Имя домена → env `PUBLIC_BASE_URL`.
+2. Ansvar — free, подключают юристы сами; перед этапом 3 проверяю реальный
+   список tools украинского корпуса. В запросах к Ansvar не должно быть данных
+   клиентов (инструкция для юристов).
+3. ChatGPT — Plus/Pro → `profile=restricted` (§5).
+4. AI-tools — без лимита, учёт в `audit`.
+5. Документы — видны всем сотрудникам (как в UI), кроме ChatGPT-профиля.
+
+## 12. Этап 1 — что реализовано (2026-09-30)
+
+Модули: `oauth_server.py` (AS-провайдер + страница входа/согласия),
+`oauth_store.py` (схема, очистка, `mcp_audit`, список/отзыв подключений —
+без импорта SDK), `mcp_dispatch.py` (ASGI-маршрутизация путей, без SDK),
+`mcp_acl.py` (scope ∩ RBAC ∩ профиль клиента + ACL по делам),
+`mcp_server.py` (11 read-only tools), `mcp_grants_routes.py`
+(`/api/me/connected-apps`, `/api/admin/connected-apps` — список и отзыв).
+Тесты: `tests/test_mcp.py` (21).
+
+Решения по итогам ревью (auth-rbac, migration-safety, security):
+- Streamable HTTP в режиме stateless + JSON; SDK `mcp` 2.2.
+- Токены привязаны к `user_id` **и** email: после удаления пользователя его
+  токены не «переезжают» к новому с тем же rowid.
+- Повторное использование refresh-токена отзывает всю цепочку.
+- Страница входа: лимит 5 неудачных попыток / 15 мин (email, request_id, IP),
+  bcrypt вне event loop, фиктивный хэш против перебора email, проверка Origin,
+  показ адреса перенаправления. nginx `limit_req` на OAuth-эндпоинты.
+- Выдача доступа (`mcp_grant`) и отзыв (`mcp_revoke`) пишутся в `audit`;
+  вызовы инструментов — в отдельную `mcp_audit` (хранение 180 дней), чтобы
+  не вытеснять RBAC-события из вкладки «Аудит-лог».
+- ChatGPT-профиль: карточки дел без клиента, сторон, нотаток, контактов
+  участников и хронологии; поиск по имени клиента недоступен.
+- Тексты документов/дел помечаются как недоверенные данные (защита от
+  prompt injection через документы).
+- Очистка истёкших токенов, кодов и неиспользованных клиентов — при старте и
+  при регистрации клиента; лимит 2000 клиентов.
+
+### Доработки второго круга ревью
+
+- **Регистрация закрыта** (`REGISTRATION_MODE=closed` по умолчанию):
+  `/api/auth/register` доступен только для первого аккаунта или сотрудника с
+  правом `manage`; сотрудники добавляются через «Команда → запросити».
+  Экран входа открывается на вкладке «Вхід». `open` — только dev/тесты.
+- `/api/auth/login` сверяет неизвестный email с фиктивным хэшем (нет утечки
+  по времени ответа).
+- Демо-аккаунт `test@aglex.ua` (пароль в репозитории) не может выдать доступ
+  внешнему AI.
+- Документы через MCP требуют `pdata` (paralegal — нет); контакты сторон
+  без `pdata` скрываются.
+- Повтор кода авторизации отзывает выданные им токены.
+- Вся работа OAuth с SQLite и bcrypt — в рабочих потоках, не в event loop.
+- Лимит 120 вызовов MCP в минуту на пользователя.
+- Во вкладке «Аудит-лог» — подписи «Підключено/Відключено AI-застосунок».
+- **Демо-партнёр `test@aglex.ua`** (пароль в репозитории, право `manage`)
+  выключен по умолчанию: `DEMO_LOGIN_ENABLED=false` — отказ во входе, в API
+  (включая уже выданные JWT), WebSocket и регистрации; сид не создаётся.
+  Тесты, e2e и локальная разработка включают флаг.
+- `viktoria@aglex.ua`: пока пароль равен начальному из репозитория, выдача
+  MCP-доступа запрещена (вход в AG Lex не блокируется).
+- Регистрация через `/register` сотрудником с `manage` пишется в аудит как
+  приглашение; `Referrer-Policy: same-origin` на странице согласия.
+
+### Остаётся на решение владельца
+
+1. Клиенты с `localhost`-редиректом (Claude Code, Cursor, локальные прокси)
+   получают полный профиль — через локальный прокси можно обойти политику
+   для ChatGPT. Сейчас принято как риск.
+2. Флаг `ai_external=deny` на деле/клиенте — этап 2.
+3. WAL для SQLite — отдельный PR с обновлением процедуры бэкапа.
+4. Пароль `viktoria@aglex.ua` из репозитория — сменить в проде (эндпоинта
+   смены пароля в AG Lex нет; до смены MCP для неё закрыт).
+5. UI «Підключені застосунки» в профиле — API готов, экран — этап 2.
