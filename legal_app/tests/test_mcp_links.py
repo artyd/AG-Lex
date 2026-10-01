@@ -127,7 +127,8 @@ def test_create_requires_password_and_limits(client, seeded, monkeypatch):
     assert _make_link(client, web).status_code == 409
 
 
-def test_seed_password_cannot_create_link(client, seeded, db_conn):
+def test_seed_account_can_create_link(client, seeded, db_conn):
+    """Firm decision 2026-10-01: viktoria@ may mint links on her seed password."""
     from backend.auth import VIKTORIA_USER_EMAIL, VIKTORIA_USER_PASSWORD, hash_password
     db_conn.execute(
         "INSERT INTO users (email, name, role, password_hash, created_at) VALUES (?, 'V', 'partner', ?, date('now'))",
@@ -137,7 +138,7 @@ def test_seed_password_cannot_create_link(client, seeded, db_conn):
     login = client.post("/api/auth/login", json={"email": VIKTORIA_USER_EMAIL, "password": VIKTORIA_USER_PASSWORD})
     auth = {"Authorization": f"Bearer {login.json()['access_token']}"}
     r = client.post("/api/me/mcp-links", headers=auth, json={"password": VIKTORIA_USER_PASSWORD})
-    assert r.status_code == 403 and "початковий" in r.json()["detail"]
+    assert r.status_code == 201, r.text
 
 
 def test_admin_links_require_manage(client, seeded):

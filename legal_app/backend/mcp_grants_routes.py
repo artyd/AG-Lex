@@ -211,10 +211,12 @@ def create_my_link(
     conn: sqlite3.Connection = Depends(get_db),
 ) -> dict:
     """The link is a standing credential, so creating one re-checks the
-    password (a stolen browser session alone can't mint one) and refuses
-    accounts still on a password that is published in the repo."""
+    password (a stolen browser session alone can't mint one). The public
+    demo account is refused. Seeded accounts still on their repo password
+    (viktoria@) are allowed by the firm's decision (2026-10-01) — rotate that
+    password; anyone with repo access can otherwise mint a link as her."""
     from .auth import verify_password
-    from .oauth_server import PUBLIC_DEMO_EMAILS, SEED_PASSWORDS
+    from .oauth_server import PUBLIC_DEMO_EMAILS
 
     if _pw_throttled(user["id"]):
         raise HTTPException(status_code=429, detail="Забагато невдалих спроб. Зачекайте 15 хвилин.")
@@ -223,8 +225,6 @@ def create_my_link(
         raise HTTPException(status_code=403, detail="Невірний пароль.")
     if user["email"] in PUBLIC_DEMO_EMAILS:
         raise HTTPException(status_code=403, detail="Демо-акаунт не може створювати посилання.")
-    if SEED_PASSWORDS.get(user["email"]) == body.password:
-        raise HTTPException(status_code=403, detail="Спершу змініть початковий пароль акаунта.")
     label = " ".join(body.label.split())
     try:
         link_id, key = create_link(conn, user=user, label=label, profile=body.profile, ttl_days=body.ttl_days)
