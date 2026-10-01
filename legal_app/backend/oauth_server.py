@@ -97,8 +97,8 @@ CONSENT_PATH = "/oauth/consent"
 ACTION_MCP_GRANT = "mcp_grant"
 # Seeded accounts whose passwords are public (auth.py, one-click login).
 PUBLIC_DEMO_EMAILS = frozenset({TEST_USER_EMAIL})
-# Seeded real accounts whose initial password is in the repo: MCP access is
-# refused until the password has been changed from that value.
+# Seeded real accounts whose initial password is in the repo. Firm decision
+# 2026-10-01: no longer blocked from MCP (consent or links) — rotate them.
 SEED_PASSWORDS = {VIKTORIA_USER_EMAIL: VIKTORIA_USER_PASSWORD}
 ACTION_MCP_REVOKE = "mcp_revoke"
 
@@ -551,12 +551,8 @@ class AgLexOAuthProvider:
             return self._render_consent(
                 request_id, error="Демо-акаунт не можна підключати до зовнішніх AI.", status=403
             )
-        if SEED_PASSWORDS.get(user["email"]) == password:
-            return self._render_consent(
-                request_id,
-                error="Пароль цього акаунта ще початковий (він є в коді). Змініть його, потім підключайте AI.",
-                status=403,
-            )
+        # Seed accounts on their repo password (viktoria@) are allowed here by
+        # the firm's decision of 2026-10-01 — see docs/mcp/DESIGN.md.
         for k in keys[:2]:
             self._fails.pop(k, None)
         with self._conn() as conn:
