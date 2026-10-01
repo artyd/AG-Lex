@@ -34,6 +34,13 @@ class Settings(BaseSettings):
         description="Public origin of AG Lex, e.g. https://lex.example.com (no trailing slash).",
     )
     MCP_ENABLED: bool = Field(default=True, description="Serve /mcp + OAuth endpoints.")
+    # MCP stage 3 — live official sources (backend/live_sources). No corpus is
+    # stored: responses live only in a TTL cache file next to the DB.
+    LIVE_SOURCES_ENABLED: bool = Field(default=True)
+    LIVE_CACHE_PATH: str = Field(default=str(BASE_DIR / "database" / "live_cache.sqlite"))
+    RADA_DATA_BASE: str = Field(default="https://data.rada.gov.ua")
+    RADA_RECENT_PATH: str = Field(default="/laws/main/r.json")
+
     # The seeded demo partner `test@aglex.ua` has its password in the repo.
     # Off by default: login, API tokens (incl. already-issued JWTs), WS and
     # MCP consent all refuse it. Tests / e2e / local dev turn it on.
