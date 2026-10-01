@@ -183,11 +183,14 @@ def schedule_broadcast(
     REST handler's sqlite connection isn't safe to share across threads
     once it returns. The async broadcast then targets users directly.
     """
-    event = _build_event(type_, case_id=case_id, actor_id=actor_id, data=data)
-    member_ids = list_member_ids(conn, case_id)
-    if not member_ids:
-        return
-    _schedule(manager.send_to_users(member_ids, event))
+    try:
+        event = _build_event(type_, case_id=case_id, actor_id=actor_id, data=data)
+        member_ids = list_member_ids(conn, case_id)
+        if not member_ids:
+            return
+        _schedule(manager.send_to_users(member_ids, event))
+    except Exception as e:  # noqa: BLE001 — callers have already committed
+        logger.warning("realtime broadcast %s for %s skipped: %r", type_, case_id, e)
 
 
 def schedule_notify(

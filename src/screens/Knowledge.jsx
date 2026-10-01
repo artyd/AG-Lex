@@ -34,6 +34,7 @@ function auditActionLabel(t, action) {
     case 'perm_reset':  return t.actReset || 'Reset defaults';
     case 'mcp_grant':   return t.actMcpGrant || 'AI app connected';
     case 'mcp_revoke':  return t.actMcpRevoke || 'AI app disconnected';
+    case 'mcp_policy':  return t.actMcpPolicy || 'AI privacy policy changed';
     default:            return action;
   }
 }
