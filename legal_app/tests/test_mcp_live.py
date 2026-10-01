@@ -121,7 +121,7 @@ def test_fetcher_block_marker_on_200():
 def test_fetcher_busy_and_budget_and_404():
     clock = Clock()
     pol = HostPolicy(min_interval=100.0, max_wait=5.0, daily_bytes=60)
-    f = _fetcher(lambda r: httpx.Response(200, content=b"x" * 50), clock, policies={"*": pol})
+    f = _fetcher(lambda r: httpx.Response(200, content=b"x" * 50), clock, policies={"example.gov.ua": pol})
     f.fetch("https://example.gov.ua/a", ttl=0)
     with pytest.raises(SourceBusy):  # would need to wait 100 s > max_wait
         f.fetch("https://example.gov.ua/b", ttl=0)
@@ -334,3 +334,12 @@ def test_live_budget_and_article_normalisation(client, seeded, live, monkeypatch
     _ok(client, at, "ua_act_card", {"nreg": "435-15"})
     result, text = _call(client, at, "ua_get_act", {"nreg": "435-15"})
     assert result.get("isError") and "limit" in text
+
+
+
+def test_fetcher_refuses_hosts_without_policy():
+    f = _fetcher(lambda r: httpx.Response(200, content=b"x"))
+    for bad in ("https://evil.example.com/x", "http://data.rada.gov.ua/laws/show/1-1.txt",
+                "https://data.rada.gov.ua:8443/x", "https://user@data.rada.gov.ua/x"):
+        with pytest.raises(Exception, match="outside the official sources"):
+            f.fetch(bad, ttl=0)

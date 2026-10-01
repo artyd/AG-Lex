@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
 import threading
@@ -149,7 +151,7 @@ class LiveFetcher:
 
     # -- cache -------------------------------------------------------------
 
-    def _cache_get(self, url: str, ttl: float) -> Fetched | None:
+    def _cache_get(self, url: str, ttl: float, real_url: str | None = None) -> Fetched | None:
         try:
             with self._cache_lock:
                 row = self._cache.execute(
@@ -161,13 +163,14 @@ class LiveFetcher:
         if row is None:
             return None
         age = time.time() - row[3]
+        shown = real_url or url  # POST keys carry a "#post:<hash>" suffix
         if row[0] == 404:
             if age <= NEGATIVE_TTL:
-                raise SourceNotFound(f"Not found at the official source: {url}")
+                raise SourceNotFound(f"Not found at the official source: {shown}")
             return None
         if age > ttl:
             return None
-        return Fetched(url=url, status=row[0], content_type=row[1] or "", body=row[2],
+        return Fetched(url=shown, status=row[0], content_type=row[1] or "", body=row[2],
                        retrieved_at=row[4], cached=True)
 
     def _cache_put(self, url: str, status: int, content_type: str, body: bytes, retrieved_at: str) -> None:
@@ -201,9 +204,27 @@ class LiveFetcher:
     def policy(self, host: str) -> HostPolicy:
         return self._policies.get(host) or self._policies.get("*") or HostPolicy()
 
-    def _allowed_redirect(self, url: str) -> bool:
+    def _check_host(self, url: str) -> str:
+        """Only hosts with an explicit policy are ever contacted (no "*"), over
+        https, default port, no userinfo — tool args and page links can't
+        steer the backend anywhere else."""
         u = urlparse(url)
-        return u.scheme == "https" and (u.hostname or "").lower() in self._policies
+        host = (u.hostname or "").lower()
+        if u.scheme != "https" or host not in self._policies or u.username or u.port not in (None, 443):
+            raise SourceError("Refusing to contact a host outside the official sources.")
+        return host
+
+    def _redirect_target(self, url: str) -> str | None:
+        """Follow only to hosts that have a policy; plain-http hops on those
+        hosts (CELLAR does this) are upgraded to https."""
+        u = urlparse(url)
+        if (u.hostname or "").lower() not in self._policies or u.username or u.port not in (None, 80, 443):
+            return None
+        if u.scheme == "https":
+            return url
+        if u.scheme == "http":
+            return u._replace(scheme="https", netloc=u.hostname or "").geturl()
+        return None
 
     def fetch(
         self,
@@ -212,14 +233,20 @@ class LiveFetcher:
         ttl: float,
         headers: dict[str, str] | None = None,
         validate: Callable[[Fetched], None] | None = None,
+        json_body: dict | None = None,
     ) -> Fetched:
-        """GET with throttling/breaker/cache. `validate` raises SourceError to
-        reject a body (then it is neither returned nor cached)."""
-        cached = self._cache_get(url, ttl)
+        """GET (or POST with `json_body`) with throttling/breaker/cache.
+        `validate` raises SourceError to reject a body (then it is neither
+        returned nor cached)."""
+        key = url
+        if json_body is not None:
+            payload = json.dumps(json_body, ensure_ascii=False, sort_keys=True)
+            key = url + "#post:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        cached = self._cache_get(key, ttl, url)
         if cached is not None:
             return cached
 
-        host = (urlparse(url).hostname or "").lower()
+        host = self._check_host(url)
         pol = self.policy(host)
         st = self._state(host)
         if self._clock() < st.blocked_until:
@@ -238,25 +265,26 @@ class LiveFetcher:
                 st.waiters -= 1
         try:
             # Another caller may have fetched this URL while we queued.
-            cached = self._cache_get(url, ttl)
+            cached = self._cache_get(key, ttl, url)
             if cached is not None:
                 return cached
-            status, ctype, body = self._request(url, host, pol, st, headers, deadline)
+            status, ctype, body = self._request(url, host, pol, st, headers, deadline, json_body)
         finally:
             st.lock.release()
 
         retrieved_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
         if status == 404:
-            self._cache_put(url, 404, ctype, b"", retrieved_at)
+            self._cache_put(key, 404, ctype, b"", retrieved_at)
             raise SourceNotFound(f"Not found at the official source: {url}")
         f = Fetched(url=url, status=status, body=body, content_type=ctype, retrieved_at=retrieved_at, cached=False)
         if validate is not None:
             validate(f)
-        self._cache_put(url, status, ctype, body, retrieved_at)
+        self._cache_put(key, status, ctype, body, retrieved_at)
         return f
 
     def _request(self, url: str, host: str, pol: HostPolicy, st: _HostState,
-                 headers: dict[str, str] | None, deadline: float) -> tuple[int, str, bytes]:
+                 headers: dict[str, str] | None, deadline: float,
+                 json_body: dict | None = None) -> tuple[int, str, bytes]:
         now = self._clock()
         if now < st.blocked_until:
             raise SourceBlocked(f"{host} temporarily refuses requests from AG Lex; retry later.")
@@ -275,14 +303,20 @@ class LiveFetcher:
         h = {"User-Agent": pol.user_agent, "Accept-Encoding": "identity", **(headers or {})}
         target = url
         try:
+            method = "GET" if json_body is None else "POST"
             for _ in range(MAX_REDIRECTS + 1):
-                with self._client.stream("GET", target, headers=h) as r:
+                with self._client.stream(method, target, headers=h, json=json_body) as r:
                     st.last_request = self._clock()
                     if r.status_code in (301, 302, 303, 307, 308):
-                        nxt = urljoin(target, r.headers.get("location", ""))
-                        if not self._allowed_redirect(nxt):
+                        loc = r.headers.get("location", "").strip()
+                        if not loc:
+                            raise SourceError(f"{host} sent a redirect without a target.")
+                        nxt = self._redirect_target(urljoin(target, loc))
+                        if nxt is None:
                             raise SourceError(f"{host} redirected outside the allowed official sources.")
                         target = nxt
+                        if r.status_code == 303:
+                            method, json_body = "GET", None
                         continue
                     declared = int(r.headers.get("content-length") or 0)
                     if declared > min(MAX_BODY, remaining):

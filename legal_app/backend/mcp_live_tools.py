@@ -3,7 +3,9 @@
 Complements the Ansvar connector (search / provisions / currency across its
 curated corpus) with what it does not do: the act *as in force on a date*,
 the rada feed of new documents, verification of a citation against the
-official text, and court decisions from the state registry.
+official text, court decisions from the state registry, Supreme Court legal
+positions, its ECHR digest, Constitutional Court decisions and EU law
+(CELLAR).
 
 Public law only — no firm data — so restricted (ChatGPT) clients may use
 these too (kind "law"). Every answer carries `source_url` + `retrieved_at`.
@@ -21,6 +23,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .config import get_settings
+from .live_sources import ccu, eurlex, supreme
 from .live_sources import citation as citation_mod
 from .live_sources import court
 from .live_sources.fetcher import HostPolicy, LiveFetcher, SourceError
@@ -50,7 +53,14 @@ def get_fetcher() -> LiveFetcher:
             host = (urlparse(s.RADA_DATA_BASE).hostname or DATA_HOST).lower()
             _fetcher = LiveFetcher(
                 cache_path=s.LIVE_CACHE_PATH,
-                policies={host: RADA_POLICY, court.HOST: court.COURT_POLICY, "*": HostPolicy()},
+                policies={
+                    host: RADA_POLICY,
+                    court.HOST: court.COURT_POLICY,
+                    supreme.HOST: supreme.LPD_POLICY,
+                    ccu.HOST: ccu.CCU_POLICY,
+                    eurlex.HOST: eurlex.CELLAR_POLICY,
+                    "*": HostPolicy(),
+                },
             )
         return _fetcher
 
@@ -177,6 +187,63 @@ def court_decision_impl(conn: sqlite3.Connection, p: Principal, decision_id: str
     return d
 
 
+def sc_search_impl(conn: sqlite3.Connection, p: Principal, query: str, limit: int = 10) -> dict:
+    _enabled(p)
+    return {**supreme.search(get_fetcher(), query, limit), "notice": UNTRUSTED_NOTE}
+
+
+def sc_position_impl(conn: sqlite3.Connection, p: Principal, position_id: str) -> dict:
+    _enabled(p)
+    return {**supreme.position(get_fetcher(), position_id), "notice": UNTRUSTED_NOTE}
+
+
+def echr_digest_impl(conn: sqlite3.Connection, p: Principal, query: str = "", limit: int = 20) -> dict:
+    _enabled(p)
+    return {**supreme.echr_digest(get_fetcher(), query, limit), "notice": UNTRUSTED_NOTE}
+
+
+def ccu_search_impl(conn: sqlite3.Connection, p: Principal, query: str, limit: int = 10) -> dict:
+    _enabled(p)
+    return {**ccu.search(get_fetcher(), query, limit), "notice": UNTRUSTED_NOTE}
+
+
+def ccu_document_impl(conn: sqlite3.Connection, p: Principal, url: str, with_pdf: bool = True,
+                      max_chars: int = 30_000) -> dict:
+    _enabled(p)
+    d = ccu.document(get_fetcher(), url, with_pdf)
+    d["text"], d["truncated"] = _cap(d.get("text") or "", max_chars)
+    if d.get("pdf_text"):
+        d["pdf_text"], d["pdf_truncated"] = _cap(d["pdf_text"], max_chars)
+    d["notice"] = UNTRUSTED_NOTE
+    return d
+
+
+def eu_search_impl(conn: sqlite3.Connection, p: Principal, query: str, limit: int = 10) -> dict:
+    _enabled(p)
+    return {**eurlex.search(get_fetcher(), query, limit), "notice": UNTRUSTED_NOTE}
+
+
+def eu_get_act_impl(conn: sqlite3.Connection, p: Principal, celex: str, article: str = "",
+                    max_chars: int = 20_000) -> dict:
+    _enabled(p)
+    a = eurlex.act(get_fetcher(), celex)
+    out = {k: v for k, v in a.items() if k != "text"}
+    if article:
+        m = re.search(r"\d+[a-zA-Z]?", article or "")
+        if not m:
+            raise ToolError("article must contain an article number, e.g. 6.")
+        no = m.group(0).lower()
+        art = eurlex.split_articles(a["text"]).get(no)
+        if art is None:
+            raise ToolError(f"Article {no} not found in {a['celex']}.")
+        out["article"] = no
+        out["text"], out["truncated"] = _cap(art, max_chars)
+    else:
+        out["text"], out["truncated"] = _cap(a["text"], max_chars)
+    out["notice"] = UNTRUSTED_NOTE
+    return out
+
+
 # ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
@@ -222,6 +289,53 @@ def register_live_tools(mcp: MCPServer, run: RunFn) -> None:
         наведену цитату quote. Захист від вигаданих норм."""
         return run("ua_verify_citation", {"citation": citation, "quote": quote, "as_of": as_of},
                    _live(lambda c, p: verify_citation_impl(c, p, citation, quote, as_of)))
+
+    @mcp.tool(annotations=_LIVE)
+    def ua_sc_legal_positions(query: str, limit: int = 10) -> dict:
+        """Пошук правових позицій Верховного Суду (lpd.court.gov.ua) за текстом.
+        Кожна позиція — з постановами-джерелами (номер справи, id у ЄДРСР для
+        ua_court_decision)."""
+        return run("ua_sc_legal_positions", {"query": query},
+                   _live(lambda c, p: sc_search_impl(c, p, query, limit)))
+
+    @mcp.tool(annotations=_LIVE)
+    def ua_sc_legal_position(position_id: str) -> dict:
+        """Повний текст правової позиції ВС за id (з lpd.court.gov.ua/legal-position/<id>)."""
+        return run("ua_sc_legal_position", {"position_id": position_id},
+                   _live(lambda c, p: sc_position_impl(c, p, position_id)))
+
+    @mcp.tool(annotations=_LIVE)
+    def echr_cases(query: str = "", limit: int = 20) -> dict:
+        """Практика ЄСПЛ з дайджесту Верховного Суду: назва справи, номер заяви,
+        дата, резюме українською та посилання на HUDOC. query — фільтр
+        (напр. «Ukraine», «психіатр», номер заяви)."""
+        return run("echr_cases", {"query": query}, _live(lambda c, p: echr_digest_impl(c, p, query, limit)))
+
+    @mcp.tool(annotations=_LIVE)
+    def ua_ccu_search(query: str, limit: int = 10) -> dict:
+        """Пошук на сайті Конституційного Суду (ccu.gov.ua): рішення, висновки,
+        прес-релізи. Повертає посилання для ua_ccu_document."""
+        return run("ua_ccu_search", {"query": query}, _live(lambda c, p: ccu_search_impl(c, p, query, limit)))
+
+    @mcp.tool(annotations=_LIVE)
+    def ua_ccu_document(url: str, with_pdf: bool = True, max_chars: int = 30_000) -> dict:
+        """Текст сторінки КСУ (з ua_ccu_search) і, якщо є, прикріпленого PDF рішення."""
+        return run("ua_ccu_document", {"url": url},
+                   _live(lambda c, p: ccu_document_impl(c, p, url, with_pdf, max_chars)))
+
+    @mcp.tool(annotations=_LIVE)
+    def eu_search_legislation(query: str, limit: int = 10) -> dict:
+        """Пошук актів права ЄС (регламенти, директиви, рішення) за словами назви
+        англійською, напр. «data protection». Повертає CELEX для eu_get_act."""
+        return run("eu_search_legislation", {"query": query},
+                   _live(lambda c, p: eu_search_impl(c, p, query, limit)))
+
+    @mcp.tool(annotations=_LIVE)
+    def eu_get_act(celex: str, article: str = "", max_chars: int = 20_000) -> dict:
+        """Текст акта ЄС (англ.) з CELLAR/EUR-Lex за CELEX (напр. 32016R0679 — GDPR);
+        article — номер статті."""
+        return run("eu_get_act", {"celex": celex, "article": article},
+                   _live(lambda c, p: eu_get_act_impl(c, p, celex, article, max_chars)))
 
     @mcp.tool(annotations=_LIVE)
     def ua_court_decision(decision_id: str, max_chars: int = 30_000) -> dict:

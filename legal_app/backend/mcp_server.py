@@ -88,7 +88,11 @@ AI_DAY_S = 24 * 3600.0
 WRITE_LIMIT_PER_DAY = 200
 WRITE_TOOLS = frozenset({"firm_create_task", "firm_add_note", "firm_link_citation", "firm_create_draft"})
 AI_TOOLS = frozenset({"ai_analyze_contract", "ai_reconcile"})
-LIVE_TOOLS = frozenset({"ua_get_act", "ua_act_card", "ua_recent_changes", "ua_verify_citation", "ua_court_decision"})
+LIVE_TOOLS = frozenset({
+    "ua_get_act", "ua_act_card", "ua_recent_changes", "ua_verify_citation", "ua_court_decision",
+    "ua_sc_legal_positions", "ua_sc_legal_position", "echr_cases", "ua_ccu_search", "ua_ccu_document",
+    "eu_search_legislation", "eu_get_act",
+})
 # Each live call may cost a request to rada/court (6 s apart, IP-ban risk):
 # far below the general 120/min read limit.
 LIVE_LIMIT_PER_MIN = 10
