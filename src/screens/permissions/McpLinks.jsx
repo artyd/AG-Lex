@@ -50,9 +50,13 @@ function LinksTable({ t, rows, showUser, onRevoke }) {
               </td>
               {showUser ? <td>{l.user_name || l.user_email}</td> : null}
               <td>
-                <span className={'mcp-badge' + (l.profile === 'restricted' ? ' mcp-badge-restricted' : '')}>
-                  {l.profile === 'restricted' ? (t.mcpRestricted || 'Обмежений') : (t.mcpFull || 'Повний')}
-                </span>
+                {l.unrestricted ? (
+                  <span className="mcp-badge mcp-badge-unrestricted">{t.mcpLinkUnrestrictedBadge || 'Без обмежень'}</span>
+                ) : (
+                  <span className={'mcp-badge' + (l.profile === 'restricted' ? ' mcp-badge-restricted' : '')}>
+                    {l.profile === 'restricted' ? (t.mcpRestricted || 'Обмежений') : (t.mcpFull || 'Повний')}
+                  </span>
+                )}
               </td>
               <td className="mcp-ts">{fmtDate(l.last_used_at)}</td>
               <td className="mcp-ts">{fmtDate(l.expires_at)}</td>
@@ -77,7 +81,7 @@ function LinksTable({ t, rows, showUser, onRevoke }) {
 export function McpLinks({ t, canManage }) {
   const [mine, setMine] = useState([]);
   const [all, setAll] = useState([]);
-  const [form, setForm] = useState({ label: 'Claude Desktop', profile: 'full', password: '' });
+  const [form, setForm] = useState({ label: 'Claude Desktop', profile: 'full', password: '', unrestricted: false });
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
 
@@ -91,7 +95,7 @@ export function McpLinks({ t, canManage }) {
 
   const create = useCallback(async (e) => {
     e.preventDefault();
-    if (busy || !form.password) return;
+    if (busy || (!form.password && !form.unrestricted)) return;
     setBusy(true);
     try {
       const res = await api.request('/api/me/mcp-links', { method: 'POST', body: form });
@@ -134,22 +138,38 @@ export function McpLinks({ t, canManage }) {
           <span>{t.mcpLinkLabel || 'Назва'}</span>
           <input value={form.label} maxLength={60} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
         </label>
-        <label>
-          <span>{t.mcpAccess || 'Доступ'}</span>
-          <select value={form.profile} onChange={e => setForm(f => ({ ...f, profile: e.target.value }))}>
-            <option value="full">{t.mcpLinkFull || 'Повний (Claude)'}</option>
-            <option value="restricted">{t.mcpLinkRestricted || 'Обмежений (ChatGPT: без документів і білінгу)'}</option>
-          </select>
-        </label>
-        <label>
-          <span>{t.mcpLinkPassword || 'Ваш пароль AG Lex'}</span>
-          <input type="password" autoComplete="current-password" value={form.password}
-                 onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
-        </label>
-        <button type="submit" className="acc-reset" disabled={busy || !form.password}>
+        {!form.unrestricted ? (
+          <>
+            <label>
+              <span>{t.mcpAccess || 'Доступ'}</span>
+              <select value={form.profile} onChange={e => setForm(f => ({ ...f, profile: e.target.value }))}>
+                <option value="full">{t.mcpLinkFull || 'Повний (Claude)'}</option>
+                <option value="restricted">{t.mcpLinkRestricted || 'Обмежений (ChatGPT: без документів і білінгу)'}</option>
+              </select>
+            </label>
+            <label>
+              <span>{t.mcpLinkPassword || 'Ваш пароль AG Lex'}</span>
+              <input type="password" autoComplete="current-password" value={form.password}
+                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            </label>
+          </>
+        ) : null}
+        {canManage ? (
+          <label className="mcp-link-unrestricted">
+            <span>{t.mcpLinkUnrestricted || 'Без обмежень'}</span>
+            <input type="checkbox" checked={form.unrestricted}
+                   onChange={e => setForm(f => ({ ...f, unrestricted: e.target.checked }))} />
+          </label>
+        ) : null}
+        <button type="submit" className="acc-reset" disabled={busy || (!form.password && !form.unrestricted)}>
           <Icon name="plus" size={14} /> {t.mcpLinkCreate || 'Створити посилання'}
         </button>
       </form>
+      {form.unrestricted ? (
+        <p className="mcp-hint mcp-warn">
+          {t.mcpLinkUnrestrictedHint || 'Безстрокове посилання без лімітів: бачить усі справи фірми, ігнорує права ролі та конфіденційність для AI. Будь-хто з посиланням має такий доступ — зберігайте його як пароль адміністратора.'}
+        </p>
+      ) : null}
 
       {created ? (
         <div className="acc-card mcp-link-created">

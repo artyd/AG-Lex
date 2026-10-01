@@ -415,7 +415,7 @@ class AgLexOAuthProvider:
         return AccessToken(
             token=key,
             client_id=f"link:{link['id']}",
-            scopes=allowed_scopes_for(link["profile"]),
+            scopes=list(ALL_SCOPES) if link["unrestricted"] else allowed_scopes_for(link["profile"]),
             expires_at=link["expires_at"],
             resource=self.resource_url,
             subject=str(link["user_id"]),

@@ -84,7 +84,7 @@ def create_task_impl(
 
     _writable_matter(conn, p, matter_id)
     who = p.text_id if assignee in ("", "me") else assignee
-    if who not in list_member_ids(conn, matter_id):
+    if not p.unrestricted and who not in list_member_ids(conn, matter_id):
         raise ToolError("Assignee must be a member of the matter.")
     if priority not in ("low", "med", "high"):
         raise ToolError("priority must be low | med | high")

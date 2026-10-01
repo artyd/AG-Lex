@@ -214,3 +214,78 @@ def test_admin_revokes_all_mcp_access_of_user(client, seeded):
     assert r.status_code == 200 and r.json()["revoked"] >= 2
     assert _rpc(client, p1, "tools/list").status_code == 401 and _rpc(client, p2, "tools/list").status_code == 401
     assert client.delete(f"/api/admin/mcp-access/{seeded['alice']}", headers=bob).status_code == 403
+
+
+
+# ---------------------------------------------------------------------------
+# unrestricted links (firm decision 2026-10-01)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def other_matter(seeded, db_conn):
+    db_conn.execute("INSERT INTO matters (id, code, title, client, status, next_deadline) "
+                    "VALUES ('m-2', 'VEK-2', 'Чужа справа', 'ТД Вектор', 'active', '2026-11-01')")
+    db_conn.execute("INSERT INTO case_members (case_id, user_id, role_in_case, added_at) VALUES ('m-2', 'ub', 'lead', 'x')")
+    db_conn.execute("INSERT INTO tasks (id, title, matter, assignee, due, priority, col) "
+                    "VALUES ('t-2', 'Чужа задача', 'VEK-2', 'ub', '2026-10-10', 'med', 'todo')")
+    db_conn.execute("INSERT INTO mcp_policy (kind, key, set_at) VALUES ('matter', 'm-1', 'now')")
+    db_conn.commit()
+    return seeded
+
+
+def test_unrestricted_requires_manage(client, seeded):
+    r = client.post("/api/me/mcp-links", headers=_web(client, "bob@aglex.ua"), json={"unrestricted": True})
+    assert r.status_code == 403
+
+
+def test_unrestricted_link_sees_everything_without_limits(client, other_matter, db_conn, monkeypatch):
+    web = _web(client)  # alice: partner (manage)
+    r = client.post("/api/me/mcp-links", headers=web, json={"label": "Віка", "unrestricted": True})  # no password
+    assert r.status_code == 201, r.text
+    assert r.json()["unrestricted"] is True and r.json()["expires_in_days"] is None
+    path = _path(r.json()["url"])
+    _init(client, path)
+
+    # firm-wide matters, incl. one alice isn't on and one closed by ai_external policy
+    _, text = _call(client, path, "firm_list_matters")
+    assert {m["id"] for m in json.loads(text)["matters"]} == {"m-1", "m-2"}
+    _, text = _call(client, path, "firm_get_matter", {"matter_id": "m-1"})
+    assert json.loads(text)["id"] == "m-1"
+    _, text = _call(client, path, "firm_list_tasks")
+    assert {t["id"] for t in json.loads(text)["tasks"]} == {"t-1", "t-2"}
+    _, text = _call(client, path, "firm_calendar")
+    assert {e["case_id"] for e in json.loads(text)["events"]} >= {"m-1", "m-2"}
+    # writes into someone else's matter, task for its member
+    res, text = _call(client, path, "firm_create_task", {"matter_id": "m-2", "title": "x", "assignee": "ub"})
+    assert not res.get("isError"), text
+
+    # role capabilities ignored
+    db_conn.execute("UPDATE permissions SET allowed = 0 WHERE role = 'partner'")
+    db_conn.commit()
+    res, text = _call(client, path, "firm_get_document", {"document_id": "d-1"})
+    assert not res.get("isError"), text
+
+    # no rate limit
+    import backend.mcp_server as ms
+    monkeypatch.setattr(ms, "RATE_LIMIT_CALLS", 1)
+    for _ in range(3):
+        res, _ = _call(client, path, "whoami")
+        assert not res.get("isError")
+
+    # no expiry / idle timeout
+    db_conn.execute("UPDATE mcp_links SET created_at = 1, last_used_at = 1 WHERE id = ?", (r.json()["id"],))
+    db_conn.commit()
+    assert _rpc(client, path, "tools/list").status_code == 200
+    assert client.get("/api/me/mcp-links", headers=web).json()[0]["expires_at"] is None
+
+    # still revocable and audited
+    assert db_conn.execute("SELECT COUNT(*) FROM mcp_audit WHERE client_id LIKE 'link:%'").fetchone()[0] > 0
+    client.delete(f"/api/me/mcp-links/{r.json()['id']}", headers=web)
+    assert _rpc(client, path, "tools/list").status_code == 401
+
+
+def test_regular_link_unchanged_by_unrestricted_feature(client, other_matter):
+    path = _path(_make_link(client, _web(client)).json()["url"])
+    _init(client, path)
+    _, text = _call(client, path, "firm_list_matters")
+    assert json.loads(text)["matters"] == []  # m-1 denied by policy, m-2 not a member

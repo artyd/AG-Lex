@@ -195,8 +195,12 @@ def _pw_fail(user_id: int) -> None:
 class LinkIn(BaseModel):
     label: str = Field("Claude Desktop", min_length=1, max_length=60)
     profile: Literal["full", "restricted"] = "full"
-    password: str = Field(..., min_length=1, max_length=128)
+    password: str = Field("", max_length=128)
     ttl_days: int = Field(90, ge=7, le=365)
+    # Firm decision 2026-10-01: `manage` users may mint links with no expiry,
+    # no rate limits, firm-wide data access (no matter ACL / role caps /
+    # ai_external policy) and without re-entering the password.
+    unrestricted: bool = False
 
 
 @router.get("/api/me/mcp-links")
@@ -218,23 +222,30 @@ def create_my_link(
     from .auth import verify_password
     from .oauth_server import PUBLIC_DEMO_EMAILS
 
-    if _pw_throttled(user["id"]):
-        raise HTTPException(status_code=429, detail="Забагато невдалих спроб. Зачекайте 15 хвилин.")
-    if not verify_password(body.password, user["password_hash"]):
-        _pw_fail(user["id"])
-        raise HTTPException(status_code=403, detail="Невірний пароль.")
     if user["email"] in PUBLIC_DEMO_EMAILS:
         raise HTTPException(status_code=403, detail="Демо-акаунт не може створювати посилання.")
+    if body.unrestricted:
+        from .rbac import has_capability
+        if not has_capability(conn, user["role"], "manage"):
+            raise HTTPException(status_code=403, detail="Посилання без обмежень можуть створювати лише адміністратори.")
+    else:
+        if _pw_throttled(user["id"]):
+            raise HTTPException(status_code=429, detail="Забагато невдалих спроб. Зачекайте 15 хвилин.")
+        if not body.password or not verify_password(body.password, user["password_hash"]):
+            _pw_fail(user["id"])
+            raise HTTPException(status_code=403, detail="Невірний пароль.")
     label = " ".join(body.label.split())
     try:
-        link_id, key = create_link(conn, user=user, label=label, profile=body.profile, ttl_days=body.ttl_days)
+        link_id, key = create_link(conn, user=user, label=label, profile="full" if body.unrestricted else body.profile,
+                                   ttl_days=body.ttl_days, unrestricted=body.unrestricted)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     audit_module.log(conn, actor=user, action=ACTION_MCP_LINK_CREATE, target=label,
-                     meta={"link_id": link_id, "profile": body.profile, "ttl_days": body.ttl_days})
+                     meta={"link_id": link_id, "profile": body.profile, "ttl_days": body.ttl_days,
+                           "unrestricted": body.unrestricted})
     base = get_settings().PUBLIC_BASE_URL.rstrip("/")
     return {"id": link_id, "label": label, "profile": body.profile, "url": f"{base}/mcp/k/{key}",
-            "expires_in_days": body.ttl_days,
+            "expires_in_days": None if body.unrestricted else body.ttl_days, "unrestricted": body.unrestricted,
             "warning": "Посилання показується один раз. Хто його має — працює від вашого імені."}
 
 

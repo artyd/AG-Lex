@@ -24,6 +24,7 @@ Tables (all `CREATE IF NOT EXISTS`, convention #5):
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import secrets
@@ -96,7 +97,8 @@ CREATE TABLE IF NOT EXISTS mcp_links (
     created_at   INTEGER NOT NULL,
     expires_at   INTEGER NOT NULL,
     last_used_at INTEGER,
-    revoked      INTEGER NOT NULL DEFAULT 0
+    revoked      INTEGER NOT NULL DEFAULT 0,
+    unrestricted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_links_user ON mcp_links(user_id);
 
@@ -136,6 +138,9 @@ def init_oauth_schema(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(oauth_tokens)")}
     if "user_email" not in cols:
         conn.execute("ALTER TABLE oauth_tokens ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
+    link_cols = {r[1] for r in conn.execute("PRAGMA table_info(mcp_links)")}
+    if "unrestricted" not in link_cols:
+        conn.execute("ALTER TABLE mcp_links ADD COLUMN unrestricted INTEGER NOT NULL DEFAULT 0")
     code_cols = {r[1] for r in conn.execute("PRAGMA table_info(oauth_codes)")}
     if "used" not in code_cols:
         conn.execute("ALTER TABLE oauth_codes ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
@@ -245,7 +250,14 @@ def set_policy(conn: sqlite3.Connection, *, kind: str, key: str, deny: bool, use
     conn.commit()
 
 
+# Set by mcp_server.run() for calls made through an "unrestricted" link
+# (firm decision 2026-10-01): the ai_external policy is not applied to them.
+POLICY_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar("aglex_mcp_policy_bypass", default=False)
+
+
 def _denied(conn: sqlite3.Connection, kind: str) -> set[str]:
+    if POLICY_BYPASS.get():
+        return set()
     return {r[0] for r in conn.execute(
         "SELECT key FROM mcp_policy WHERE kind = ? AND ai_external = 'deny'", (kind,)
     )}
@@ -302,7 +314,11 @@ def _link_hash(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: str, ttl_days: int) -> tuple[int, str]:
+UNRESTRICTED_EXPIRES_AT = 4102444800  # 2100-01-01: "no expiry", revoke to stop
+
+
+def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: str, ttl_days: int,
+                unrestricted: bool = False) -> tuple[int, str]:
     (active,) = conn.execute(
         "SELECT COUNT(*) FROM mcp_links WHERE user_id = ? AND revoked = 0 AND expires_at > ?",
         (user["id"], int(time.time())),
@@ -311,10 +327,11 @@ def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: st
         raise ValueError(f"At most {MAX_LINKS_PER_USER} active links per person; revoke an old one first.")
     key = LINK_PREFIX + secrets.token_urlsafe(32)
     now = int(time.time())
+    expires = UNRESTRICTED_EXPIRES_AT if unrestricted else now + ttl_days * 86400
     cur = conn.execute(
-        "INSERT INTO mcp_links (key_hash, key_hint, user_id, user_email, label, profile, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (_link_hash(key), key[-4:], user["id"], user["email"], label, profile, now, now + ttl_days * 86400),
+        "INSERT INTO mcp_links (key_hash, key_hint, user_id, user_email, label, profile, created_at, expires_at, "
+        "unrestricted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_link_hash(key), key[-4:], user["id"], user["email"], label, profile, now, expires, 1 if unrestricted else 0),
     )
     conn.commit()
     return cur.lastrowid, key
@@ -323,7 +340,7 @@ def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: st
 def resolve_link(conn: sqlite3.Connection, key: str) -> dict | None:
     """Live link for this key (owner still exists with the same email), or None."""
     row = conn.execute(
-        "SELECT l.id, l.user_id, l.profile, l.label, l.expires_at, l.last_used_at "
+        "SELECT l.id, l.user_id, l.profile, l.label, l.expires_at, l.last_used_at, l.unrestricted "
         "FROM mcp_links l JOIN users u ON u.id = l.user_id AND u.email = l.user_email "
         "WHERE l.key_hash = ? AND l.revoked = 0",
         (_link_hash(key),),
@@ -332,25 +349,26 @@ def resolve_link(conn: sqlite3.Connection, key: str) -> dict | None:
     if row is None or row[4] < now:
         return None
     created = conn.execute("SELECT created_at FROM mcp_links WHERE id = ?", (row[0],)).fetchone()[0]
-    if now - (row[5] or created) > LINK_IDLE_S:
+    if not row[6] and now - (row[5] or created) > LINK_IDLE_S:  # unrestricted links never idle out
         return None
     if not row[5] or now - row[5] > LINK_TOUCH_EVERY_S:
         conn.execute("UPDATE mcp_links SET last_used_at = ? WHERE id = ?", (now, row[0]))
         conn.commit()
-    return {"id": row[0], "user_id": row[1], "profile": row[2], "label": row[3], "expires_at": row[4]}
+    return {"id": row[0], "user_id": row[1], "profile": row[2], "label": row[3], "expires_at": row[4],
+            "unrestricted": bool(row[6])}
 
 
 def link_info(conn: sqlite3.Connection, link_id: int) -> dict | None:
     """Label/profile only. Validity (revoked/expiry/owner) is checked by
     resolve_link when the key is presented — don't use this as an auth check."""
-    row = conn.execute("SELECT id, profile, label FROM mcp_links WHERE id = ?", (link_id,)).fetchone()
-    return {"id": row[0], "profile": row[1], "label": row[2]} if row else None
+    row = conn.execute("SELECT id, profile, label, unrestricted FROM mcp_links WHERE id = ?", (link_id,)).fetchone()
+    return {"id": row[0], "profile": row[1], "label": row[2], "unrestricted": bool(row[3])} if row else None
 
 
 def list_links(conn: sqlite3.Connection, *, user_id: int | None = None) -> list[dict]:
     sql = (
         "SELECT l.id, l.label, l.profile, l.key_hint, l.created_at, l.expires_at, l.last_used_at, "
-        "l.user_id, u.name, u.email FROM mcp_links l "
+        "l.user_id, u.name, u.email, l.unrestricted FROM mcp_links l "
         "JOIN users u ON u.id = l.user_id AND u.email = l.user_email "
         "WHERE l.revoked = 0 AND l.expires_at > ?"
     )
@@ -360,8 +378,13 @@ def list_links(conn: sqlite3.Connection, *, user_id: int | None = None) -> list[
         args.append(user_id)
     sql += " ORDER BY l.created_at DESC"
     keys = ("id", "label", "profile", "key_hint", "created_at", "expires_at", "last_used_at",
-            "user_id", "user_name", "user_email")
-    return [dict(zip(keys, r)) for r in conn.execute(sql, args).fetchall()]
+            "user_id", "user_name", "user_email", "unrestricted")
+    rows = [dict(zip(keys, r)) for r in conn.execute(sql, args).fetchall()]
+    for r in rows:
+        r["unrestricted"] = bool(r["unrestricted"])
+        if r["unrestricted"]:
+            r["expires_at"] = None
+    return rows
 
 
 def revoke_all_for_user(conn: sqlite3.Connection, user_id: int) -> int:
