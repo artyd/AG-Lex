@@ -255,3 +255,8 @@
 }
 .mcp-link-actions { display: flex; gap: 8px; }
 @media (max-width: 760px) { .mcp-link-form input, .mcp-link-form select { min-width: 0; width: 100%; } .mcp-link-form label { width: 100%; } }
+
+.mcp-link-unrestricted { flex-direction: row !important; align-items: center; gap: 8px !important; }
+.mcp-link-unrestricted input { min-width: 0 !important; width: auto; }
+.mcp-badge-unrestricted { background: color-mix(in oklab, var(--risk-high, #c0392b) 15%, transparent); color: var(--risk-high, #c0392b); }
+.mcp-warn { color: var(--risk-high, #c0392b); }

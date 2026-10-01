@@ -43,6 +43,10 @@ class Principal:
     profile: str
     capabilities: set[str] = field(default_factory=set)
     client_name: str = ""
+    # Firm decision 2026-10-01: an "unrestricted" link (created by a `manage`
+    # user) sees every matter, ignores role capabilities, the ai_external
+    # policy and rate limits. Calls are still audited; revoke to stop.
+    unrestricted: bool = False
 
     @property
     def role(self) -> str:
@@ -63,10 +67,12 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
     user = get_user_by_id(conn, user_id)
     if user is None or login_blocked(user):
         raise ToolError("User no longer exists.")
+    unrestricted = False
     if token.client_id.startswith("link:"):
         # Secret-link connector: profile + label come from the link itself.
         link = link_info(conn, int(token.client_id.split(":", 1)[1]))
         profile = link["profile"] if link else PROFILE_RESTRICTED
+        unrestricted = bool(link and link["unrestricted"])
         client_name = ((link or {}).get("label") or "Claude") + " · посилання"
     else:
         row = conn.execute(
@@ -78,7 +84,7 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
     caps = {
         cap
         for cap in ("view", "edit", "ai", "billing", "pdata", "manage")
-        if has_capability(conn, user["role"], cap)
+        if unrestricted or has_capability(conn, user["role"], cap)
     }
     return Principal(
         user={k: v for k, v in user.items() if k != "password_hash"},
@@ -89,11 +95,14 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
         capabilities=caps,
         # App-chosen (DCR) → strip control chars so it can't forge note lines.
         client_name=" ".join(_CONTROL.sub(" ", str(client_name)).split())[:60] or "AI",
+        unrestricted=unrestricted,
     )
 
 
 def require(p: Principal, *, scope: str = SCOPE_READ, capability: str = "view", kind: str) -> None:
     """Raise ToolError unless scope, role capability and client profile allow `kind`."""
+    if p.unrestricted:
+        return
     if scope not in p.scopes:
         raise ToolError(f"The connected app was not granted '{scope}'. Reconnect AG Lex and allow it.")
     if capability not in p.capabilities:
@@ -106,7 +115,7 @@ def require(p: Principal, *, scope: str = SCOPE_READ, capability: str = "view", 
 
 
 def can_see(p: Principal, kind: str) -> bool:
-    return not (p.restricted and kind not in RESTRICTED_ALLOWED_KINDS)
+    return p.unrestricted or not (p.restricted and kind not in RESTRICTED_ALLOWED_KINDS)
 
 
 POLICY_DENIED_MSG = (
@@ -121,6 +130,8 @@ def check_matter_policy(conn: sqlite3.Connection, matter_id: str) -> None:
 
 
 def member_matter_ids(conn: sqlite3.Connection, p: Principal) -> set[str]:
+    if p.unrestricted:
+        return {r[0] for r in conn.execute("SELECT id FROM matters")}
     rows = conn.execute(
         "SELECT case_id FROM case_members WHERE user_id = ?", (p.text_id,)
     ).fetchall()
@@ -128,6 +139,8 @@ def member_matter_ids(conn: sqlite3.Connection, p: Principal) -> set[str]:
 
 
 def is_matter_member(conn: sqlite3.Connection, p: Principal, matter_id: str) -> bool:
+    if p.unrestricted:
+        return conn.execute("SELECT 1 FROM matters WHERE id = ?", (matter_id,)).fetchone() is not None
     return (
         conn.execute(
             "SELECT 1 FROM case_members WHERE case_id = ? AND user_id = ?",

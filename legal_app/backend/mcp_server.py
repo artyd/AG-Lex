@@ -58,7 +58,7 @@ from .mcp_dispatch import MCP_PATH
 from .mcp_firm_tools import register_firm_tools
 from .mcp_live_tools import register_live_tools
 from .oauth_server import ALL_SCOPES, SCOPE_AI, AgLexOAuthProvider
-from .oauth_store import denied_matter_ids, document_denied, documents_all_denied, log_mcp_call
+from .oauth_store import POLICY_BYPASS, denied_matter_ids, document_denied, documents_all_denied, log_mcp_call
 
 log = logging.getLogger("aglex.mcp")
 
@@ -173,7 +173,7 @@ def list_matters_impl(
     conn: sqlite3.Connection, p: Principal, query: str = "", status: str = "", limit: int = 20
 ) -> dict:
     require(p, kind="matters")
-    cards = list_matters(user=p.user, conn=conn)
+    cards = _all_matter_cards(conn) if p.unrestricted else list_matters(user=p.user, conn=conn)
     denied = denied_matter_ids(conn)
     hidden = sum(1 for c in cards if c["id"] in denied)
     cards = [c for c in cards if c["id"] not in denied]
@@ -193,6 +193,22 @@ def list_matters_impl(
     if hidden and not p.restricted:
         out["hidden_by_policy"] = hidden
     return out
+
+
+def _all_matter_cards(conn: sqlite3.Connection) -> list[dict]:
+    """Every matter (unrestricted links) — same card shape as list_matters."""
+    from .matters_routes import _row_to_card
+
+    rows = conn.execute(
+        """
+        SELECT m.id, m.code, m.title, m.client, m.type, m.status, m.priority,
+               m.lead, m.docs, m.open_tasks, m.hours, m.color,
+               m.next_deadline, m.next_label, m.updated_at
+        FROM matters m
+        ORDER BY COALESCE(m.updated_at, m.started_at) DESC
+        """
+    ).fetchall()
+    return [_row_to_card(r) for r in rows]
 
 
 def get_matter_impl(conn: sqlite3.Connection, p: Principal, matter_id: str) -> dict:
@@ -227,11 +243,11 @@ def list_tasks_impl(
                m.id, m.title
         FROM tasks t
         JOIN matters m ON m.code = t.matter
-        JOIN case_members cm ON cm.case_id = m.id AND cm.user_id = ?
+        """ + ("" if p.unrestricted else "JOIN case_members cm ON cm.case_id = m.id AND cm.user_id = ?\n") + """
         WHERE 1 = 1
         """
     ]
-    args: list[Any] = [p.text_id]
+    args: list[Any] = [] if p.unrestricted else [p.text_id]
     denied = sorted(denied_matter_ids(conn))
     if denied:
         # one JSON param instead of N placeholders (SQLite's 999-variable cap)
@@ -262,13 +278,18 @@ def calendar_impl(
     # list_events filters only when both bounds are given; apply one-sided
     # bounds here so a lone date_from/date_to isn't silently ignored.
     both = bool(date_from and date_to)
-    events = list_events(
-        from_=date_from if both else None,
-        to=date_to if both else None,
-        only_mine=1 if only_mine else 0,
-        user_text_id=p.text_id,
-        conn=conn,
-    )
+    if p.unrestricted and not only_mine:
+        events = _all_events(conn)
+    else:
+        events = list_events(
+            from_=date_from if both else None,
+            to=date_to if both else None,
+            only_mine=1 if only_mine else 0,
+            user_text_id=p.text_id,
+            conn=conn,
+        )
+    if both and p.unrestricted and not only_mine:
+        events = [e for e in events if e.get("date") and date_from <= e["date"] <= date_to]
     denied = denied_matter_ids(conn)
     if denied:
         events = [e for e in events if e.get("case_id") not in denied]
@@ -278,6 +299,31 @@ def calendar_impl(
         if date_to:
             events = [e for e in events if e.get("date") and e["date"] <= date_to]
     return {"events": events}
+
+
+def _all_events(conn: sqlite3.Connection) -> list[dict]:
+    """Firm-wide calendar (unrestricted links): tasks, hearings, next deadlines."""
+    out: list[dict] = []
+    for r in conn.execute(
+        "SELECT t.id, t.due, t.title, m.id, m.code, m.title, t.assignee, t.priority FROM tasks t "
+        "JOIN matters m ON m.code = t.matter WHERE t.due IS NOT NULL"
+    ):
+        out.append({"id": r[0], "kind": "task", "date": r[1], "title": r[2], "case_id": r[3], "case_code": r[4],
+                    "case_title": r[5], "assignee": r[6], "priority": r[7]})
+    for r in conn.execute(
+        "SELECT h.id, h.date, COALESCE(h.court, 'Засідання'), m.id, m.code, m.title FROM case_hearings h "
+        "JOIN matters m ON m.id = h.case_id"
+    ):
+        out.append({"id": r[0], "kind": "hearing", "date": r[1], "title": r[2], "case_id": r[3], "case_code": r[4],
+                    "case_title": r[5]})
+    for r in conn.execute(
+        "SELECT m.id || ':next', m.next_deadline, COALESCE(m.next_label, 'Найближчий строк'), m.id, m.code, m.title "
+        "FROM matters m WHERE m.next_deadline IS NOT NULL"
+    ):
+        out.append({"id": r[0], "kind": "deadline", "date": r[1], "title": r[2], "case_id": r[3], "case_code": r[4],
+                    "case_title": r[5]})
+    out.sort(key=lambda e: e.get("date") or "")
+    return out
 
 
 def search_documents_impl(conn: sqlite3.Connection, p: Principal, query: str, limit: int = 10) -> dict:
@@ -520,10 +566,14 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
         token = get_access_token()
         with conn_factory() as conn:
             p = principal_from_token(conn, token)
-            check_rate(p.user["id"])
+            bypass = POLICY_BYPASS.set(p.unrestricted)
+            if not p.unrestricted:
+                check_rate(p.user["id"])
             # Only charge a budget for calls that can actually run — a refused
             # (scope/role/profile) call must not burn the day's quota.
-            if tool.startswith("ai_") and SCOPE_AI in p.scopes and "ai" in p.capabilities and not p.restricted:
+            if p.unrestricted:
+                pass  # unrestricted link: no budgets (firm decision 2026-10-01)
+            elif tool.startswith("ai_") and SCOPE_AI in p.scopes and "ai" in p.capabilities and not p.restricted:
                 check_budget(conn, p.user["id"], tool)
             elif tool in WRITE_TOOLS or tool in LIVE_TOOLS:
                 check_budget(conn, p.user["id"], tool)
@@ -543,6 +593,7 @@ def build_mcp_asgi(*, base_url: str, conn_provider: ConnProvider) -> tuple[MCPSe
                 log.exception("mcp tool %s failed", tool)
                 raise ToolError("Internal error in AG Lex. The call was logged.") from e
             finally:
+                POLICY_BYPASS.reset(bypass)
                 if not ok:
                     conn.rollback()  # never commit a failed tool's partial writes
                 try:
