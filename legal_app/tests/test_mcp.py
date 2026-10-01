@@ -556,7 +556,8 @@ def test_mcp_call_rate_limit(client, seeded, monkeypatch):
     assert result.get("isError") and "Too many" in text
 
 
-def test_seed_account_with_repo_password_cannot_connect(client, seeded, db_conn):
+def test_seed_account_with_repo_password_can_connect(client, seeded, db_conn):
+    """Firm decision 2026-10-01: viktoria@ may connect on her seed password."""
     from backend.auth import VIKTORIA_USER_EMAIL, VIKTORIA_USER_PASSWORD, hash_password
     db_conn.execute(
         "INSERT INTO users (email, name, role, password_hash, created_at) VALUES (?, 'V', 'partner', ?, date('now'))",
@@ -567,8 +568,9 @@ def test_seed_account_with_repo_password_cannot_connect(client, seeded, db_conn)
     r = client.post("/oauth/consent", data={
         "request_id": request_id, "email": VIKTORIA_USER_EMAIL, "password": VIKTORIA_USER_PASSWORD, "action": "allow",
     }, follow_redirects=False)
-    assert r.status_code == 403 and "початковий" in r.text
-    # after rotation it works
+    assert r.status_code == 302, r.text
+    # after rotation it still works
+    request_id = _start_authorize(client)
     db_conn.execute("UPDATE users SET password_hash = ? WHERE email = ?", (hash_password("rotated-pass-1"), VIKTORIA_USER_EMAIL))
     db_conn.commit()
     r = client.post("/oauth/consent", data={
