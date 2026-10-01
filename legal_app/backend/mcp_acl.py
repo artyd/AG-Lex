@@ -15,6 +15,7 @@ instead of reusing the generic CRUD handlers.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -24,10 +25,13 @@ from mcp.server.mcpserver.exceptions import ToolError
 from .auth import get_user_by_id, login_blocked
 from .cases_acl import resolve_user_text_id
 from .oauth_server import PROFILE_RESTRICTED, SCOPE_READ
+from .oauth_store import denied_matter_ids
 from .rbac import has_capability
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
 # Kinds of data a tool can expose. Restricted clients get only these:
-RESTRICTED_ALLOWED_KINDS = frozenset({"matters", "tasks", "calendar", "codex"})
+RESTRICTED_ALLOWED_KINDS = frozenset({"matters", "tasks", "calendar", "codex", "law"})
 
 
 @dataclass
@@ -38,6 +42,7 @@ class Principal:
     scopes: list[str]
     profile: str
     capabilities: set[str] = field(default_factory=set)
+    client_name: str = ""
 
     @property
     def role(self) -> str:
@@ -59,12 +64,14 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
     if user is None or login_blocked(user):
         raise ToolError("User no longer exists.")
     row = conn.execute(
-        "SELECT profile FROM oauth_clients WHERE client_id = ?", (token.client_id,)
+        "SELECT profile, json_extract(client_info, '$.client_name') FROM oauth_clients WHERE client_id = ?",
+        (token.client_id,),
     ).fetchone()
     profile = row[0] if row else PROFILE_RESTRICTED
+    client_name = (row[1] if row else None) or "AI"
     caps = {
         cap
-        for cap in ("view", "edit", "ai", "billing", "pdata")
+        for cap in ("view", "edit", "ai", "billing", "pdata", "manage")
         if has_capability(conn, user["role"], cap)
     }
     return Principal(
@@ -74,6 +81,8 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
         scopes=list(token.scopes),
         profile=profile,
         capabilities=caps,
+        # App-chosen (DCR) → strip control chars so it can't forge note lines.
+        client_name=" ".join(_CONTROL.sub(" ", str(client_name)).split())[:60] or "AI",
     )
 
 
@@ -92,6 +101,17 @@ def require(p: Principal, *, scope: str = SCOPE_READ, capability: str = "view", 
 
 def can_see(p: Principal, kind: str) -> bool:
     return not (p.restricted and kind not in RESTRICTED_ALLOWED_KINDS)
+
+
+POLICY_DENIED_MSG = (
+    "Закрито політикою фірми: ця справа/клієнт позначені як конфіденційні "
+    "(ai_external=deny) і не передаються зовнішнім AI."
+)
+
+
+def check_matter_policy(conn: sqlite3.Connection, matter_id: str) -> None:
+    if matter_id in denied_matter_ids(conn):
+        raise ToolError(POLICY_DENIED_MSG)
 
 
 def member_matter_ids(conn: sqlite3.Connection, p: Principal) -> set[str]:

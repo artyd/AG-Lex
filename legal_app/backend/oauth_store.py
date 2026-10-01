@@ -6,6 +6,15 @@ install must never take the rest of AG Lex down.
 
 Tables (all `CREATE IF NOT EXISTS`, convention #5):
 - oauth_clients / oauth_pending / oauth_codes / oauth_tokens — see oauth_server.
+- mcp_policy — privilege flag `ai_external=deny`: never hand this data to
+  external AI through MCP. Kinds:
+    matter   — key = matters.id
+    client   — key = client name; compared *normalised* (casefold, quotes,
+               whitespace) against matters.client / invoices.client /
+               clients.name, which are free text with no FK between them
+    document — key = documents.id
+    global   — key = 'documents': close every uploaded document
+  A separate table instead of new columns keeps the migration additive.
 - mcp_audit — one row per MCP tool call. Separate from `audit`, which the
   Team «Аудит-лог» tab reads newest-200; tool traffic would drown RBAC events.
 """
@@ -69,7 +78,30 @@ CREATE TABLE IF NOT EXISTS mcp_audit (
     args         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit(ts);
+
+CREATE TABLE IF NOT EXISTS mcp_policy (
+    kind         TEXT NOT NULL,          -- 'matter' | 'client' | 'document' | 'global'
+    key          TEXT NOT NULL,          -- matter id | client name | document id | 'documents'
+    ai_external  TEXT NOT NULL DEFAULT 'deny',
+    set_by       INTEGER,
+    set_at       TEXT NOT NULL,
+    PRIMARY KEY (kind, key)
+);
 """
+
+POLICY_KINDS = ("matter", "client", "document", "global")
+GLOBAL_DOCUMENTS = "documents"
+
+_QUOTES = str.maketrans({c: '"' for c in "«»“”„‟\'‘’`"})
+
+
+def norm_name(name: str | None) -> str:
+    """Canonical client name: casefold, one quote style, single spaces.
+
+    «ТОВ “Альфа”», 'тов "альфа" ' and ТОВ  "Альфа" all compare equal, so a
+    typo-level spelling difference can't silently lift a deny.
+    """
+    return " ".join((name or "").translate(_QUOTES).casefold().split())
 
 UNUSED_CLIENT_TTL_S = 24 * 60 * 60
 REVOKED_KEEP_S = 30 * 24 * 60 * 60
@@ -173,3 +205,64 @@ def log_mcp_call(
         ),
     )
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# privilege policy (ai_external=deny)
+# ---------------------------------------------------------------------------
+
+def set_policy(conn: sqlite3.Connection, *, kind: str, key: str, deny: bool, user_id: int | None) -> None:
+    if kind not in POLICY_KINDS:
+        raise ValueError(f"unknown policy kind: {kind}")
+    if deny:
+        conn.execute(
+            "INSERT OR REPLACE INTO mcp_policy (kind, key, ai_external, set_by, set_at) VALUES (?, ?, 'deny', ?, ?)",
+            (kind, key, user_id, datetime.now(tz=timezone.utc).isoformat()),
+        )
+    else:
+        conn.execute("DELETE FROM mcp_policy WHERE kind = ? AND key = ?", (kind, key))
+    conn.commit()
+
+
+def _denied(conn: sqlite3.Connection, kind: str) -> set[str]:
+    return {r[0] for r in conn.execute(
+        "SELECT key FROM mcp_policy WHERE kind = ? AND ai_external = 'deny'", (kind,)
+    )}
+
+
+def denied_keys(conn: sqlite3.Connection) -> tuple[set[str], set[str]]:
+    """(denied matter ids, denied client names — normalised)."""
+    return _denied(conn, "matter"), {norm_name(n) for n in _denied(conn, "client")}
+
+
+def client_denied(conn: sqlite3.Connection, name: str | None) -> bool:
+    return norm_name(name) in denied_keys(conn)[1]
+
+
+def denied_matter_ids(conn: sqlite3.Connection) -> set[str]:
+    """Matters closed to external AI: flagged directly or via their client."""
+    matters, clients = denied_keys(conn)
+    if clients:
+        # Python-side compare: SQLite lower() doesn't fold Cyrillic.
+        matters |= {mid for mid, client in conn.execute("SELECT id, client FROM matters")
+                    if norm_name(client) in clients}
+    return matters
+
+
+def documents_all_denied(conn: sqlite3.Connection) -> bool:
+    return GLOBAL_DOCUMENTS in _denied(conn, "global")
+
+
+def document_denied(conn: sqlite3.Connection, doc_id: str, title: str | None = None,
+                    filename: str | None = None) -> bool:
+    """Firm-wide switch, per-document flag, or (best effort — documents have no
+    client link yet) a denied client's name in the title / filename."""
+    if documents_all_denied(conn) or doc_id in _denied(conn, "document"):
+        return True
+    # Quotes dropped on both sides: «ТД «Вектор»» in a title must match «ТД Вектор».
+    def unquote(x: str) -> str:
+        return " ".join(x.replace('"', " ").split())
+
+    clients = {unquote(c) for c in denied_keys(conn)[1]}
+    hay = unquote(norm_name(f"{title or ''} {filename or ''}"))
+    return any(c and c in hay for c in clients)
