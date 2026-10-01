@@ -8,6 +8,7 @@
 import { Icon } from '../../ui/Icon';
 import { roleLabel } from '../../lib/labels';
 import { useTeamApi } from './useTeamApi';
+import { McpConnections } from './McpConnections';
 import './permissions.css';
 
 const ROLES = ['partner', 'senior', 'lawyer', 'paralegal', 'admin'];
@@ -80,6 +81,8 @@ export function AccessControl({ t, user }) {
           </tbody>
         </table>
       </div>
+
+      <McpConnections t={t} canManage={canManage} />
     </div>
   );
 }

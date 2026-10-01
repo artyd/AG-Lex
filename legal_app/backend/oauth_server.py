@@ -55,6 +55,7 @@ from .auth import (
     hash_password,
     verify_password,
 )
+from .oauth_store import LINK_PREFIX, resolve_link
 from .oauth_store import init_oauth_schema, purge_expired_oauth  # noqa: F401 — re-export
 
 # ---------------------------------------------------------------------------
@@ -388,6 +389,8 @@ class AgLexOAuthProvider:
 
     @_offloaded
     def load_access_token(self, token: str) -> AccessToken | None:
+        if token.startswith(LINK_PREFIX):
+            return self._link_token(token)
         with self._conn() as conn:
             row = self._load_token(conn, token, "access")
         if row is None:
@@ -400,6 +403,22 @@ class AgLexOAuthProvider:
             expires_at=expires_at,
             resource=resource,
             subject=str(user_id),
+        )
+
+    def _link_token(self, key: str) -> AccessToken | None:
+        """A secret-link key (/mcp/k/<key>, see mcp_dispatch) acts as a
+        long-lived access token for one employee — no OAuth dance."""
+        with self._conn() as conn:
+            link = resolve_link(conn, key)
+        if link is None:
+            return None
+        return AccessToken(
+            token=key,
+            client_id=f"link:{link['id']}",
+            scopes=allowed_scopes_for(link["profile"]),
+            expires_at=link["expires_at"],
+            resource=self.resource_url,
+            subject=str(link["user_id"]),
         )
 
     @_offloaded

@@ -5,15 +5,13 @@
    we just render it as HTML and bind hover/dblclick handlers.
 
    Why dangerouslySetInnerHTML (vs a Markdown renderer):
-   the project has no markdown library installed, and the backend
-   has full control over the wrapped excerpts. The content comes
-   from a) the converter microservice or pymupdf4llm/mammoth
-   (text only, no script tags) and b) the backend's html-escape
-   helper for the <mark> attributes. The risk surface is the
-   markdown source itself — same surface the existing analysis
-   markdown viewer already uses.
+   the project has no markdown library installed. The document text
+   itself is user-uploaded (converter output can carry raw HTML), so
+   it goes through sanitizeHighlighted first: everything is escaped
+   except the exact <mark> shape the backend emits.
    ============================================================ */
 import { useEffect, useRef } from 'react';
+import { sanitizeHighlighted } from './sanitizeHighlighted';
 
 export function ErrorHighlighter({ html, onErrorActivate }) {
   const containerRef = useRef(null);
@@ -67,7 +65,7 @@ export function ErrorHighlighter({ html, onErrorActivate }) {
 // is intentionally minimal so it stays predictable for highlighted spans.
 function htmlToParagraphs(src) {
   if (!src) return '';
-  const blocks = String(src).split(/\n{2,}/);
+  const blocks = sanitizeHighlighted(src).split(/\n{2,}/);
   return blocks
     .map((block) => {
       const trimmed = block.trim();
@@ -78,8 +76,7 @@ function htmlToParagraphs(src) {
         const level = h[1].length;
         return `<h${level} class="doc-h${level}">${h[2]}</h${level}>`;
       }
-      // Plain paragraph: keep <mark> spans, escape nothing else — the
-      // backend already produced text-safe content.
+      // Plain paragraph: text is already escaped; only <mark> spans remain.
       return `<p class="doc-p">${trimmed.replace(/\n/g, '<br />')}</p>`;
     })
     .filter(Boolean)
