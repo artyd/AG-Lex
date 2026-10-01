@@ -15,12 +15,18 @@ Tables (all `CREATE IF NOT EXISTS`, convention #5):
     document — key = documents.id
     global   — key = 'documents': close every uploaded document
   A separate table instead of new columns keeps the migration additive.
+- mcp_links — "secret link" connectors: /mcp/k/<key> works without an
+  OAuth login (Claude Desktop custom connector with no auth). Each key
+  belongs to one employee, carries their rights, expires, can be revoked;
+  only its SHA-256 is stored.
 - mcp_audit — one row per MCP tool call. Separate from `audit`, which the
   Team «Аудит-лог» tab reads newest-200; tool traffic would drown RBAC events.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -78,6 +84,21 @@ CREATE TABLE IF NOT EXISTS mcp_audit (
     args         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit(ts);
+
+CREATE TABLE IF NOT EXISTS mcp_links (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash     TEXT NOT NULL UNIQUE,
+    key_hint     TEXT NOT NULL,          -- last 4 chars, for the UI
+    user_id      INTEGER NOT NULL,
+    user_email   TEXT NOT NULL,          -- same rowid-reuse guard as oauth_tokens
+    label        TEXT,
+    profile      TEXT NOT NULL DEFAULT 'full',
+    created_at   INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    last_used_at INTEGER,
+    revoked      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_links_user ON mcp_links(user_id);
 
 CREATE TABLE IF NOT EXISTS mcp_policy (
     kind         TEXT NOT NULL,          -- 'matter' | 'client' | 'document' | 'global'
@@ -266,3 +287,110 @@ def document_denied(conn: sqlite3.Connection, doc_id: str, title: str | None = N
     clients = {unquote(c) for c in denied_keys(conn)[1]}
     hay = unquote(norm_name(f"{title or ''} {filename or ''}"))
     return any(c and c in hay for c in clients)
+
+# ---------------------------------------------------------------------------
+# secret-link connectors (/mcp/k/<key>)
+# ---------------------------------------------------------------------------
+
+LINK_PREFIX = "aglx_lk_"
+MAX_LINKS_PER_USER = 10
+LINK_TOUCH_EVERY_S = 60
+LINK_IDLE_S = 30 * 86400  # unused for 30 days → dead, like an idle session
+
+
+def _link_hash(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: str, ttl_days: int) -> tuple[int, str]:
+    (active,) = conn.execute(
+        "SELECT COUNT(*) FROM mcp_links WHERE user_id = ? AND revoked = 0 AND expires_at > ?",
+        (user["id"], int(time.time())),
+    ).fetchone()
+    if active >= MAX_LINKS_PER_USER:
+        raise ValueError(f"At most {MAX_LINKS_PER_USER} active links per person; revoke an old one first.")
+    key = LINK_PREFIX + secrets.token_urlsafe(32)
+    now = int(time.time())
+    cur = conn.execute(
+        "INSERT INTO mcp_links (key_hash, key_hint, user_id, user_email, label, profile, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (_link_hash(key), key[-4:], user["id"], user["email"], label, profile, now, now + ttl_days * 86400),
+    )
+    conn.commit()
+    return cur.lastrowid, key
+
+
+def resolve_link(conn: sqlite3.Connection, key: str) -> dict | None:
+    """Live link for this key (owner still exists with the same email), or None."""
+    row = conn.execute(
+        "SELECT l.id, l.user_id, l.profile, l.label, l.expires_at, l.last_used_at "
+        "FROM mcp_links l JOIN users u ON u.id = l.user_id AND u.email = l.user_email "
+        "WHERE l.key_hash = ? AND l.revoked = 0",
+        (_link_hash(key),),
+    ).fetchone()
+    now = int(time.time())
+    if row is None or row[4] < now:
+        return None
+    created = conn.execute("SELECT created_at FROM mcp_links WHERE id = ?", (row[0],)).fetchone()[0]
+    if now - (row[5] or created) > LINK_IDLE_S:
+        return None
+    if not row[5] or now - row[5] > LINK_TOUCH_EVERY_S:
+        conn.execute("UPDATE mcp_links SET last_used_at = ? WHERE id = ?", (now, row[0]))
+        conn.commit()
+    return {"id": row[0], "user_id": row[1], "profile": row[2], "label": row[3], "expires_at": row[4]}
+
+
+def link_info(conn: sqlite3.Connection, link_id: int) -> dict | None:
+    """Label/profile only. Validity (revoked/expiry/owner) is checked by
+    resolve_link when the key is presented — don't use this as an auth check."""
+    row = conn.execute("SELECT id, profile, label FROM mcp_links WHERE id = ?", (link_id,)).fetchone()
+    return {"id": row[0], "profile": row[1], "label": row[2]} if row else None
+
+
+def list_links(conn: sqlite3.Connection, *, user_id: int | None = None) -> list[dict]:
+    sql = (
+        "SELECT l.id, l.label, l.profile, l.key_hint, l.created_at, l.expires_at, l.last_used_at, "
+        "l.user_id, u.name, u.email FROM mcp_links l "
+        "JOIN users u ON u.id = l.user_id AND u.email = l.user_email "
+        "WHERE l.revoked = 0 AND l.expires_at > ?"
+    )
+    args: list = [int(time.time())]
+    if user_id is not None:
+        sql += " AND l.user_id = ?"
+        args.append(user_id)
+    sql += " ORDER BY l.created_at DESC"
+    keys = ("id", "label", "profile", "key_hint", "created_at", "expires_at", "last_used_at",
+            "user_id", "user_name", "user_email")
+    return [dict(zip(keys, r)) for r in conn.execute(sql, args).fetchall()]
+
+
+def revoke_all_for_user(conn: sqlite3.Connection, user_id: int) -> int:
+    """Kill every MCP credential of a user (links + OAuth tokens) — on removal
+    from the team, or as an incident-response action."""
+    n = 0
+    for sql in ("UPDATE mcp_links SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+                "UPDATE oauth_tokens SET revoked = 1 WHERE user_id = ? AND revoked = 0"):
+        try:
+            n += conn.execute(sql, (user_id,)).rowcount
+        except sqlite3.OperationalError:
+            pass  # MCP tables not created on this DB (e.g. minimal test schema)
+    conn.commit()
+    return n
+
+
+def link_owner(conn: sqlite3.Connection, link_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT l.label, l.user_id, u.email FROM mcp_links l LEFT JOIN users u ON u.id = l.user_id WHERE l.id = ?",
+        (link_id,),
+    ).fetchone()
+    return {"label": row[0], "user_id": row[1], "email": row[2]} if row else None
+
+
+def revoke_link(conn: sqlite3.Connection, link_id: int, *, user_id: int | None = None) -> int:
+    sql, args = "UPDATE mcp_links SET revoked = 1 WHERE id = ? AND revoked = 0", [link_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        args.append(user_id)
+    cur = conn.execute(sql, args)
+    conn.commit()
+    return cur.rowcount

@@ -172,6 +172,7 @@ app = FastAPI(title="AG Lex", version="0.1.0", lifespan=lifespan)
 # /oauth/*, /.well-known/oauth-* go to the MCP app; everything else is
 # untouched. Must sit in front of the SPA catch-all (see mcp_dispatch.py).
 app.add_middleware(mcp_dispatch.McpDispatchMiddleware)
+mcp_dispatch.install_log_redaction()  # secret-link keys live in /mcp/k/<key> URLs
 app.include_router(auth_module.router)
 app.include_router(team_module.router)
 app.include_router(assist_module.router)

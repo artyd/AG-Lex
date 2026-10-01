@@ -28,6 +28,8 @@ function auditActionLabel(t, action) {
     case 'mcp_grant':   return t.actMcpGrant || 'AI app connected';
     case 'mcp_revoke':  return t.actMcpRevoke || 'AI app disconnected';
     case 'mcp_policy':  return t.actMcpPolicy || 'AI privacy policy changed';
+    case 'mcp_link_create': return t.actMcpLinkCreate || 'AI link created';
+    case 'mcp_link_revoke': return t.actMcpLinkRevoke || 'AI link revoked';
     default:            return action;
   }
 }

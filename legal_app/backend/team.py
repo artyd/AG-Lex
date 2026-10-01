@@ -184,6 +184,11 @@ def remove_member(
             "Cannot remove member: at least one user must retain the 'manage' capability.",
         )
 
+    # users.id is a reusable rowid: kill their MCP links/tokens now rather
+    # than relying on the email join alone.
+    from .oauth_store import revoke_all_for_user
+    revoke_all_for_user(conn, member_id)
+
     audit_module.log(
         conn, actor=user, action=audit_module.ACTION_REMOVE,
         target=target["name"],

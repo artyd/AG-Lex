@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../../ui/Icon';
 import { api, ApiError } from '../../lib/api';
 import { toast } from '../../ui/components';
+import { McpLinks } from './McpLinks';
 
 function fmtTs(unix) {
   if (!unix) return '';
@@ -159,6 +160,8 @@ export function McpConnections({ t, canManage }) {
       <div className="acc-card">
         <AppsTable t={t} rows={mine} onRevoke={revokeMine} />
       </div>
+
+      <McpLinks t={t} canManage={canManage} />
 
       {canManage ? (
         <>

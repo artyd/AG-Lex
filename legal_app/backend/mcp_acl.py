@@ -25,7 +25,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from .auth import get_user_by_id, login_blocked
 from .cases_acl import resolve_user_text_id
 from .oauth_server import PROFILE_RESTRICTED, SCOPE_READ
-from .oauth_store import denied_matter_ids
+from .oauth_store import denied_matter_ids, link_info
 from .rbac import has_capability
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -63,12 +63,18 @@ def principal_from_token(conn: sqlite3.Connection, token: AccessToken | None) ->
     user = get_user_by_id(conn, user_id)
     if user is None or login_blocked(user):
         raise ToolError("User no longer exists.")
-    row = conn.execute(
-        "SELECT profile, json_extract(client_info, '$.client_name') FROM oauth_clients WHERE client_id = ?",
-        (token.client_id,),
-    ).fetchone()
-    profile = row[0] if row else PROFILE_RESTRICTED
-    client_name = (row[1] if row else None) or "AI"
+    if token.client_id.startswith("link:"):
+        # Secret-link connector: profile + label come from the link itself.
+        link = link_info(conn, int(token.client_id.split(":", 1)[1]))
+        profile = link["profile"] if link else PROFILE_RESTRICTED
+        client_name = ((link or {}).get("label") or "Claude") + " · посилання"
+    else:
+        row = conn.execute(
+            "SELECT profile, json_extract(client_info, '$.client_name') FROM oauth_clients WHERE client_id = ?",
+            (token.client_id,),
+        ).fetchone()
+        profile = row[0] if row else PROFILE_RESTRICTED
+        client_name = (row[1] if row else None) or "AI"
     caps = {
         cap
         for cap in ("view", "edit", "ai", "billing", "pdata", "manage")
