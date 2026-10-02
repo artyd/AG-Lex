@@ -289,3 +289,21 @@ def test_regular_link_unchanged_by_unrestricted_feature(client, other_matter):
     _init(client, path)
     _, text = _call(client, path, "firm_list_matters")
     assert json.loads(text)["matters"] == []  # m-1 denied by policy, m-2 not a member
+
+
+def test_link_answers_connector_probes(client, seeded):
+    path = _path(_make_link(client, _web(client)).json()["url"])
+    assert client.head(path).status_code == 200
+    r = client.options(path)
+    assert r.status_code == 204 and "POST" in r.headers["allow"]
+    # real MCP traffic still goes through auth
+    assert _rpc(client, "/mcp/k/aglx_lk_" + "x" * 43, "tools/list").status_code == 401
+
+
+def test_probe_via_nginx_rewrite_shape(client, seeded):
+    # nginx turns /mcp/k/<key> into /mcp + Authorization: Bearer <key>
+    assert client.head("/mcp", headers={"Authorization": "Bearer aglx_lk_whatever"}).status_code == 200
+    assert client.options("/mcp", headers={"Authorization": "Bearer x"}).status_code == 204
+    # no credential: still 401 → OAuth discovery keeps working
+    r = client.head("/mcp")
+    assert r.status_code == 401
