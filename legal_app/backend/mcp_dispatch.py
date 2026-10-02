@@ -61,10 +61,41 @@ class McpDispatchMiddleware:
                 if rewritten is None:
                     await _unavailable(send, status=404, error="not_found")
                     return
+                if scope.get("method") in ("HEAD", "OPTIONS"):
+                    # Connector "check the server" probes: the SDK answers 405
+                    # to these, which Claude's add-connector wizard reports as
+                    # "Couldn't check the server". Answer them here — they carry
+                    # no MCP traffic, so no auth decision is made on them.
+                    await _probe_ok(scope["method"], send)
+                    return
                 scope = rewritten
+            elif (
+                scope["path"] == MCP_PATH
+                and scope.get("method") in ("HEAD", "OPTIONS")
+                and any(k.lower() == b"authorization" for k, _ in scope.get("headers", []))
+            ):
+                # Same probe, arriving as /mcp + Authorization (the stack's nginx
+                # rewrites /mcp/k/<key> that way). Without a credential the SDK
+                # still answers 401 so OAuth clients discover the login.
+                await _probe_ok(scope["method"], send)
+                return
             await target(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+async def _probe_ok(method: str, send: Send) -> None:
+    status = 204 if method == "OPTIONS" else 200
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"allow", b"GET, POST, DELETE, HEAD, OPTIONS"),
+            (b"content-type", b"application/json"),
+            (b"content-length", b"0"),
+        ],
+    })
+    await send({"type": "http.response.body", "body": b""})
 
 
 async def _unavailable(send: Send, status: int = 503, error: str = "mcp_unavailable") -> None:
