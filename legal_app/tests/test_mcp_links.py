@@ -338,3 +338,21 @@ def test_open_access_off_keeps_oauth(client, seeded, db_conn):
     from backend.oauth_store import sync_open_link
     mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=False))
     assert client.head("/mcp").status_code == 401
+
+
+def test_open_access_retires_keyed_links(client, seeded, db_conn):
+    from backend import mcp_dispatch
+    from backend.oauth_store import sync_open_link
+    web = _web(client)
+    old_path = _path(_make_link(client, web).json()["url"])
+    mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=True, owner_email="alice@aglex.ua"))
+    try:
+        assert client.get("/api/mcp/open-link", headers=web).json() == {
+            "enabled": True, "url": "http://localhost:8000/mcp"}
+        assert _rpc(client, old_path, "tools/list").status_code == 401  # revoked
+        assert _make_link(client, web).status_code == 409
+        assert client.get("/api/me/mcp-links", headers=web).json() == []  # open row hidden
+    finally:
+        mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=False))
+    assert client.get("/api/mcp/open-link", headers=web).json()["enabled"] is False
+    assert _make_link(client, web).status_code == 201

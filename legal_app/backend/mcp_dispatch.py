@@ -44,6 +44,10 @@ def set_open_key(key: str | None) -> None:
         _state["open_key"] = key
 
 
+def open_access_enabled() -> bool:
+    return bool(_state.get("open_key"))
+
+
 def _has_auth(scope: Scope) -> bool:
     return any(k.lower() == b"authorization" for k, _ in scope.get("headers", []))
 

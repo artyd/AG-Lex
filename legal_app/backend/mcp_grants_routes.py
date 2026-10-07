@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from . import audit as audit_module
+from . import mcp_dispatch
 from .auth import current_user
 from .config import get_settings
 from .database import get_db
@@ -203,6 +204,13 @@ class LinkIn(BaseModel):
     unrestricted: bool = False
 
 
+@router.get("/api/mcp/open-link")
+def open_link(user: dict = Depends(current_user)) -> dict:
+    """The one clean connector URL, when open access is on (MCP_OPEN_ACCESS)."""
+    base = get_settings().PUBLIC_BASE_URL.rstrip("/")
+    return {"enabled": mcp_dispatch.open_access_enabled(), "url": f"{base}/mcp"}
+
+
 @router.get("/api/me/mcp-links")
 def my_links(user: dict = Depends(current_user), conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
     return list_links(conn, user_id=user["id"])
@@ -222,6 +230,8 @@ def create_my_link(
     from .auth import verify_password
     from .oauth_server import PUBLIC_DEMO_EMAILS
 
+    if mcp_dispatch.open_access_enabled():
+        raise HTTPException(status_code=409, detail="Посилання з ключем не потрібні: підключайтеся за адресою /mcp.")
     if user["email"] in PUBLIC_DEMO_EMAILS:
         raise HTTPException(status_code=403, detail="Демо-акаунт не може створювати посилання.")
     if body.unrestricted:

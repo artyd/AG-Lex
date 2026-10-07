@@ -372,9 +372,9 @@ def list_links(conn: sqlite3.Connection, *, user_id: int | None = None) -> list[
         "SELECT l.id, l.label, l.profile, l.key_hint, l.created_at, l.expires_at, l.last_used_at, "
         "l.user_id, u.name, u.email, l.unrestricted FROM mcp_links l "
         "JOIN users u ON u.id = l.user_id AND u.email = l.user_email "
-        "WHERE l.revoked = 0 AND l.expires_at > ?"
+        "WHERE l.revoked = 0 AND l.expires_at > ? AND NOT (l.key_hint = ? AND l.label = ?)"
     )
-    args: list = [int(time.time())]
+    args: list = [int(time.time()), OPEN_LINK_HINT, OPEN_LINK_LABEL]
     if user_id is not None:
         sql += " AND l.user_id = ?"
         args.append(user_id)
@@ -448,8 +448,9 @@ def _open_link_owner(conn: sqlite3.Connection, owner_email: str, exclude_emails:
 
 def sync_open_link(conn: sqlite3.Connection, *, enabled: bool, owner_email: str = "",
                    exclude_emails: set[str] = frozenset()) -> str | None:
-    """Enable (fresh key, returned) or disable (revoke) the open connector.
-    Owner = `owner_email`, else the oldest user whose role has `manage`."""
+    """Enable (fresh key, returned; every keyed link revoked) or disable
+    (revoke) the open connector. Owner = `owner_email`, else the oldest user
+    whose role has `manage`."""
     owner = _open_link_owner(conn, owner_email, set(exclude_emails)) if enabled else None
     if owner is None:
         conn.execute("UPDATE mcp_links SET revoked = 1 WHERE key_hint = ? AND label = ? AND revoked = 0",
@@ -469,5 +470,9 @@ def sync_open_link(conn: sqlite3.Connection, *, enabled: bool, owner_email: str 
             "unrestricted) VALUES (?, ?, ?, ?, ?, 'full', ?, ?, 1)",
             (_link_hash(key), OPEN_LINK_HINT, owner[0], owner[1], OPEN_LINK_LABEL, now, UNRESTRICTED_EXPIRES_AT),
         )
+    # Keyed /mcp/k/ links are retired while the open connector is on
+    # (firm decision 2026-10-07): revoke them so none stay live unseen.
+    conn.execute("UPDATE mcp_links SET revoked = 1 WHERE revoked = 0 AND NOT (key_hint = ? AND label = ?)",
+                 (OPEN_LINK_HINT, OPEN_LINK_LABEL))
     conn.commit()
     return key
