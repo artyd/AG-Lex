@@ -35,6 +35,30 @@ def _link_scope(scope: Scope) -> Scope | None:
 _state: dict[str, Any] = {}
 
 
+def set_open_key(key: str | None) -> None:
+    """Key of the open connector (oauth_store.sync_open_link), or None when
+    plain /mcp must keep asking for OAuth."""
+    if key is None:
+        _state.pop("open_key", None)
+    else:
+        _state["open_key"] = key
+
+
+def _has_auth(scope: Scope) -> bool:
+    return any(k.lower() == b"authorization" for k, _ in scope.get("headers", []))
+
+
+def _open_scope(scope: Scope) -> Scope | None:
+    """Plain /mcp without a credential → the open connector's key, so
+    `https://<domain>/mcp` works pasted as-is. Requests that carry their own
+    token (OAuth, link) keep their identity."""
+    key = _state.get("open_key")
+    if not key or scope.get("path") != MCP_PATH or _has_auth(scope):
+        return None
+    headers = [*scope.get("headers", []), (b"authorization", b"Bearer " + key.encode("ascii"))]
+    return {**scope, "headers": headers}
+
+
 def is_mcp_path(path: str) -> bool:
     return path in _EXACT_PATHS or path.startswith(_PREFIXES)
 
@@ -69,11 +93,12 @@ class McpDispatchMiddleware:
                     await _probe_ok(scope["method"], send)
                     return
                 scope = rewritten
-            elif (
-                scope["path"] == MCP_PATH
-                and scope.get("method") in ("HEAD", "OPTIONS")
-                and any(k.lower() == b"authorization" for k, _ in scope.get("headers", []))
-            ):
+            elif scope["path"] == MCP_PATH and (opened := _open_scope(scope)) is not None:
+                if scope.get("method") in ("HEAD", "OPTIONS"):
+                    await _probe_ok(scope["method"], send)
+                    return
+                scope = opened
+            elif scope["path"] == MCP_PATH and scope.get("method") in ("HEAD", "OPTIONS") and _has_auth(scope):
                 # Same probe, arriving as /mcp + Authorization (the stack's nginx
                 # rewrites /mcp/k/<key> that way). Without a credential the SDK
                 # still answers 401 so OAuth clients discover the login.

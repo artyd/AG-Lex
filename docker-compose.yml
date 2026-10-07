@@ -41,6 +41,9 @@ services:
       # Claude Code / MCP Inspector over http://localhost still work).
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8002}
       MCP_ENABLED: ${MCP_ENABLED:-true}
+      # Plain /mcp with no login/key, full firm access (docs/mcp/CONNECT.md).
+      MCP_OPEN_ACCESS: ${MCP_OPEN_ACCESS:-false}
+      MCP_OPEN_OWNER_EMAIL: ${MCP_OPEN_OWNER_EMAIL:-}
       # Self-signup is invite-only in prod; `open` is for local dev/tests only.
       REGISTRATION_MODE: ${REGISTRATION_MODE:-closed}
       # Demo partner test@aglex.ua (password in repo) — keep off in prod.

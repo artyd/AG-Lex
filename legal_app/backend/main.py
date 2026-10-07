@@ -58,7 +58,7 @@ from .models import (
     migrate_reconciliations_original_blob,
     migrate_users,
 )
-from .oauth_store import init_oauth_schema, purge_expired_oauth
+from .oauth_store import init_oauth_schema, purge_expired_oauth, sync_open_link
 from .pipeline import analyze
 from .search import hybrid_search
 from .rbac import (
@@ -115,6 +115,13 @@ async def lifespan(app: FastAPI):
         auth_module.seed_viktoria_user(conn)
         seed_default_permissions(conn)
         seed_all(conn)
+        # After seeding: the open connector needs its owner to exist.
+        mcp_dispatch.set_open_key(sync_open_link(
+            conn,
+            enabled=settings.MCP_ENABLED and settings.MCP_OPEN_ACCESS,
+            owner_email=settings.MCP_OPEN_OWNER_EMAIL,
+            exclude_emails=set() if settings.DEMO_LOGIN_ENABLED else {auth_module.TEST_USER_EMAIL},
+        ))
     finally:
         conn.close()
 
