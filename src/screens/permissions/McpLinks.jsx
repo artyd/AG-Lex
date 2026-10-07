@@ -7,6 +7,8 @@
      Connectors → Add custom connector.
    - List own links (hint only, never the key) + two-step revoke.
    - `manage`: every link in the firm, revocable.
+   - Open access on (MCP_OPEN_ACCESS): only the clean `/mcp` URL is shown;
+     keyed links are retired (the backend revokes them and refuses new ones).
    ============================================================ */
 import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../../ui/Icon';
@@ -84,8 +86,10 @@ export function McpLinks({ t, canManage }) {
   const [form, setForm] = useState({ label: 'Claude Desktop', profile: 'full', password: '', unrestricted: false });
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
+  const [open, setOpen] = useState(null);
 
   const load = useCallback(async () => {
+    try { setOpen(await api.request('/api/mcp/open-link')); } catch (_e) { /* older backend */ }
     try { setMine(asList(await api.request('/api/me/mcp-links'))); } catch (_e) { /* offline */ }
     if (!canManage) return;
     try { setAll(asList(await api.request('/api/admin/mcp-links'))); } catch (_e) { /* 403 tolerated */ }
@@ -109,12 +113,12 @@ export function McpLinks({ t, canManage }) {
     }
   }, [busy, form, load, t]);
 
-  const copy = useCallback(async () => {
+  const copy = useCallback(async (url) => {
     try {
-      await navigator.clipboard.writeText(created.url);
+      await navigator.clipboard.writeText(url);
       toast(t.mcpLinkCopied || 'Скопійовано', 'check');
     } catch (_e) { /* clipboard blocked: user can select the text */ }
-  }, [created, t]);
+  }, [t]);
 
   const revoke = useCallback(async (l, admin) => {
     try {
@@ -125,6 +129,28 @@ export function McpLinks({ t, canManage }) {
       toast((err instanceof ApiError && err.message) || (t.mcpRevokeFail || 'Не вдалося відключити'), 'alert');
     }
   }, [load, t]);
+
+  if (open?.enabled) {
+    return (
+      <>
+        <h3 className="mcp-sub">{t.mcpOpenTitle || 'Посилання для Claude'}</h3>
+        <p className="mcp-hint">
+          {t.mcpOpenHint || 'Вставте це посилання в Claude → Settings → Connectors → Add custom connector. Логін і ключ не потрібні.'}
+        </p>
+        <div className="acc-card mcp-link-created">
+          <code className="mcp-link-url">{open.url}</code>
+          <div className="mcp-link-actions">
+            <button type="button" className="acc-reset" onClick={() => copy(open.url)}>
+              <Icon name="clipboard" size={14} /> {t.mcpLinkCopy || 'Копіювати'}
+            </button>
+          </div>
+        </div>
+        <p className="mcp-hint mcp-warn">
+          {t.mcpOpenWarn || 'Будь-хто з цим посиланням має повний доступ до всіх справ фірми. Не публікуйте його.'}
+        </p>
+      </>
+    );
+  }
 
   return (
     <>
@@ -176,7 +202,7 @@ export function McpLinks({ t, canManage }) {
           <div className="mcp-app-name">{t.mcpLinkReady || 'Посилання готове — скопіюйте зараз, повторно його не показати:'}</div>
           <code className="mcp-link-url">{created.url}</code>
           <div className="mcp-link-actions">
-            <button type="button" className="acc-reset" onClick={copy}>
+            <button type="button" className="acc-reset" onClick={() => copy(created.url)}>
               <Icon name="clipboard" size={14} /> {t.mcpLinkCopy || 'Копіювати'}
             </button>
             <button type="button" className="mcp-revoke" onClick={() => setCreated(null)}>
