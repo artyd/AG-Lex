@@ -325,7 +325,9 @@ def create_link(conn: sqlite3.Connection, *, user: dict, label: str, profile: st
     ).fetchone()
     if active >= MAX_LINKS_PER_USER:
         raise ValueError(f"At most {MAX_LINKS_PER_USER} active links per person; revoke an old one first.")
-    key = LINK_PREFIX + secrets.token_urlsafe(32)
+    # 128 bits: unguessable online, and only the hash is stored. Shorter
+    # than OAuth tokens because people paste this URL by hand.
+    key = LINK_PREFIX + secrets.token_urlsafe(16)
     now = int(time.time())
     expires = UNRESTRICTED_EXPIRES_AT if unrestricted else now + ttl_days * 86400
     cur = conn.execute(
@@ -417,3 +419,55 @@ def revoke_link(conn: sqlite3.Connection, link_id: int, *, user_id: int | None =
     cur = conn.execute(sql, args)
     conn.commit()
     return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# open connector: plain /mcp with no credential (firm decision 2026-10-07)
+# ---------------------------------------------------------------------------
+# Stored as an ordinary unrestricted link so tool calls, audit rows and the
+# «🤖 [… · посилання · MCP]» notes reuse the link path unchanged. Its key is
+# regenerated on every boot, lives only in memory (mcp_dispatch injects it
+# into credential-less /mcp requests) and is never shown to anyone.
+
+OPEN_LINK_LABEL = "Відкрите посилання"
+OPEN_LINK_HINT = "open"
+
+
+def _open_link_owner(conn: sqlite3.Connection, owner_email: str, exclude_emails: set[str]) -> tuple[int, str] | None:
+    if owner_email:
+        row = conn.execute("SELECT id, email FROM users WHERE email = ?", (owner_email.strip(),)).fetchone()
+        return (row[0], row[1]) if row and row[1] not in exclude_emails else None
+    for uid, email in conn.execute(
+        "SELECT u.id, u.email FROM users u JOIN permissions p ON p.role = u.role "
+        "WHERE p.capability = 'manage' AND p.allowed = 1 ORDER BY u.id"
+    ):
+        if email not in exclude_emails:
+            return uid, email
+    return None
+
+
+def sync_open_link(conn: sqlite3.Connection, *, enabled: bool, owner_email: str = "",
+                   exclude_emails: set[str] = frozenset()) -> str | None:
+    """Enable (fresh key, returned) or disable (revoke) the open connector.
+    Owner = `owner_email`, else the oldest user whose role has `manage`."""
+    owner = _open_link_owner(conn, owner_email, set(exclude_emails)) if enabled else None
+    if owner is None:
+        conn.execute("UPDATE mcp_links SET revoked = 1 WHERE key_hint = ? AND label = ? AND revoked = 0",
+                     (OPEN_LINK_HINT, OPEN_LINK_LABEL))
+        conn.commit()
+        return None
+    key = LINK_PREFIX + secrets.token_urlsafe(32)
+    now = int(time.time())
+    cur = conn.execute(
+        "UPDATE mcp_links SET key_hash = ?, user_id = ?, user_email = ?, profile = 'full', unrestricted = 1, "
+        "expires_at = ?, revoked = 0 WHERE key_hint = ? AND label = ?",
+        (_link_hash(key), owner[0], owner[1], UNRESTRICTED_EXPIRES_AT, OPEN_LINK_HINT, OPEN_LINK_LABEL),
+    )
+    if cur.rowcount == 0:
+        conn.execute(
+            "INSERT INTO mcp_links (key_hash, key_hint, user_id, user_email, label, profile, created_at, expires_at, "
+            "unrestricted) VALUES (?, ?, ?, ?, ?, 'full', ?, ?, 1)",
+            (_link_hash(key), OPEN_LINK_HINT, owner[0], owner[1], OPEN_LINK_LABEL, now, UNRESTRICTED_EXPIRES_AT),
+        )
+    conn.commit()
+    return key

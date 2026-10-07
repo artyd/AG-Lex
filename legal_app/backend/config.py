@@ -34,6 +34,12 @@ class Settings(BaseSettings):
         description="Public origin of AG Lex, e.g. https://lex.example.com (no trailing slash).",
     )
     MCP_ENABLED: bool = Field(default=True, description="Serve /mcp + OAuth endpoints.")
+    # Firm decision 2026-10-07: plain `<PUBLIC_BASE_URL>/mcp` connects with no
+    # login or key and acts as MCP_OPEN_OWNER_EMAIL (default: the oldest
+    # `manage` user) with unrestricted access. Anyone who knows the address
+    # gets the whole firm — set false to go back to OAuth / secret links.
+    MCP_OPEN_ACCESS: bool = Field(default=False)
+    MCP_OPEN_OWNER_EMAIL: str = Field(default="")
     # MCP stage 3 — live official sources (backend/live_sources). No corpus is
     # stored: responses live only in a TTL cache file next to the DB.
     LIVE_SOURCES_ENABLED: bool = Field(default=True)

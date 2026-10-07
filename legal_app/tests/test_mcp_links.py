@@ -56,6 +56,7 @@ def test_link_works_without_login(client, seeded, db_conn):
     assert r.status_code == 201, r.text
     url = r.json()["url"]
     assert url.startswith("http://localhost:8000/mcp/k/aglx_lk_")
+    assert len(url.rsplit("/", 1)[1]) == len("aglx_lk_") + 22  # short enough to paste by hand
     path = _path(url)
     _init(client, path)
     names = {t["name"] for t in _rpc(client, path, "tools/list").json()["result"]["tools"]}
@@ -307,3 +308,33 @@ def test_probe_via_nginx_rewrite_shape(client, seeded):
     # no credential: still 401 → OAuth discovery keeps working
     r = client.head("/mcp")
     assert r.status_code == 401
+
+
+@pytest.fixture
+def open_access(db_conn):
+    from backend import mcp_dispatch
+    from backend.oauth_store import sync_open_link
+    mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=True, owner_email="alice@aglex.ua"))
+    yield
+    mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=False))
+
+
+def test_open_access_plain_mcp_no_credential(client, seeded, db_conn, open_access):
+    assert client.head("/mcp").status_code == 200
+    _init(client, "/mcp")
+    res, text = _call(client, "/mcp", "whoami")
+    assert json.loads(text)["email"] == "alice@aglex.ua"
+    # boot again → same row, fresh key; the previous key stops working
+    from backend import mcp_dispatch
+    from backend.oauth_store import OPEN_LINK_LABEL, sync_open_link
+    old = mcp_dispatch._state["open_key"]
+    mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=True, owner_email="alice@aglex.ua"))
+    assert db_conn.execute("SELECT COUNT(*) FROM mcp_links WHERE label = ?", (OPEN_LINK_LABEL,)).fetchone()[0] == 1
+    assert _rpc(client, "/mcp", "tools/list", headers={"Authorization": f"Bearer {old}"}).status_code == 401
+
+
+def test_open_access_off_keeps_oauth(client, seeded, db_conn):
+    from backend import mcp_dispatch
+    from backend.oauth_store import sync_open_link
+    mcp_dispatch.set_open_key(sync_open_link(db_conn, enabled=False))
+    assert client.head("/mcp").status_code == 401
